@@ -61,6 +61,12 @@ public sealed class IntervalScheduler : IDisposable
                     {
                         callback();
                     }
+                    catch
+                    {
+                        // A throwing callback must never escape onto the ThreadPool thread and
+                        // crash the process, nor stop a recurring schedule. Callers that need to
+                        // observe errors (e.g. the script host) guard their own callbacks.
+                    }
                     finally
                     {
                         if (handle.OneShot)

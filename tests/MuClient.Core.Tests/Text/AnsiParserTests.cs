@@ -201,6 +201,22 @@ public class AnsiParserTests
     }
 
     [Test]
+    public async Task DcsSequence_IsConsumedThroughSt()
+    {
+        // A DCS (ESC P ... ST) payload must not leak into the output as text.
+        var line = ParseSingleLine("\x1bP1;2;3|payload\x1b\\visible\n");
+        await Assert.That(line.Text).IsEqualTo("visible");
+    }
+
+    [Test]
+    public async Task ApcSequence_IsConsumedThroughSt()
+    {
+        // APC (ESC _ ... ST) — as used by the Kitty graphics protocol — must be discarded.
+        var line = ParseSingleLine("\x1b_Gf=100,a=T;base64data\x1b\\shown\n");
+        await Assert.That(line.Text).IsEqualTo("shown");
+    }
+
+    [Test]
     public async Task Flush_ReturnsPendingPartialLine()
     {
         var parser = new AnsiParser();

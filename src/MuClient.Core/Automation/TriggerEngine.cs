@@ -122,7 +122,17 @@ public sealed class TriggerEngine
                 continue;
             }
 
-            var match = trigger.Regex.Match(current.Text);
+            Match match;
+            try
+            {
+                match = trigger.Regex.Match(current.Text);
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                // A pathological pattern timed out on this line; skip it rather than block output.
+                continue;
+            }
+
             if (!match.Success)
             {
                 continue;

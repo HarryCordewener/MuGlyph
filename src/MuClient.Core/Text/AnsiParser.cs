@@ -163,6 +163,16 @@ public sealed class AnsiParser
                 _state = State.EscapeIntermediate;
                 break;
 
+            case 'P': // DCS
+            case 'X': // SOS
+            case '^': // PM
+            case '_': // APC
+                // String sequences terminated by ST (ESC \) — consume like an OSC so their
+                // payloads never leak into the output as text.
+                _seq.Clear();
+                _state = State.Osc;
+                break;
+
             default:
                 // Two-byte escape (ESC c, ESC M, ...) — consumed and ignored.
                 _state = State.Ground;

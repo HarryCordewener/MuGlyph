@@ -148,7 +148,10 @@ public sealed class HtmlLogSink : ILogSink
     {
         lock (_gate)
         {
-            _writer.Flush();
+            if (!_closed)
+            {
+                _writer.Flush();
+            }
         }
     }
 
@@ -156,13 +159,14 @@ public sealed class HtmlLogSink : ILogSink
     {
         lock (_gate)
         {
-            if (!_closed)
+            if (_closed)
             {
-                _writer.WriteLine("</body></html>");
-                _closed = true;
+                return;
             }
 
+            _writer.WriteLine("</body></html>");
             _writer.Flush();
+            _closed = true;
             if (_ownsWriter)
             {
                 _writer.Dispose();

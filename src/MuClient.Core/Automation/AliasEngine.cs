@@ -102,7 +102,17 @@ public sealed class AliasEngine
                 continue;
             }
 
-            var match = alias.Regex.Match(input);
+            Match match;
+            try
+            {
+                match = alias.Regex.Match(input);
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                // A pathological pattern timed out; skip this alias rather than hang input.
+                continue;
+            }
+
             if (!match.Success)
             {
                 continue;

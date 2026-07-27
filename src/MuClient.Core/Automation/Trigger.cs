@@ -57,9 +57,10 @@ public sealed class Trigger
 
     public TriggerActions Actions { get; init; } = new();
 
-    /// <summary>The compiled regex (built once, lazily).</summary>
+    /// <summary>The compiled regex (built once, lazily), with a match timeout guarding against ReDoS.</summary>
     [JsonIgnore]
     public Regex Regex => _compiled ??= new Regex(
         Pattern,
-        RegexOptions.Compiled | (CaseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase));
+        RegexOptions.Compiled | (CaseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase),
+        AutomationDefaults.RegexMatchTimeout);
 }

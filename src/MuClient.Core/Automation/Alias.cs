@@ -29,5 +29,6 @@ public sealed class Alias
     [JsonIgnore]
     public Regex Regex => _compiled ??= new Regex(
         Pattern,
-        RegexOptions.Compiled | (CaseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase));
+        RegexOptions.Compiled | (CaseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase),
+        AutomationDefaults.RegexMatchTimeout);
 }

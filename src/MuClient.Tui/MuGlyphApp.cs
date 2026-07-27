@@ -144,7 +144,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
                 break;
 
             default:
-                if (key.IsCtrl && key.KeyCode == (KeyCode)'q')
+                // Terminal.Gui reports letter keys by their uppercase code (KeyCode.Q == 'Q').
+                if (key.IsCtrl && key.KeyCode == KeyCode.Q)
                 {
                     Application.RequestStop();
                     key.Handled = true;

@@ -13,6 +13,7 @@ namespace MuClient.Core.Transport;
 public sealed class TcpTransport(ConnectionOptions options) : ITransport
 {
     private readonly ConnectionOptions _options = options ?? throw new ArgumentNullException(nameof(options));
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
     private TcpClient? _client;
     private Stream? _stream;
 
@@ -71,10 +72,21 @@ public sealed class TcpTransport(ConnectionOptions options) : ITransport
         SslPolicyErrors errors)
         => errors == SslPolicyErrors.None || _options.AllowInvalidCertificates;
 
-    public ValueTask SendAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+    public async ValueTask SendAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
     {
         var stream = _stream ?? throw new InvalidOperationException("Transport is not connected.");
-        return stream.WriteAsync(data, cancellationToken);
+
+        // Serialize writes: telnet negotiation, user commands, and trigger responses can all
+        // reach here concurrently, and overlapping WriteAsync calls on one stream corrupt framing.
+        await _sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await stream.WriteAsync(data, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
     }
 
     public async ValueTask<int> ReceiveAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
@@ -112,5 +124,6 @@ public sealed class TcpTransport(ConnectionOptions options) : ITransport
         _client?.Dispose();
         _client = null;
         _stream = null;
+        _sendLock.Dispose();
     }
 }
