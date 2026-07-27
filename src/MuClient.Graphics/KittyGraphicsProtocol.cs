@@ -152,6 +152,14 @@ public sealed class KittyGraphicsProtocol
                 $"Placeholder grid up to {RowColumnDiacritics.Length}x{RowColumnDiacritics.Length} is supported.");
         }
 
+        // The placeholder carries the image id in a 24-bit foreground colour, so ids above
+        // 0xFFFFFF cannot round-trip. Reject them rather than silently truncating.
+        if (imageId is < 0 or > 0xFFFFFF)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(imageId), imageId, "Placeholder image id must fit in 24 bits (0-0xFFFFFF).");
+        }
+
         // Carry the 24-bit image id in the foreground colour, per the Kitty spec.
         var idColor = TerminalColor.FromRgb(
             (byte)((imageId >> 16) & 0xFF),

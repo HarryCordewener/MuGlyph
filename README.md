@@ -8,7 +8,7 @@ client: rich truecolor text, inline graphics, powerful automation, and full MU\*
 
 > **Status:** milestone **M1 delivered** (usable text client foundation) with substantial work
 > from M2–M4 in place — automation engines, inline-graphics subsystem, Lua scripting, and theming.
-> `MuClient.Core` is fully unit-tested (195 tests across the solution). See
+> `MuClient.Core` is fully unit-tested (299 tests across the solution). See
 > [`docs/PLAN.md`](docs/PLAN.md) for the full architecture and roadmap.
 
 ## Why a TUI
@@ -53,7 +53,11 @@ HTML logging · GMCP / MSDP / MSSP / MCCP · MXP + Pueblo · Unicode/emoji.
 - **Scrollback** — bounded, thread-safe styled-line model with change events.
 - **Automation** — regex **triggers** (gag / highlight / rewrite / respond / spawn-route /
   script), **aliases** (capture-group expansion, multi-command), **macros/keybinds**, and a
-  recurring/one-shot **timer** scheduler.
+  recurring/one-shot **timer** scheduler. User regexes run with a ReDoS match-timeout guard.
+- **MXP & Pueblo** — first-class parsers for both markup protocols: tags → styled spans, with
+  **clickable** `<SEND>`/`<A>` links and commands (`SpanInteraction`), colours, entities, and
+  line breaks. Selectable per world.
+- **Emoji** — optional emoticon (`:)` → 🙂) and `:shortcode:` (`:fire:` → 🔥) substitution.
 - **Logging** — plain-text and styled **HTML** session logs.
 - **Config** — a fresh JSON schema plus a best-effort **BeipMU importer**.
 - **Inline graphics** — Kitty graphics-protocol encoder (incl. Unicode placeholders), Sixel and
@@ -62,8 +66,11 @@ HTML logging · GMCP / MSDP / MSSP / MCCP · MXP + Pueblo · Unicode/emoji.
   `timer`/`gmcp`/`log`, with hot-reload.
 - **Theming** — yazi-style named themes (Dark / Light / Solarized Dark) with a 16-colour palette
   override and semantic UI colours, serialised to the config as hex.
-- **TUI** — a Terminal.Gui v2 app: truecolor output pane with wrapping/scrollback, command input
-  with history and tab-completion, status line, and key routing.
+- **TUI** — a Terminal.Gui v2 app: truecolor output pane with wrapping/scrollback, clickable
+  MXP/Pueblo links, command input with history and tab-completion, a GMCP-driven stat line, and
+  key routing.
+- **Packaging** — self-contained single-file publishing for Linux/Windows/macOS (see
+  [`docs/PACKAGING.md`](docs/PACKAGING.md)); a tagged release workflow builds the binaries.
 
 ## Building
 

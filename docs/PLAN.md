@@ -107,6 +107,23 @@ MoonSharp `ScriptHost`, scripting API, Lua-backed triggers/aliases, GMCP subscri
 **M5 — Full parity & polish**
 **Spawns** (route matched output to named windows), **puppets**, **multiple input windows**, **MXP + Pueblo** parsers (clickable links/commands/`<SEND>`, inline images via graphics layer), MSDP, **BeipMU config importer**, Unicode emoji + `:)`→🙂, smooth-scroll/appearance options, theming, packaging (dotnet single-file for Windows + Linux; optional distro packages).
 
+### M5 progress (delivered)
+- **MXP** and **Pueblo** parsers in `Core` (`ILineParser`), selectable per world via
+  `WorldDefinition.ContentFormat`; links/commands surface as `SpanInteraction` and are clickable
+  in the TUI. **Emoji** substitution (`EmojiSubstitutor`), opt-in per world. GMCP-driven **stat
+  line**, **spawn** capture, ReDoS-guarded regex engines, and self-contained **single-file
+  packaging** (`docs/PACKAGING.md`) + a tagged release workflow.
+
+### Still open (M5+)
+- Dedicated **spawn windows** and **multiple input windows** (capture + routing hooks exist),
+  **puppets**, MSDP-driven stat panes, and the **map** view.
+- **In-TUI web view.** MXP/Pueblo already produce clickable links. Plan: a `WebViewPane` that
+  fetches a URL and renders HTML → `StyledLine`s via a managed parser (AngleSharp), reusing
+  `SpanInteraction` for in-pane navigation, with `<img>` shown through the existing
+  `InlineImageRenderer` (Kitty → Sixel → half-block). Optional high-fidelity mode: snapshot the
+  page with headless Chromium (Playwright) and display the image via the graphics layer. Text
+  mode works in any terminal; images need a graphics-capable one.
+
 ---
 
 ## Key risks & mitigations

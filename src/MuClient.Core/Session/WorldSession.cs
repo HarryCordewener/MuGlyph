@@ -1,6 +1,7 @@
 using MuClient.Core.Automation;
 using MuClient.Core.Configuration;
 using MuClient.Core.Logging;
+using MuClient.Core.Protocols;
 using MuClient.Core.Telnet;
 using MuClient.Core.Text;
 using MuClient.Core.Transport;
@@ -22,7 +23,8 @@ public sealed class WorldSession : IAsyncDisposable
         new(TerminalColor.FromIndex(6), TerminalColor.Default, TextAttributes.Italic);
 
     private readonly Func<ConnectionOptions, ITelnetSession> _sessionFactory;
-    private readonly AnsiParser _parser = new();
+    private readonly ILineParser _parser;
+    private readonly EmojiSubstitutor? _emoji;
     private readonly ILogSink? _log;
     private ITelnetSession? _telnet;
 
@@ -35,11 +37,22 @@ public sealed class WorldSession : IAsyncDisposable
         World = world ?? throw new ArgumentNullException(nameof(world));
         _sessionFactory = sessionFactory ?? DefaultSessionFactory;
         _log = log;
+        _parser = CreateParser(world.ContentFormat);
+        _emoji = world.Emoji.Enabled
+            ? new EmojiSubstitutor(world.Emoji.Emoticons, world.Emoji.Shortcodes)
+            : null;
         Scrollback = new ScrollbackBuffer(scrollbackCapacity);
         Triggers = new TriggerEngine(world.Triggers);
         Aliases = new AliasEngine(world.Aliases);
         Macros = new MacroEngine(world.Macros);
     }
+
+    private static ILineParser CreateParser(ContentFormat format) => format switch
+    {
+        ContentFormat.Mxp => new MxpParser(),
+        ContentFormat.Pueblo => new PuebloParser(),
+        _ => new AnsiParser(),
+    };
 
     public WorldDefinition World { get; }
 
@@ -84,6 +97,14 @@ public sealed class WorldSession : IAsyncDisposable
             return;
         }
 
+        // A prior faulted/disconnected session may still be referenced; dispose it before
+        // reconnecting so its read loop and transport are released (its events won't fire again).
+        if (_telnet is not null)
+        {
+            await _telnet.DisposeAsync().ConfigureAwait(false);
+            _telnet = null;
+        }
+
         SetState(ConnectionState.Connecting, null);
         PrintSystem($"*** Connecting to {World.Host}:{World.Port}...");
 
@@ -114,7 +135,7 @@ public sealed class WorldSession : IAsyncDisposable
         if (e.IsPrompt)
         {
             _parser.Feed(e.Text);
-            var prompt = _parser.Flush() ?? StyledLine.Empty;
+            var prompt = ApplyEmoji(_parser.Flush() ?? StyledLine.Empty);
             CurrentPrompt = prompt;
             PromptChanged?.Invoke(this, prompt);
             return;
@@ -153,8 +174,31 @@ public sealed class WorldSession : IAsyncDisposable
 
         if (!result.Suppress)
         {
-            Print(result.Line);
+            Print(ApplyEmoji(result.Line));
         }
+    }
+
+    /// <summary>Substitutes emoji in each span's text when enabled for this world; a no-op otherwise.</summary>
+    private StyledLine ApplyEmoji(StyledLine line)
+    {
+        if (_emoji is null || line.IsEmpty)
+        {
+            return line;
+        }
+
+        StyledSpan[]? rebuilt = null;
+        for (var i = 0; i < line.Spans.Count; i++)
+        {
+            var span = line.Spans[i];
+            var replaced = _emoji.Apply(span.Text);
+            if (!ReferenceEquals(replaced, span.Text) && replaced != span.Text)
+            {
+                rebuilt ??= line.Spans.ToArray();
+                rebuilt[i] = new StyledSpan(replaced, span.Style, span.Interaction);
+            }
+        }
+
+        return rebuilt is null ? line : new StyledLine(rebuilt);
     }
 
     /// <summary>Handles a line of user input: alias expansion, local echo, and send.</summary>

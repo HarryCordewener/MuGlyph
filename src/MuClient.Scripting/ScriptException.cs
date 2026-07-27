@@ -26,25 +26,35 @@ public sealed class ScriptException : Exception
 
     private static int? TryExtractLine(InterpreterException ex)
     {
-        // MoonSharp encodes location as "chunk:(fromLine,fromCol-toLine,toCol)" in DecoratedMessage.
         var decorated = ex.DecoratedMessage;
         if (string.IsNullOrEmpty(decorated))
         {
             return null;
         }
 
+        // Syntax errors: "chunk:(fromLine,fromCol-toLine,toCol) message".
         var open = decorated.IndexOf('(');
-        if (open < 0 || open + 1 >= decorated.Length)
+        if (open >= 0 && open + 1 < decorated.Length)
         {
-            return null;
+            var comma = decorated.IndexOf(',', open);
+            if (comma > open && int.TryParse(decorated.AsSpan(open + 1, comma - open - 1), out var parenLine))
+            {
+                return parenLine;
+            }
         }
 
-        var comma = decorated.IndexOf(',', open);
-        if (comma < 0)
+        // Runtime errors: "[string \"chunk\"]:LINE: message" (no parenthesised range).
+        var bracket = decorated.LastIndexOf(']');
+        var start = bracket >= 0 ? bracket + 1 : 0;
+        if (start < decorated.Length && decorated[start] == ':')
         {
-            return null;
+            var colon = decorated.IndexOf(':', start + 1);
+            if (colon > start && int.TryParse(decorated.AsSpan(start + 1, colon - start - 1), out var runtimeLine))
+            {
+                return runtimeLine;
+            }
         }
 
-        return int.TryParse(decorated.AsSpan(open + 1, comma - open - 1), out var line) ? line : null;
+        return null;
     }
 }

@@ -2,27 +2,39 @@ using System.Text;
 using MuClient.Core.Session;
 using MuClient.Core.Text;
 using MuClient.Core.Theming;
+using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 
 namespace MuClient.Tui.Views;
 
 /// <summary>
 /// Renders a <see cref="WorldSession"/>'s scrollback (plus its current prompt) with truecolor
-/// styling, word/character wrapping, and vertical scrolling. Custom-drawn because Terminal.Gui's
-/// cell grid has no concept of our styled-span model.
+/// styling, wrapping, and vertical scrolling, and makes MXP/Pueblo interactive spans clickable.
+/// Custom-drawn because Terminal.Gui's cell grid has no concept of our styled-span model.
 /// </summary>
 internal sealed class OutputView : View
 {
     private WorldSession? _session;
     private int _scrollOffset; // rows scrolled up from the bottom (0 = following the tail)
 
+    // Maps a rendered cell (screen row, col) to the interaction of the span drawn there, so a
+    // click can be resolved back to a command/link. Rebuilt on every draw.
+    private readonly Dictionary<(int Row, int Col), SpanInteraction> _cellInteractions = new();
+
     public OutputView()
     {
         CanFocus = false;
+        MouseEvent += OnMouseEvent;
     }
 
     /// <summary>The theme-aware colour mapper used to render styled spans.</summary>
     public ColorMapper Mapper { get; set; } = new(ThemeLibrary.Dark());
+
+    /// <summary>Raised when a clickable command span is activated (command, promptOnly).</summary>
+    public event Action<string, bool>? CommandActivated;
+
+    /// <summary>Raised when a hyperlink span is activated.</summary>
+    public event Action<string>? LinkActivated;
 
     public WorldSession? Session
     {
@@ -35,7 +47,6 @@ internal sealed class OutputView : View
         }
     }
 
-    /// <summary>True when the view is pinned to the newest output.</summary>
     public bool AtBottom => _scrollOffset == 0;
 
     public void ScrollToBottom()
@@ -54,8 +65,37 @@ internal sealed class OutputView : View
 
     public void PageDown() => ScrollLines(-Math.Max(1, Viewport.Height - 1));
 
+    private void OnMouseEvent(object? sender, Mouse mouse)
+    {
+        if (!mouse.IsSingleClicked || mouse.Position is not { } position)
+        {
+            return;
+        }
+
+        if (_cellInteractions.TryGetValue((position.Y, position.X), out var interaction))
+        {
+            Activate(interaction);
+            mouse.Handled = true;
+        }
+    }
+
+    private void Activate(SpanInteraction interaction)
+    {
+        switch (interaction.Kind)
+        {
+            case InteractionKind.SendCommand:
+                CommandActivated?.Invoke(interaction.Target, interaction.PromptOnly);
+                break;
+            case InteractionKind.Hyperlink:
+                LinkActivated?.Invoke(interaction.Target);
+                break;
+        }
+    }
+
     protected override bool OnDrawingContent(DrawContext? context)
     {
+        _cellInteractions.Clear();
+
         var viewport = Viewport;
         var width = Math.Max(1, viewport.Width);
         var height = Math.Max(1, viewport.Height);
@@ -66,7 +106,6 @@ internal sealed class OutputView : View
             return true;
         }
 
-        // Clamp scroll so we never page past the top.
         var maxOffset = Math.Max(0, rows.Count - height);
         if (_scrollOffset > maxOffset)
         {
@@ -85,30 +124,31 @@ internal sealed class OutputView : View
         return true;
     }
 
-    private void DrawRow(IReadOnlyList<(Rune Rune, TextStyle Style)> row, int screenRow, int width)
+    private void DrawRow(IReadOnlyList<Cell> row, int screenRow, int width)
     {
         Move(0, screenRow);
         var col = 0;
-        foreach (var (rune, style) in row)
+        foreach (var cell in row)
         {
             if (col >= width)
             {
                 break;
             }
 
-            SetAttribute(Mapper.ToAttribute(style));
-            AddRune(col, screenRow, rune);
+            SetAttribute(Mapper.ToAttribute(cell.Style));
+            AddRune(col, screenRow, cell.Rune);
+            if (cell.Interaction is not null)
+            {
+                _cellInteractions[(screenRow, col)] = cell.Interaction;
+            }
+
             col++;
         }
     }
 
-    /// <summary>
-    /// Builds up to <paramref name="maxRows"/> visual (wrapped) rows from the tail of the
-    /// scrollback and the active prompt, newest last.
-    /// </summary>
-    private List<List<(Rune Rune, TextStyle Style)>> BuildVisualRows(int width, int maxRows)
+    private List<List<Cell>> BuildVisualRows(int width, int maxRows)
     {
-        var result = new List<List<(Rune, TextStyle)>>();
+        var result = new List<List<Cell>>();
         if (_session is null)
         {
             return result;
@@ -121,7 +161,6 @@ internal sealed class OutputView : View
             logical.Add(prompt);
         }
 
-        // Walk logical lines from the end, wrapping each and prepending, until we have enough.
         for (var i = logical.Count - 1; i >= 0 && result.Count < maxRows; i--)
         {
             var wrapped = WrapLine(logical[i], width);
@@ -134,10 +173,10 @@ internal sealed class OutputView : View
         return result;
     }
 
-    private static List<List<(Rune Rune, TextStyle Style)>> WrapLine(StyledLine line, int width)
+    private static List<List<Cell>> WrapLine(StyledLine line, int width)
     {
-        var rows = new List<List<(Rune, TextStyle)>>();
-        var current = new List<(Rune, TextStyle)>();
+        var rows = new List<List<Cell>>();
+        var current = new List<Cell>();
 
         foreach (var span in line.Spans)
         {
@@ -145,27 +184,25 @@ internal sealed class OutputView : View
             {
                 if (rune.Value == '\t')
                 {
-                    // Expand tabs to the next multiple of 4 columns.
                     var stop = 4 - current.Count % 4;
                     for (var s = 0; s < stop && current.Count < width; s++)
                     {
-                        current.Add((new Rune(' '), span.Style));
+                        current.Add(new Cell(new Rune(' '), span.Style, span.Interaction));
                     }
                 }
                 else
                 {
-                    current.Add((rune, span.Style));
+                    current.Add(new Cell(rune, span.Style, span.Interaction));
                 }
 
                 if (current.Count >= width)
                 {
                     rows.Add(current);
-                    current = new List<(Rune, TextStyle)>();
+                    current = new List<Cell>();
                 }
             }
         }
 
-        // Always emit at least one (possibly empty) row so blank lines occupy space.
         if (current.Count > 0 || rows.Count == 0)
         {
             rows.Add(current);
@@ -173,4 +210,6 @@ internal sealed class OutputView : View
 
         return rows;
     }
+
+    private readonly record struct Cell(Rune Rune, TextStyle Style, SpanInteraction? Interaction);
 }

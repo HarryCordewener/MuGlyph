@@ -14,7 +14,7 @@ namespace MuClient.Core.Text;
 /// OSC strings, and other escapes are recognised and discarded rather than leaking
 /// into the output as stray text.
 /// </summary>
-public sealed class AnsiParser
+public sealed class AnsiParser : ILineParser
 {
     private const int MaxSequenceLength = 128;
 

@@ -12,6 +12,29 @@ public enum LogFormat
     Both,
 }
 
+/// <summary>How a world's inbound text is interpreted for styling and interaction.</summary>
+public enum ContentFormat
+{
+    /// <summary>Plain text with ANSI SGR colour (the default).</summary>
+    Ansi,
+
+    /// <summary>MXP markup (tags, SEND/A links) over ANSI.</summary>
+    Mxp,
+
+    /// <summary>Pueblo HTML-subset markup.</summary>
+    Pueblo,
+}
+
+/// <summary>Emoji/emoticon substitution options.</summary>
+public sealed class EmojiSettings
+{
+    public bool Enabled { get; set; }
+
+    public bool Emoticons { get; set; } = true;
+
+    public bool Shortcodes { get; set; } = true;
+}
+
 /// <summary>Per-world logging configuration.</summary>
 public sealed class LoggingSettings
 {
@@ -39,6 +62,12 @@ public sealed class WorldDefinition
 
     /// <summary>Echo typed commands locally into the output window.</summary>
     public bool LocalEcho { get; set; } = true;
+
+    /// <summary>How inbound text is parsed for styling and interactive links.</summary>
+    public ContentFormat ContentFormat { get; set; } = ContentFormat.Ansi;
+
+    /// <summary>Emoji/emoticon substitution for inbound text.</summary>
+    public EmojiSettings Emoji { get; set; } = new();
 
     public List<Trigger> Triggers { get; set; } = new();
 

@@ -27,6 +27,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private readonly Label _status;
     private readonly OutputView _output;
     private readonly CommandInput _input;
+    private readonly GmcpStats _stats = new();
+    private readonly HashSet<string> _spawnTargets = new(StringComparer.OrdinalIgnoreCase);
 
     private WorldSession? _active;
 
@@ -64,6 +66,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             Height = 1,
         };
         _input.CommandEntered += OnCommandEntered;
+        _output.CommandActivated += OnCommandActivated;
+        _output.LinkActivated += OpenLink;
 
         _window.Add(_status, _output, _input);
         _window.KeyDown += OnGlobalKey;
@@ -115,7 +119,25 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         session.PromptChanged += (_, _) => Application.Invoke(() => _output.SetNeedsDraw());
         session.StateChanged += (_, _) => Application.Invoke(UpdateStatus);
+        session.GmcpReceived += (_, e) => Application.Invoke(() =>
+        {
+            if (_stats.Update(e.Package, e.Json))
+            {
+                UpdateStatus();
+            }
+        });
+        session.SpawnLine += (_, e) => Application.Invoke(() => OnSpawnLine(e.Target));
         UpdateStatus();
+    }
+
+    private void OnSpawnLine(string target)
+    {
+        // Spawn output is captured; dedicated spawn windows are a follow-up. Announce a target
+        // the first time it routes so the user knows a spawn fired.
+        if (_spawnTargets.Add(target))
+        {
+            _active?.PrintSystem($"*** Spawn '{target}' is now receiving routed output.");
+        }
     }
 
     private void OnCommandEntered(string command)
@@ -127,6 +149,40 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         }
 
         _ = session.SendUserInputAsync(command);
+    }
+
+    private void OnCommandActivated(string command, bool promptOnly)
+    {
+        if (promptOnly)
+        {
+            _input.Text = command;
+            _input.SetFocus();
+            return;
+        }
+
+        _ = _active?.SendRawAsync(command);
+    }
+
+    private static void OpenLink(string url)
+    {
+        // Only open well-formed http(s) links, via the OS default handler.
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+            uri.Scheme is not ("http" or "https"))
+        {
+            return;
+        }
+
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri.ToString())
+            {
+                UseShellExecute = true,
+            });
+        }
+        catch
+        {
+            // No browser available (e.g. headless) — ignore.
+        }
     }
 
     private void OnGlobalKey(object? sender, Key key)

@@ -77,8 +77,19 @@ public sealed class TelnetSession : ITelnetSession
         // (e.g. WILL NAWS) during BuildAsync, which is written straight to the transport.
         await _transport.ConnectAsync(cancellationToken).ConfigureAwait(false);
 
-        _interpreter = await BuildInterpreterAsync().ConfigureAwait(false);
-        ByteCallbackProperty.SetValue(_interpreter, new Func<byte, Encoding, ValueTask>(OnByteAsync));
+        try
+        {
+            _interpreter = await BuildInterpreterAsync().ConfigureAwait(false);
+            ByteCallbackProperty.SetValue(_interpreter, new Func<byte, Encoding, ValueTask>(OnByteAsync));
+        }
+        catch
+        {
+            // Building/wiring the interpreter failed after the socket opened; close it so we
+            // don't leak a half-open connection, and stay in the not-connected state.
+            _interpreter = null;
+            await _transport.CloseAsync().ConfigureAwait(false);
+            throw;
+        }
 
         _loopCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _readLoop = Task.Run(() => ReadLoopAsync(_loopCts.Token), CancellationToken.None);
@@ -212,12 +223,14 @@ public sealed class TelnetSession : ITelnetSession
 
     public ValueTask SendAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var interpreter = _interpreter ?? throw new InvalidOperationException("Session is not connected.");
         return interpreter.SendAsync(data.ToArray());
     }
 
     public ValueTask SendGmcpAsync(string package, string json, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var interpreter = _interpreter ?? throw new InvalidOperationException("Session is not connected.");
         return interpreter.SendGMCPCommand(package, json ?? string.Empty);
     }
@@ -249,6 +262,9 @@ public sealed class TelnetSession : ITelnetSession
             }
         }
 
+        // Clear the interpreter so a subsequent ConnectAsync can reconnect and the "not
+        // connected" guards on the send methods observe the disconnected state.
+        _interpreter = null;
         RaiseDisconnected(null);
     }
 

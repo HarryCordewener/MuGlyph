@@ -10,6 +10,15 @@
       "legacy Application is going away" obsoletion until the replacement API stabilises.
     -->
     <NoWarn>$(NoWarn);CS0618</NoWarn>
+
+    <!--
+      Runtimes we ship single-file builds for. Declaring them here is build-safe (only used on
+      `dotnet publish -r <rid>`); the single-file/self-contained knobs live in the publish
+      profiles under Properties/PublishProfiles so they never affect `dotnet build`/`run`.
+      See docs/PACKAGING.md.
+    -->
+    <RuntimeIdentifiers>linux-x64;linux-arm64;win-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
   <ItemGroup>
