@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore MuGlyph.slnx
+
+      - name: Build
+        run: dotnet build MuGlyph.slnx -c Release --no-restore
+
+      # TUnit runs on Microsoft.Testing.Platform; execute each test project directly
+      # (the classic `dotnet test`/VSTest path is not used by MTP on .NET 10).
+      - name: Test — Core
+        shell: bash
+        run: dotnet run -c Release --no-build --project tests/MuClient.Core.Tests/MuClient.Core.Tests.csproj
+
+      - name: Test — Graphics
+        shell: bash
+        run: dotnet run -c Release --no-build --project tests/MuClient.Graphics.Tests/MuClient.Graphics.Tests.csproj
+
+      - name: Test — Scripting
+        shell: bash
+        run: dotnet run -c Release --no-build --project tests/MuClient.Scripting.Tests/MuClient.Scripting.Tests.csproj
