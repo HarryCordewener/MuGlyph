@@ -49,4 +49,4 @@ Requires the .NET 10 SDK. (Nothing to build yet — projects land in milestone M
 
 ## License
 
-TBD.
+[MIT](LICENSE) © 2026 Harry Cordewener
