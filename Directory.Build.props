@@ -1,0 +1,20 @@
+<Project>
+
+  <!-- Shared settings for every project in the MuGlyph solution. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <Authors>Harry Cordewener</Authors>
+    <Product>MuGlyph</Product>
+    <Copyright>Copyright (c) 2026 Harry Cordewener</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/HarryCordewener/MuGlyph</RepositoryUrl>
+  </PropertyGroup>
+
+</Project>

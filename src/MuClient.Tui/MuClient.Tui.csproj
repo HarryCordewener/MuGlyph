@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>MuClient.Tui</RootNamespace>
+    <AssemblyName>muglyph</AssemblyName>
+    <!--
+      Terminal.Gui v2 is a prerelease mid-migration from the static Application facade to an
+      instance-based IApplication. We use the current (static) surface deliberately; suppress the
+      "legacy Application is going away" obsoletion until the replacement API stabilises.
+    -->
+    <NoWarn>$(NoWarn);CS0618</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Terminal.Gui" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MuClient.Core\MuClient.Core.csproj" />
+    <ProjectReference Include="..\MuClient.Graphics\MuClient.Graphics.csproj" />
+    <ProjectReference Include="..\MuClient.Scripting\MuClient.Scripting.csproj" />
+  </ItemGroup>
+
+</Project>

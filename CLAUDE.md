@@ -27,8 +27,31 @@ fallbacks) for inline images/maps.
 
 ## Repository state
 
-Skeleton only: `README.md`, `LICENSE`, `.gitignore`, `.editorconfig`, `docs/PLAN.md`, this file.
-No solution or code exists yet. The next unit of work is **milestone M1** (below).
+**M1 delivered, plus substantial M2–M4 work.** `MuGlyph.slnx` builds all seven projects on
+`net10.0`; the solution has **195 passing tests**. In place:
+
+- **Core** — `AnsiParser` (SGR 16/256/truecolor), styled-line + `ScrollbackBuffer` model,
+  `TcpTransport` (TLS + IPv6), `TelnetSession` (wraps TelnetNegotiationCore **2.5.3**),
+  trigger/alias/macro engines + `IntervalScheduler`, plain-text + HTML logging, JSON config +
+  BeipMU importer, `Theme`/`ThemeLibrary`, and `WorldSession`/`SessionManager` orchestration.
+- **Graphics** — Kitty encoder + Unicode placeholders, Sixel + half-block fallbacks, capability
+  probe (no UI dependency).
+- **Scripting** — sandboxed MoonSharp `ScriptHost` (world/output/trigger/alias/timer/gmcp/log).
+- **Tui** — Terminal.Gui v2 app (truecolor `OutputView`, `CommandInput`, theming, key routing).
+
+### Notes for future agents (learned the hard way)
+- **.NET 10 SDK**: install via `apt-get install -y dotnet-sdk-10.0` (the Microsoft CDN is often
+  blocked; Ubuntu's repo works). NuGet (`api.nuget.org`) is reachable.
+- **Tests use TUnit**, not xUnit — projects are `Exe` on Microsoft.Testing.Platform. Run them with
+  `dotnet run --project <testproj>`; `dotnet test` is **not** wired up (MTP opt-in doesn't work on
+  this SDK).
+- **TelnetNegotiationCore 2.5.3** has a fluent builder API (not the 1.0.0 the plan assumed) and now
+  provides MCCP/MSDP/MXP negotiation itself. `TelnetSession` sets the init-only
+  `CallbackOnByteAsync` reflectively to get raw data bytes (incl. unterminated prompts) — a
+  first-class `OnByte` builder hook is a good upstream PR.
+- **Terminal.Gui v2** (2.4.x-develop) dropped `Toplevel`/`TabView`; use `IRunnable`/`Window` and
+  override `OnDrawingContent(DrawContext)`. The static `Application` API is `[Obsolete]` mid-migration
+  (suppressed via `NoWarn` in the Tui project).
 
 ## Architecture rule (non-negotiable)
 

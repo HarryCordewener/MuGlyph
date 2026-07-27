@@ -6,7 +6,10 @@ GPU-accelerated terminals (Kitty, WezTerm, Ghostty) on **Windows and Linux**.
 The goal is [BeipMU](https://beipdev.github.io/BeipMU/)-class feature parity in a terminal-native
 client: rich truecolor text, inline graphics, powerful automation, and full MU\* protocol support.
 
-> **Status:** early scaffolding. See [`docs/PLAN.md`](docs/PLAN.md) for the architecture and roadmap.
+> **Status:** milestone **M1 delivered** (usable text client foundation) with substantial work
+> from M2–M4 in place — automation engines, inline-graphics subsystem, Lua scripting, and theming.
+> `MuClient.Core` is fully unit-tested (195 tests across the solution). See
+> [`docs/PLAN.md`](docs/PLAN.md) for the full architecture and roadmap.
 
 ## Why a TUI
 
@@ -37,16 +40,62 @@ HTML logging · GMCP / MSDP / MSSP / MCCP · MXP + Pueblo · Unicode/emoji.
 | `MuClient.Graphics` | Kitty graphics protocol, capability probe, Sixel + half-block fallbacks, `GraphicsView` |
 | `MuClient.Scripting` | MoonSharp host + scripting API |
 | `MuClient.Tui` | Terminal.Gui v2 application (windows, panes, settings, wiring) |
-| `*.Tests` | xUnit test projects |
+| `*.Tests` | TUnit test projects |
+
+## What works today
+
+- **Transport & telnet** — TCP with optional TLS (`SslStream`) and IPv6, wrapping
+  [TelnetNegotiationCore] for NAWS/MTTS/CHARSET/EOR/GA/GMCP/MSSP/MSDP/MCCP negotiation.
+  Prompt (GA/EOR) detection surfaces prompts separately from scrollback.
+- **ANSI parser** — incremental SGR parsing: 16-colour, 256-colour, and 24-bit truecolour
+  (semicolon and colon forms), with the usual rendition attributes; non-SGR CSI/OSC sequences
+  are recognised and discarded.
+- **Scrollback** — bounded, thread-safe styled-line model with change events.
+- **Automation** — regex **triggers** (gag / highlight / rewrite / respond / spawn-route /
+  script), **aliases** (capture-group expansion, multi-command), **macros/keybinds**, and a
+  recurring/one-shot **timer** scheduler.
+- **Logging** — plain-text and styled **HTML** session logs.
+- **Config** — a fresh JSON schema plus a best-effort **BeipMU importer**.
+- **Inline graphics** — Kitty graphics-protocol encoder (incl. Unicode placeholders), Sixel and
+  half-block fallbacks, and a capability probe that degrades cleanly when no protocol is present.
+- **Scripting** — sandboxed **Lua** (MoonSharp) exposing `world`/`output`/`trigger`/`alias`/
+  `timer`/`gmcp`/`log`, with hot-reload.
+- **Theming** — yazi-style named themes (Dark / Light / Solarized Dark) with a 16-colour palette
+  override and semantic UI colours, serialised to the config as hex.
+- **TUI** — a Terminal.Gui v2 app: truecolor output pane with wrapping/scrollback, command input
+  with history and tab-completion, status line, and key routing.
 
 ## Building
 
+Requires the **.NET 10 SDK**.
+
 ```bash
-dotnet build
+dotnet build MuGlyph.slnx -c Release
 ```
 
-Requires the .NET 10 SDK. (Nothing to build yet — projects land in milestone M1.)
+## Running
+
+```bash
+dotnet run --project src/MuClient.Tui -- <host> <port> [--tls] [--insecure] [--name NAME]
+muglyph --help    # once published
+```
+
+In-app: **PgUp/PgDn** scroll · **Up/Down** input history · **Tab** complete · **Ctrl+Q** quit.
+
+## Testing
+
+The test projects use [TUnit], which runs on the Microsoft.Testing.Platform. Run each directly
+(the classic `dotnet test`/VSTest path is not used by MTP on .NET 10):
+
+```bash
+dotnet run --project tests/MuClient.Core.Tests
+dotnet run --project tests/MuClient.Graphics.Tests
+dotnet run --project tests/MuClient.Scripting.Tests
+```
 
 ## License
 
 [MIT](LICENSE) © 2026 Harry Cordewener
+
+[TelnetNegotiationCore]: https://www.nuget.org/packages/TelnetNegotiationCore/
+[TUnit]: https://github.com/thomhurst/TUnit

@@ -1,0 +1,25 @@
+<Project>
+
+  <!-- Central package version management for the whole solution. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- TUI toolkit (v2 is prerelease; API differs completely from v1). -->
+    <PackageVersion Include="Terminal.Gui" Version="2.4.18-develop.6" />
+
+    <!-- Telnet negotiation: TELOPT/NAWS/MTTS/EOR/CHARSET/MSSP/GMCP/MSDP/MCCP/MXP negotiation. -->
+    <PackageVersion Include="TelnetNegotiationCore" Version="2.5.3" />
+
+    <!-- Sandboxed Lua scripting (pure-managed, no native deps). -->
+    <PackageVersion Include="MoonSharp" Version="2.0.0" />
+
+    <!-- Logging abstractions (TelnetNegotiationCore takes an ILogger). -->
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.2" />
+
+    <!-- Test stack: TUnit (source-generated, runs on Microsoft.Testing.Platform). -->
+    <PackageVersion Include="TUnit" Version="1.61.38" />
+  </ItemGroup>
+
+</Project>
