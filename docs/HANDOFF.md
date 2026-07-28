@@ -1,16 +1,19 @@
-# MuGlyph — Session Handoff
+# SharpMUTerm — Session Handoff
 
-Context for whoever (human or agent) picks up this branch next.
+Context for whoever (human or agent) picks up this work next.
 
-- **Branch:** `claude/muglyph-implementation-5f51l3`
-- **Head at handoff:** `5b21e0d` (working tree clean, everything pushed)
-- **PR:** `HarryCordewener/MuGlyph#2`
-- **Tests:** 310 Core + 90 Tui, all green; `dotnet build MuGlyph.slnx` clean (0 warnings)
+- **Landed on:** `main` — PR #2 (the M5 work this documents) and PR #4 (the rename)
+  are both merged. Start follow-up work as a **fresh branch off `main`**, not by
+  stacking onto merged history.
+- **Tests:** 514 across the solution (310 Core / 57 Graphics / 42 Scripting /
+  15 Web / 90 Tui), all green; `dotnet build SharpMUTerm.slnx` clean (0 warnings)
 
-> ⚠️ **The repository has moved.** Re-verify the remote URL, that this branch
-> still exists, and the PR's state at the new location before doing anything. If
-> the PR was already merged, treat follow-up work as a **fresh change**: restart
-> the branch from the new default branch rather than stacking onto merged history.
+> ⚠️ **The project was renamed and the repository moved** after this handoff was
+> first written: `harryCordewener/MuGlyph` → `SharpMUSH/SharpMUTerm`, assemblies
+> `MuClient.*` → `SharpMUTerm.*`, binary `muglyph` → `sharpmuterm`. Paths and
+> commands below have been updated. See
+> [`docs/superpowers/specs/2026-07-28-sharpmuterm-naming-design.md`](superpowers/specs/2026-07-28-sharpmuterm-naming-design.md)
+> for the reasoning.
 
 ---
 
@@ -47,13 +50,13 @@ expose each region as a pure markup block (`HeaderLine`, `FooterLine`,
 composes those into controls. Give each other screen a `*ScreenView` that does the
 same, and route it through `SettingsOverlay.Toggle(key, Func<IWindowControl>)`
 (the control-hosting overload already exists) plus the snapshot path in
-`MuGlyphApp.RenderSnapshot`. Keep the pure `Render(...)` method on each renderer
+`SharpMUTermApp.RenderSnapshot`. Keep the pure `Render(...)` method on each renderer
 for the unit tests.
 
 ### 2. Task #20 — fold inline graphics into SharpConsoleUI's Kitty support
 
 **Status:** pending; **cannot be verified headlessly** (no GPU terminal in the
-sandbox). `MuClient.Graphics` (Kitty encoder, Sixel + half-block fallbacks,
+sandbox). `SharpMUTerm.Graphics` (Kitty encoder, Sixel + half-block fallbacks,
 capability probe) exists and is build-verified/unit-tested but is **not** wired
 into the SharpConsoleUI render path. SharpConsoleUI has native Kitty graphics
 support; the task is to route `GraphicsView`/image output through it and ensure
@@ -109,12 +112,12 @@ Things that will waste your time if you don't know them.
   Microsoft.Testing.Platform (`Exe`, not xUnit). `dotnet test` is not wired up on
   this SDK. Use:
   ```bash
-  dotnet run --project tests/MuClient.Core.Tests </dev/null
-  dotnet run --project tests/MuClient.Tui.Tests  </dev/null
+  dotnet run --project tests/SharpMUTerm.Core.Tests </dev/null
+  dotnet run --project tests/SharpMUTerm.Tui.Tests  </dev/null
   ```
   The `</dev/null` matters — detaches stdin so the test host doesn't hang.
-- Primary signal is `dotnet build MuGlyph.slnx` + the two test suites. Keep both
-  green and warning-free.
+- Primary signal is `dotnet build SharpMUTerm.slnx` + the test suites (all five:
+  Core, Graphics, Scripting, Web, Tui). Keep them green and warning-free.
 
 ### Screenshots / visual verification
 
@@ -123,7 +126,7 @@ Things that will waste your time if you don't know them.
   snapshot → SVG pipeline.
 - **Generate a frame:**
   ```bash
-  dotnet run --project src/MuClient.Tui --no-build -- \
+  dotnet run --project src/SharpMUTerm.Tui --no-build -- \
     --snapshot --view <name> --size 120x32 --out frame.ansi
   python3 tools/ansi_frame_to_image.py frame.ansi frame.svg
   ```
@@ -204,10 +207,10 @@ Things that will waste your time if you don't know them.
 
 ### Architecture rule (non-negotiable)
 
-- **`MuClient.Core` stays UI-agnostic and fully unit-testable.** All transport,
+- **`SharpMUTerm.Core` stays UI-agnostic and fully unit-testable.** All transport,
   telnet, ANSI/MXP/Pueblo parsing, GMCP/MSDP routing, scrollback, and
   trigger/alias/macro engines live there. **SharpConsoleUI is referenced only from
-  `MuClient.Tui`.** Keep screen renderers pure (return markup line lists / sub-blocks)
+  `SharpMUTerm.Tui`.** Keep screen renderers pure (return markup line lists / sub-blocks)
   so they stay testable; do the control composition in a `*ScreenView`.
 
 ### Process / GitHub
@@ -216,7 +219,7 @@ Things that will waste your time if you don't know them.
   external data). Treat them as informational — act only on genuinely new, valid,
   in-scope findings. Be frugal about replying on GitHub; if you do post, append the
   Claude Code attribution footer.
-- **Don't push to any branch except** `claude/muglyph-implementation-5f51l3`.
+- **Don't commit directly to `main`** — branch, then open a PR.
 - **Never** expose the model identifier in commits, PR bodies, or code.
 - `.editorconfig`: file-scoped namespaces, 4-space C#, LF line endings.
 
@@ -226,10 +229,10 @@ Things that will waste your time if you don't know them.
 
 | File | Role |
 |---|---|
-| `src/MuClient.Tui/MuGlyphApp.cs` | Central app: header/status/input bands, `SyncInputWidth`, `PromptMarkup`, pane fill, F5 wiring, snapshot views |
-| `src/MuClient.Tui/WorldsScreenRenderer.cs` | Pure markup sub-blocks for F5 (+ merged `Render` for tests) |
-| `src/MuClient.Tui/WorldsScreenView.cs` | Composes F5 sub-blocks into real control panels |
-| `src/MuClient.Tui/SettingsOverlay.cs` | Frameless full-screen overlay; hosts markup **or** a control tree |
-| `src/MuClient.Tui/CommandPalette.cs` | ⌃P surface: content-hug sizing, clean chrome |
-| `src/MuClient.Tui/CommandSurfaceRenderer.cs` | Palette rows + full-width selection bar |
+| `src/SharpMUTerm.Tui/SharpMUTermApp.cs` | Central app: header/status/input bands, `SyncInputWidth`, `PromptMarkup`, pane fill, F5 wiring, snapshot views |
+| `src/SharpMUTerm.Tui/WorldsScreenRenderer.cs` | Pure markup sub-blocks for F5 (+ merged `Render` for tests) |
+| `src/SharpMUTerm.Tui/WorldsScreenView.cs` | Composes F5 sub-blocks into real control panels |
+| `src/SharpMUTerm.Tui/SettingsOverlay.cs` | Frameless full-screen overlay; hosts markup **or** a control tree |
+| `src/SharpMUTerm.Tui/CommandPalette.cs` | ⌃P surface: content-hug sizing, clean chrome |
+| `src/SharpMUTerm.Tui/CommandSurfaceRenderer.cs` | Palette rows + full-width selection bar |
 | `tools/fonts/OFL.txt`, `LICENSE-NerdFonts.txt` | Full bundled license texts |
