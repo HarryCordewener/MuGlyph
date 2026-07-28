@@ -1,4 +1,5 @@
 using MuClient.Core.Commands;
+using MuClient.Core.Automation;
 using MuClient.Core.Configuration;
 using MuClient.Core.Session;
 using MuClient.Core.Text;
@@ -263,11 +264,21 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             Name = "Aetherfall",
             Host = "aetherfall.mux",
             Port = 4201,
+            UseTls = true,
+            Encoding = "UTF-8",
+            KeepaliveSeconds = 30,
             Accent = AccentPalette[0],
             Characters =
             {
-                new CharacterDefinition { Name = "Corvid" },
-                new CharacterDefinition { Name = "Rookery" },
+                new CharacterDefinition
+                {
+                    Name = "Corvid",
+                    AutoLogin = true,
+                    OnConnect = "@@ +who; look",
+                    TriggerSets = { "Comms", "Trade" },
+                    Logging = new LoggingSettings { Format = LogFormat.Html },
+                },
+                new CharacterDefinition { Name = "Rookery", TriggerSets = { "Comms" } },
             },
         });
 
@@ -276,12 +287,73 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             Name = "Grapevine",
             Host = "grapevine.haus",
             Port = 4000,
+            Encoding = "ISO-8859-1",
             Accent = AccentPalette[1],
             Characters = { new CharacterDefinition { Name = "Thistle" } },
         });
 
+        SeedDemoTriggerSets();
+
         _demoActiveKey = "Aetherfall.Corvid";
         _connectedKeys.Add("Aetherfall.Corvid");
+    }
+
+    /// <summary>Seeds representative trigger sets (triggers/aliases/macros/timers) for demo snapshots.</summary>
+    private void SeedDemoTriggerSets()
+    {
+        var teal = TerminalColor.FromRgb(0x00, 0xf5, 0xb7);
+        var pink = TerminalColor.FromRgb(0xe5, 0x8f, 0xb0);
+
+        _config.TriggerSets.Add(new TriggerSet
+        {
+            Name = "Comms",
+            Description = "channel + page routing",
+            Triggers =
+            {
+                new Trigger
+                {
+                    Name = "public",
+                    Pattern = @"^\[public\]",
+                    Actions = new TriggerActions { SpawnTarget = "Chat", HighlightForeground = teal },
+                },
+                new Trigger
+                {
+                    Name = "page",
+                    Pattern = @"^\w+ pages:",
+                    Actions = new TriggerActions { SpawnTarget = "pages", HighlightForeground = pink },
+                },
+                new Trigger
+                {
+                    Name = "mute spam",
+                    Pattern = @"has connected\.$",
+                    Enabled = false,
+                    Actions = new TriggerActions { Gag = true },
+                },
+            },
+            Aliases =
+            {
+                new Alias { Name = "say", Pattern = @"^'(.*)", Substitution = "say $1" },
+                new Alias { Name = "wtf", Pattern = @"^wtf$", Substitution = "who\nfinger $1" },
+            },
+            Macros = { new Macro { Key = "Num5", Command = "look" }, new Macro { Key = "Ctrl+F1", Command = "score" } },
+            Timers = { new TimerDefinition { Name = "keepalive", IntervalSeconds = 60, Command = "@@idle" } },
+        });
+
+        _config.TriggerSets.Add(new TriggerSet
+        {
+            Name = "Trade",
+            Description = "auction + market watch",
+            Triggers =
+            {
+                new Trigger
+                {
+                    Name = "auction",
+                    Pattern = @"^\[trade\]",
+                    Actions = new TriggerActions { SpawnTarget = "trade", HighlightForeground = TerminalColor.FromRgb(0xe5, 0xc0, 0x7b) },
+                },
+            },
+            Timers = { new TimerDefinition { Name = "market", IntervalSeconds = 300, Command = "prices", OneShot = false } },
+        });
     }
 
     private static StyledSpan Link(string command) => new(
