@@ -96,7 +96,26 @@ public static class ConfigurationMigrator
             });
         }
 
-        if (world["characters"] is not JsonArray)
+        if (world["characters"] is JsonArray characters)
+        {
+            // Partially-migrated file: wire the new set into the existing characters so the
+            // freshly-lifted automation isn't orphaned in an unreferenced set.
+            if (setName is not null)
+            {
+                foreach (var characterNode in characters.OfType<JsonObject>())
+                {
+                    if (characterNode["triggerSets"] is JsonArray existing)
+                    {
+                        existing.Add(setName);
+                    }
+                    else
+                    {
+                        characterNode["triggerSets"] = new JsonArray(setName);
+                    }
+                }
+            }
+        }
+        else
         {
             var character = new JsonObject { ["name"] = worldName };
             if (setName is not null)

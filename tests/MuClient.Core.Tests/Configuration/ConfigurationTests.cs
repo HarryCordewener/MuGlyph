@@ -136,6 +136,86 @@ public class ConfigurationTests
     }
 
     [Test]
+    public async Task Deserialize_V1Config_WithExistingCharacters_WiresMigratedSetIntoEach()
+    {
+        // Partially-migrated file: characters already present *and* legacy automation still on the
+        // world. The lifted set must be referenced by every existing character, not orphaned.
+        const string v1 = """
+            {
+              "version": 1,
+              "worlds": [
+                {
+                  "name": "Hybrid",
+                  "host": "h",
+                  "port": 1,
+                  "characters": [
+                    { "name": "Alice", "triggerSets": ["Existing"] },
+                    { "name": "Bob" }
+                  ],
+                  "triggers": [ { "pattern": "waves" } ]
+                }
+              ]
+            }
+            """;
+
+        var config = ConfigurationStore.Deserialize(v1);
+
+        await Assert.That(config.TriggerSets).HasSingleItem();
+        var setName = config.TriggerSets[0].Name;
+        await Assert.That(setName).IsEqualTo("Hybrid");
+
+        var world = config.Worlds[0];
+        await Assert.That(world.Characters).Count().IsEqualTo(2);
+        await Assert.That(world.Characters[0].Name).IsEqualTo("Alice");
+        await Assert.That(world.Characters[0].TriggerSets).IsEquivalentTo(new[] { "Existing", "Hybrid" });
+        await Assert.That(world.Characters[1].TriggerSets).IsEquivalentTo(new[] { "Hybrid" });
+    }
+
+    [Test]
+    public async Task Deserialize_V1Config_WithExistingCharacters_NoAutomation_LeavesThemUntouched()
+    {
+        const string v1 = """
+            {
+              "version": 1,
+              "worlds": [
+                {
+                  "name": "Clean",
+                  "host": "h",
+                  "port": 1,
+                  "characters": [ { "name": "Alice", "triggerSets": ["Existing"] } ]
+                }
+              ]
+            }
+            """;
+
+        var config = ConfigurationStore.Deserialize(v1);
+
+        await Assert.That(config.TriggerSets).IsEmpty();
+        await Assert.That(config.Worlds[0].Characters[0].TriggerSets).IsEquivalentTo(new[] { "Existing" });
+    }
+
+    [Test]
+    public async Task Password_IsNeverSerialized()
+    {
+        var config = new AppConfiguration
+        {
+            Worlds =
+            {
+                new WorldDefinition
+                {
+                    Name = "W",
+                    Characters = { new CharacterDefinition { Name = "Secret", Password = "swordfish" } },
+                },
+            },
+        };
+
+        var json = ConfigurationStore.Serialize(config);
+
+        await Assert.That(json).DoesNotContain("swordfish");
+        await Assert.That(ConfigurationStore.Deserialize(json).Worlds[0].Characters[0].Password).IsNull();
+    }
+
+    [Test]
     public async Task ColorConverter_RoundTripsAllKinds()
     {
         await Assert.That(TerminalColorJsonConverter.ToString(TerminalColor.Default)).IsEqualTo("default");

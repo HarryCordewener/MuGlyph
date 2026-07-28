@@ -215,6 +215,42 @@ public class WorkspaceLayoutTests
     }
 
     [Test]
+    public async Task RemoveWindow_ActiveTabFromMiddle_KeepsFocusOnNextTab()
+    {
+        var w = new WorkspaceLayout(new[] { "a", "b", "c" });
+        w.SetActiveTab(w.FocusedPaneId, "b"); // active is the middle tab
+
+        w.RemoveWindow("b");
+
+        await Assert.That(w.FocusedPane.Tabs).IsEquivalentTo(new[] { "a", "c" });
+        await Assert.That(w.FocusedPane.ActiveTab).IsEqualTo("c"); // the tab that slid into b's slot
+    }
+
+    [Test]
+    public async Task RemoveWindow_ActiveTabAtTail_FallsBackToPrevious()
+    {
+        var w = new WorkspaceLayout(new[] { "a", "b", "c" });
+        w.SetActiveTab(w.FocusedPaneId, "c"); // active is the last tab
+
+        w.RemoveWindow("c");
+
+        await Assert.That(w.FocusedPane.Tabs).IsEquivalentTo(new[] { "a", "b" });
+        await Assert.That(w.FocusedPane.ActiveTab).IsEqualTo("b"); // clamped back to the new tail
+    }
+
+    [Test]
+    public async Task AddWindow_UnresolvedPaneId_ReturnsFalse_AndDoesNotAdd()
+    {
+        var w = new WorkspaceLayout(new[] { "a" });
+
+        var ok = w.AddWindow("b", "no-such-pane");
+
+        await Assert.That(ok).IsFalse();
+        await Assert.That(w.FindWindow("b")).IsNull();
+        await Assert.That(w.FocusedPane.Tabs).IsEquivalentTo(new[] { "a" });
+    }
+
+    [Test]
     public async Task ToggleFreezeFocused_TogglesPaneFlag()
     {
         var w = new WorkspaceLayout(new[] { "a" });

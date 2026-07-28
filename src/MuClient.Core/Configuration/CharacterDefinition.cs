@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace MuClient.Core.Configuration;
 
 /// <summary>
@@ -9,7 +11,14 @@ public sealed class CharacterDefinition
 {
     public string Name { get; set; } = "New Character";
 
-    /// <summary>Login password. Should be keychain-backed by the host; avoid persisting in plain JSON.</summary>
+    /// <summary>
+    /// Login password, held in memory for the session only. It is deliberately <b>never</b>
+    /// serialized (<see cref="JsonIgnoreAttribute"/>) so it can't leak into plaintext
+    /// <c>config.json</c>; a secure OS credential store (DPAPI/Keychain/libsecret) is the intended
+    /// backing and is a follow-up. Callers supply it per session, or embed it in
+    /// <see cref="ConnectString"/> if they knowingly accept plaintext.
+    /// </summary>
+    [JsonIgnore]
     public string? Password { get; set; }
 
     /// <summary>The login line to send. Defaults to <c>connect {Name} {Password}</c> when null.</summary>

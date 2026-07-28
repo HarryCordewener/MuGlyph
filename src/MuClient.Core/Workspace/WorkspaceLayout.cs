@@ -3,8 +3,11 @@ namespace MuClient.Core.Workspaces;
 /// <summary>
 /// The pure, UI-agnostic model of a tmux-style pane workspace: a recursive split tree of panes,
 /// each hosting a tab strip of window ids, plus focus and zoom state. All mutation goes through
-/// this type so the invariants — no empty panes, no single-child splits, always at least one pane,
-/// a valid focus — hold after every operation. The Terminal.Gui layer renders from this model.
+/// this type so the invariants — no single-child splits, always at least one pane, a valid focus —
+/// hold after every operation. Empty panes are pruned, with one exception: closing the final
+/// pane leaves a single empty pane (an <c>ActiveTab</c> of <c>null</c>) rather than no pane at all,
+/// so consumers such as the Terminal.Gui renderer must not assume every pane has an active tab.
+/// The Terminal.Gui layer renders from this model.
 /// </summary>
 public sealed class WorkspaceLayout
 {
@@ -122,13 +125,20 @@ public sealed class WorkspaceLayout
     /// <summary>
     /// Adds a window as a tab in a pane (the focused pane by default). When
     /// <paramref name="activate"/> is true it becomes the pane's active tab; otherwise it is added in
-    /// the background (but an empty pane always activates its first tab).
+    /// the background (but an empty pane always activates its first tab). Returns false without
+    /// changing anything if a non-null <paramref name="paneId"/> does not resolve, matching
+    /// <see cref="MoveWindowToPane"/> / <see cref="SplitWithWindow"/>.
     /// </summary>
-    public void AddWindow(string windowId, string? paneId = null, bool activate = true)
+    public bool AddWindow(string windowId, string? paneId = null, bool activate = true)
     {
         ArgumentNullException.ThrowIfNull(windowId);
+        var pane = paneId is null ? FocusedPane : FindPane(paneId);
+        if (pane is null)
+        {
+            return false;
+        }
+
         DetachWindow(windowId);
-        var pane = paneId is null ? FocusedPane : FindPane(paneId) ?? FocusedPane;
         pane.Tabs.Add(windowId);
         if (activate || pane.ActiveIndex < 0)
         {
@@ -136,6 +146,7 @@ public sealed class WorkspaceLayout
         }
 
         PruneAndFix();
+        return true;
     }
 
     /// <summary>Removes a window wherever it lives, pruning any pane it emptied. Returns false if absent.</summary>
@@ -239,7 +250,11 @@ public sealed class WorkspaceLayout
             }
 
             pane.Tabs.RemoveAt(index);
-            if (pane.ActiveIndex >= index && pane.ActiveIndex > 0)
+
+            // Only a tab strictly before the active one shifts the active index down. Removing the
+            // active tab itself leaves the index pointing at what slid into its slot (the next tab);
+            // ClampActive handles removing the active tab at the tail.
+            if (pane.ActiveIndex > index)
             {
                 pane.ActiveIndex--;
             }
