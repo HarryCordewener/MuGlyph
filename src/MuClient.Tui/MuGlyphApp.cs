@@ -133,7 +133,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         // The input region gets its own subtly-elevated background so it's easy to tell apart from the
         // output body above and the status bar below.
         // The input bar gets its own clearly-elevated background so it reads as a distinct region.
-        var inputBg = ToColor(new Rgb(0x2b, 0x2f, 0x3d));
+        var inputBg = ToColor(new Rgb(0x33, 0x39, 0x4c));
 
         // Draft-safe history is ours (InputHistory), not the framework's: ↑ stashes the live draft,
         // ↓ past the newest entry restores it. So the built-in recall is off.
