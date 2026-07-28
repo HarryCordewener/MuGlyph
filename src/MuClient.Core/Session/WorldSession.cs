@@ -28,13 +28,22 @@ public sealed class WorldSession : IAsyncDisposable
     private readonly ILogSink? _log;
     private ITelnetSession? _telnet;
 
+    /// <summary>
+    /// Creates a session for a world and (optionally) the character being connected as. Automation
+    /// is composed from the union of <paramref name="triggerSets"/> — resolve them for a character
+    /// via <see cref="AppConfiguration.ResolveTriggerSets"/>. A null character yields an anonymous
+    /// session (e.g. an ad-hoc command-line connection) with no auto-login.
+    /// </summary>
     public WorldSession(
         WorldDefinition world,
+        CharacterDefinition? character = null,
+        IReadOnlyList<TriggerSet>? triggerSets = null,
         Func<ConnectionOptions, ITelnetSession>? sessionFactory = null,
         ILogSink? log = null,
         int scrollbackCapacity = 20_000)
     {
         World = world ?? throw new ArgumentNullException(nameof(world));
+        Character = character;
         _sessionFactory = sessionFactory ?? DefaultSessionFactory;
         _log = log;
         _parser = CreateParser(world.ContentFormat);
@@ -42,9 +51,14 @@ public sealed class WorldSession : IAsyncDisposable
             ? new EmojiSubstitutor(world.Emoji.Emoticons, world.Emoji.Shortcodes)
             : null;
         Scrollback = new ScrollbackBuffer(scrollbackCapacity);
-        Triggers = new TriggerEngine(world.Triggers);
-        Aliases = new AliasEngine(world.Aliases);
-        Macros = new MacroEngine(world.Macros);
+
+        var sets = triggerSets ?? Array.Empty<TriggerSet>();
+        Triggers = new TriggerEngine(sets.SelectMany(s => s.Triggers));
+        Aliases = new AliasEngine(sets.SelectMany(s => s.Aliases));
+        Macros = new MacroEngine(sets.SelectMany(s => s.Macros));
+        ScriptFiles = sets.SelectMany(s => s.ScriptFiles)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
     }
 
     private static ILineParser CreateParser(ContentFormat format) => format switch
@@ -55,6 +69,18 @@ public sealed class WorldSession : IAsyncDisposable
     };
 
     public WorldDefinition World { get; }
+
+    /// <summary>The character this session connects as, or null for an anonymous connection.</summary>
+    public CharacterDefinition? Character { get; }
+
+    /// <summary>
+    /// Stable identity for this session: <c>world.character</c>, or just the world name when
+    /// connecting anonymously. Used to key open sessions in the <see cref="SessionManager"/>.
+    /// </summary>
+    public string SessionKey => Character is null ? World.Name : $"{World.Name}.{Character.Name}";
+
+    /// <summary>Lua script files contributed by the active trigger sets, de-duplicated.</summary>
+    public IReadOnlyList<string> ScriptFiles { get; }
 
     public ScrollbackBuffer Scrollback { get; }
 
@@ -121,6 +147,7 @@ public sealed class WorldSession : IAsyncDisposable
             await telnet.ConnectAsync(cancellationToken).ConfigureAwait(false);
             SetState(ConnectionState.Connected, null);
             PrintSystem("*** Connected.");
+            await SendLoginAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -207,6 +234,44 @@ public sealed class WorldSession : IAsyncDisposable
         }
 
         await SendRawAsync(input, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Sends the character's auto-login line (when <see cref="CharacterDefinition.AutoLogin"/> is
+    /// set) followed by its semicolon-separated <see cref="CharacterDefinition.OnConnect"/> commands.
+    /// A no-op for anonymous sessions.
+    /// </summary>
+    private async Task SendLoginAsync(CancellationToken cancellationToken)
+    {
+        var character = Character;
+        if (character is null)
+        {
+            return;
+        }
+
+        if (character.AutoLogin)
+        {
+            await SendRawAsync(character.ResolveConnectString(), cancellationToken).ConfigureAwait(false);
+        }
+
+        foreach (var command in SplitCommands(character.OnConnect))
+        {
+            await SendRawAsync(command, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Splits a semicolon-separated command string, trimming and dropping blank segments.</summary>
+    private static IEnumerable<string> SplitCommands(string? commands)
+    {
+        if (string.IsNullOrWhiteSpace(commands))
+        {
+            yield break;
+        }
+
+        foreach (var part in commands.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            yield return part;
+        }
     }
 
     /// <summary>Sends a command verbatim (no alias expansion, no echo).</summary>

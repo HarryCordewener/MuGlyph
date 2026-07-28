@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace MuClient.Core.Configuration;
@@ -53,7 +54,15 @@ public static class ConfigurationStore
     public static AppConfiguration Deserialize(string json)
     {
         ArgumentNullException.ThrowIfNull(json);
-        return JsonSerializer.Deserialize<AppConfiguration>(json, SerializerOptions) ?? new AppConfiguration();
+
+        // Parse to a DOM first so older files can be upgraded to the current schema in place.
+        if (JsonNode.Parse(json) is not JsonObject root)
+        {
+            return new AppConfiguration();
+        }
+
+        ConfigurationMigrator.Migrate(root);
+        return root.Deserialize<AppConfiguration>(SerializerOptions) ?? new AppConfiguration();
     }
 
     public static string Serialize(AppConfiguration configuration)

@@ -13,7 +13,7 @@ Key reframing from research: **"GPU-enabled" is a property of the terminal emula
 - **Scope:** broad BeipMU parity (phased into milestones below).
 - **Target framework:** **.NET 10**.
 - **Protocol coverage:** aim for compatibility with *all* common MU\* protocols; **MXP** is first-class, and **Pueblo** (and its enhancements) are explicitly in scope alongside GMCP/MSDP/MSSP/MCCP.
-- **Config:** **fresh JSON** schema of our own, plus a **BeipMU import/migration** path for initial onboarding (parse BeipMU's settings to seed worlds/triggers/aliases).
+- **Config:** **fresh JSON** schema of our own — worlds (servers) hold **characters**; automation lives in shared, named **trigger sets** that characters opt into by name — versioned with automatic migration between schema revisions.
 
 ---
 

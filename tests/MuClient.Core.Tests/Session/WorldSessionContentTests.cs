@@ -9,7 +9,7 @@ public class WorldSessionContentTests
     private static (WorldSession session, FakeTelnetSession telnet) Create(WorldDefinition world)
     {
         var telnet = new FakeTelnetSession();
-        return (new WorldSession(world, _ => telnet), telnet);
+        return (new WorldSession(world, sessionFactory: _ => telnet), telnet);
     }
 
     private static StyledLine FindLine(WorldSession session, string text) =>

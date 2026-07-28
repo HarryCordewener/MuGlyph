@@ -2,11 +2,14 @@ using MuClient.Core.Theming;
 
 namespace MuClient.Core.Configuration;
 
-/// <summary>Top-level MuGlyph configuration: global preferences plus the saved worlds.</summary>
+/// <summary>Top-level MuGlyph configuration: global preferences, saved worlds, and shared trigger sets.</summary>
 public sealed class AppConfiguration
 {
+    /// <summary>The current on-disk schema version. Older configs are upgraded by <see cref="ConfigurationMigrator"/>.</summary>
+    public const int CurrentVersion = 2;
+
     /// <summary>Schema version, for future migrations.</summary>
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = CurrentVersion;
 
     /// <summary>The name of the active built-in theme (see <see cref="ThemeLibrary"/>).</summary>
     public string ThemeName { get; set; } = "Dark";
@@ -17,7 +20,7 @@ public sealed class AppConfiguration
     /// </summary>
     public Theme Theme { get; set; } = ThemeLibrary.Dark();
 
-    /// <summary>Maximum scrollback lines retained per world.</summary>
+    /// <summary>Maximum scrollback lines retained per session.</summary>
     public int ScrollbackLines { get; set; } = 20_000;
 
     /// <summary>
@@ -29,5 +32,41 @@ public sealed class AppConfiguration
     /// <summary>Default charset preference order (IANA names), most-preferred first.</summary>
     public List<string> CharsetOrder { get; set; } = new() { "utf-8", "iso-8859-1" };
 
+    /// <summary>The saved worlds (servers), each holding its own characters.</summary>
     public List<WorldDefinition> Worlds { get; set; } = new();
+
+    /// <summary>
+    /// World-independent automation bundles. Characters opt in by name via
+    /// <see cref="CharacterDefinition.TriggerSets"/>, so a set can be shared across worlds and
+    /// characters. See <see cref="ResolveTriggerSets"/>.
+    /// </summary>
+    public List<TriggerSet> TriggerSets { get; set; } = new();
+
+    /// <summary>
+    /// Resolves the <see cref="TriggerSet"/>s a character has opted into, in the character's own
+    /// order, matching by name case-insensitively. Names with no matching set are skipped, and
+    /// each set is returned at most once even if referenced twice.
+    /// </summary>
+    public IReadOnlyList<TriggerSet> ResolveTriggerSets(CharacterDefinition character)
+    {
+        ArgumentNullException.ThrowIfNull(character);
+
+        var byName = new Dictionary<string, TriggerSet>(StringComparer.OrdinalIgnoreCase);
+        foreach (var set in TriggerSets)
+        {
+            byName.TryAdd(set.Name, set);
+        }
+
+        var resolved = new List<TriggerSet>();
+        var seen = new HashSet<TriggerSet>();
+        foreach (var name in character.TriggerSets)
+        {
+            if (byName.TryGetValue(name, out var set) && seen.Add(set))
+            {
+                resolved.Add(set);
+            }
+        }
+
+        return resolved;
+    }
 }

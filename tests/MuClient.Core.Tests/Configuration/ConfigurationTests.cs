@@ -7,7 +7,7 @@ namespace MuClient.Core.Tests.Configuration;
 public class ConfigurationTests
 {
     [Test]
-    public async Task RoundTrip_PreservesWorldsTriggersAndColors()
+    public async Task RoundTrip_PreservesWorldsCharactersTriggerSetsAndColors()
     {
         var config = new AppConfiguration
         {
@@ -20,6 +20,17 @@ public class ConfigurationTests
                     Host = "mush.example.org",
                     Port = 4201,
                     UseTls = true,
+                    Characters =
+                    {
+                        new CharacterDefinition { Name = "Wizard", TriggerSets = { "Combat" } },
+                    },
+                },
+            },
+            TriggerSets =
+            {
+                new TriggerSet
+                {
+                    Name = "Combat",
                     Triggers =
                     {
                         new Trigger
@@ -38,16 +49,42 @@ public class ConfigurationTests
         var json = ConfigurationStore.Serialize(config);
         var restored = ConfigurationStore.Deserialize(json);
 
+        await Assert.That(restored.Version).IsEqualTo(AppConfiguration.CurrentVersion);
         await Assert.That(restored.ScrollbackLines).IsEqualTo(5000);
         await Assert.That(restored.Worlds).HasSingleItem();
         var world = restored.Worlds[0];
         await Assert.That(world.Name).IsEqualTo("Test MUSH");
         await Assert.That(world.Port).IsEqualTo(4201);
         await Assert.That(world.UseTls).IsTrue();
-        await Assert.That(world.Triggers).HasSingleItem();
-        await Assert.That(world.Triggers[0].Actions.HighlightForeground).IsEqualTo(TerminalColor.FromRgb(255, 215, 0));
-        await Assert.That(world.Aliases[0].Substitution).IsEqualTo("\"$1");
-        await Assert.That(world.Macros[0].Command).IsEqualTo("look");
+        await Assert.That(world.Characters[0].Name).IsEqualTo("Wizard");
+        await Assert.That(world.Characters[0].TriggerSets).Contains("Combat");
+
+        await Assert.That(restored.TriggerSets).HasSingleItem();
+        var set = restored.TriggerSets[0];
+        await Assert.That(set.Triggers[0].Actions.HighlightForeground).IsEqualTo(TerminalColor.FromRgb(255, 215, 0));
+        await Assert.That(set.Aliases[0].Substitution).IsEqualTo("\"$1");
+        await Assert.That(set.Macros[0].Command).IsEqualTo("look");
+    }
+
+    [Test]
+    public async Task ResolveTriggerSets_ReturnsCharactersSetsInOrder_SkippingMissingAndDuplicates()
+    {
+        var config = new AppConfiguration
+        {
+            TriggerSets =
+            {
+                new TriggerSet { Name = "Comms" },
+                new TriggerSet { Name = "Trade" },
+            },
+        };
+        var character = new CharacterDefinition
+        {
+            TriggerSets = { "trade", "Comms", "Missing", "Trade" },
+        };
+
+        var resolved = config.ResolveTriggerSets(character);
+
+        await Assert.That(resolved.Select(s => s.Name)).IsEquivalentTo(new[] { "Trade", "Comms" });
     }
 
     [Test]
@@ -55,7 +92,47 @@ public class ConfigurationTests
     {
         var config = ConfigurationStore.Deserialize("{}");
         await Assert.That(config.Worlds).IsEmpty();
-        await Assert.That(config.Version).IsEqualTo(1);
+        await Assert.That(config.Version).IsEqualTo(AppConfiguration.CurrentVersion);
+    }
+
+    [Test]
+    public async Task Deserialize_V1Config_MigratesAutomationIntoTriggerSetsAndCharacter()
+    {
+        const string v1 = """
+            {
+              "version": 1,
+              "worlds": [
+                {
+                  "name": "Old World",
+                  "host": "old.example.net",
+                  "port": 6250,
+                  "triggers": [ { "name": "hail", "pattern": "waves" } ],
+                  "aliases": [ { "pattern": "^gt (.+)", "substitution": "grouptell $1" } ],
+                  "macros": [ { "key": "F1", "command": "look" } ],
+                  "logging": { "format": "Html" }
+                }
+              ]
+            }
+            """;
+
+        var config = ConfigurationStore.Deserialize(v1);
+
+        await Assert.That(config.Version).IsEqualTo(AppConfiguration.CurrentVersion);
+        await Assert.That(config.Worlds).HasSingleItem();
+        var world = config.Worlds[0];
+        await Assert.That(world.Host).IsEqualTo("old.example.net");
+        await Assert.That(world.Characters).HasSingleItem();
+
+        var character = world.Characters[0];
+        await Assert.That(character.TriggerSets).Contains("Old World");
+        await Assert.That(character.Logging.Format).IsEqualTo(LogFormat.Html);
+
+        await Assert.That(config.TriggerSets).HasSingleItem();
+        var set = config.TriggerSets[0];
+        await Assert.That(set.Name).IsEqualTo("Old World");
+        await Assert.That(set.Triggers[0].Pattern).IsEqualTo("waves");
+        await Assert.That(set.Aliases[0].Substitution).IsEqualTo("grouptell $1");
+        await Assert.That(set.Macros[0].Command).IsEqualTo("look");
     }
 
     [Test]
@@ -67,48 +144,5 @@ public class ConfigurationTests
         await Assert.That(TerminalColorJsonConverter.Parse("idx:196")).IsEqualTo(TerminalColor.FromIndex(196));
         await Assert.That(TerminalColorJsonConverter.Parse("rgb:1,2,3")).IsEqualTo(TerminalColor.FromRgb(1, 2, 3));
         await Assert.That(TerminalColorJsonConverter.Parse("garbage")).IsEqualTo(TerminalColor.Default);
-    }
-}
-
-public class BeipMuImporterTests
-{
-    [Test]
-    public async Task Import_ReadsWorldsAndAutomation()
-    {
-        const string xml = """
-            <Settings>
-              <Worlds>
-                <World name="Furry MUCK" host="muck.example.net" port="8888" ssl="false">
-                  <Triggers>
-                    <Trigger name="page" pattern="pages you" gag="false" send="reply hi" />
-                  </Triggers>
-                  <Aliases>
-                    <Alias name="gt" pattern="^gt (.+)" send="grouptell $1" />
-                  </Aliases>
-                </World>
-                <World name="Secure" host="secure.example.org" port="7777" tls="true" />
-              </Worlds>
-            </Settings>
-            """;
-
-        var worlds = BeipMuImporter.Import(xml);
-        await Assert.That(worlds).Count().IsEqualTo(2);
-
-        var muck = worlds[0];
-        await Assert.That(muck.Name).IsEqualTo("Furry MUCK");
-        await Assert.That(muck.Host).IsEqualTo("muck.example.net");
-        await Assert.That(muck.Port).IsEqualTo(8888);
-        await Assert.That(muck.Triggers).HasSingleItem();
-        await Assert.That(muck.Triggers[0].Actions.SendResponse).IsEqualTo("reply hi");
-        await Assert.That(muck.Aliases[0].Substitution).IsEqualTo("grouptell $1");
-
-        await Assert.That(worlds[1].UseTls).IsTrue();
-    }
-
-    [Test]
-    public async Task Import_InvalidXml_ReturnsEmpty()
-    {
-        var worlds = BeipMuImporter.Import("not xml <<<");
-        await Assert.That(worlds).IsEmpty();
     }
 }

@@ -1,9 +1,9 @@
-using MuClient.Core.Automation;
+using MuClient.Core.Text;
 using MuClient.Core.Transport;
 
 namespace MuClient.Core.Configuration;
 
-/// <summary>Which log formats a world writes.</summary>
+/// <summary>Which log formats a session writes.</summary>
 public enum LogFormat
 {
     None,
@@ -35,18 +35,20 @@ public sealed class EmojiSettings
     public bool Shortcodes { get; set; } = true;
 }
 
-/// <summary>Per-world logging configuration.</summary>
+/// <summary>Per-character logging configuration.</summary>
 public sealed class LoggingSettings
 {
     public LogFormat Format { get; set; } = LogFormat.None;
 
-    /// <summary>Directory for log files. Defaults to a per-world folder under the config dir.</summary>
+    /// <summary>Directory for log files. Defaults to a per-session folder under the config dir.</summary>
     public string? Directory { get; set; }
 }
 
 /// <summary>
-/// A saved MU* world: connection parameters plus its automation (triggers/aliases/macros),
-/// scripting, and logging. This is the primary unit persisted to JSON.
+/// A saved MU* world — i.e. a <b>server</b> (host/port/TLS/encoding + rendering options) that
+/// holds zero or more <see cref="CharacterDefinition"/>s. A character is the connection unit;
+/// automation lives in world-independent <see cref="TriggerSet"/>s on <see cref="AppConfiguration"/>.
+/// A world with no characters is valid — it simply cannot connect.
 /// </summary>
 public sealed class WorldDefinition
 {
@@ -69,16 +71,14 @@ public sealed class WorldDefinition
     /// <summary>Emoji/emoticon substitution for inbound text.</summary>
     public EmojiSettings Emoji { get; set; } = new();
 
-    public List<Trigger> Triggers { get; set; } = new();
+    /// <summary>
+    /// The world's accent colour, used to keep its windows traceable to their owner once they
+    /// scatter across panes. Default resolves to a theme-derived accent.
+    /// </summary>
+    public TerminalColor Accent { get; set; } = TerminalColor.Default;
 
-    public List<Alias> Aliases { get; set; } = new();
-
-    public List<Macro> Macros { get; set; } = new();
-
-    /// <summary>Lua script files (relative or absolute) loaded for this world.</summary>
-    public List<string> ScriptFiles { get; set; } = new();
-
-    public LoggingSettings Logging { get; set; } = new();
+    /// <summary>The characters that can connect to this world.</summary>
+    public List<CharacterDefinition> Characters { get; set; } = new();
 
     /// <summary>Builds the transport-level options from this world.</summary>
     public ConnectionOptions ToConnectionOptions() => new()

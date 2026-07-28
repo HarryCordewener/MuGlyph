@@ -8,7 +8,7 @@ client: rich truecolor text, inline graphics, powerful automation, and full MU\*
 
 > **Status:** milestone **M1 delivered** (usable text client foundation) with substantial work
 > from M2–M4 in place — automation engines, inline-graphics subsystem, Lua scripting, and theming.
-> `MuClient.Core` is fully unit-tested (313 tests across the solution). See
+> `MuClient.Core` is fully unit-tested (325 tests across the solution). See
 > [`docs/PLAN.md`](docs/PLAN.md) for the full architecture and roadmap.
 
 ## Why a TUI
@@ -59,7 +59,8 @@ HTML logging · GMCP / MSDP / MSSP / MCCP · MXP + Pueblo · Unicode/emoji.
   line breaks. Selectable per world.
 - **Emoji** — optional emoticon (`:)` → 🙂) and `:shortcode:` (`:fire:` → 🔥) substitution.
 - **Logging** — plain-text and styled **HTML** session logs.
-- **Config** — a fresh JSON schema plus a best-effort **BeipMU importer**.
+- **Config** — a fresh JSON schema: worlds (servers) hold **characters**, and automation lives in
+  shared, named **trigger sets** that characters opt into; versioned with automatic migration.
 - **Inline graphics** — Kitty graphics-protocol encoder (incl. Unicode placeholders), Sixel and
   half-block fallbacks, and a capability probe that degrades cleanly when no protocol is present.
 - **Scripting** — sandboxed **Lua** (MoonSharp) exposing `world`/`output`/`trigger`/`alias`/

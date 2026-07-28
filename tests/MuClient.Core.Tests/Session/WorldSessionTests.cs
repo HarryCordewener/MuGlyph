@@ -8,10 +8,13 @@ namespace MuClient.Core.Tests.Session;
 
 public class WorldSessionTests
 {
-    private static (WorldSession session, FakeTelnetSession telnet) Create(WorldDefinition world)
+    private static (WorldSession session, FakeTelnetSession telnet) Create(
+        WorldDefinition world,
+        TriggerSet? set = null)
     {
         var telnet = new FakeTelnetSession();
-        var session = new WorldSession(world, _ => telnet);
+        var sets = set is null ? null : new[] { set };
+        var session = new WorldSession(world, triggerSets: sets, sessionFactory: _ => telnet);
         return (session, telnet);
     }
 
@@ -46,9 +49,9 @@ public class WorldSessionTests
     [Test]
     public async Task Trigger_Gag_SuppressesLineFromScrollback()
     {
-        var world = World();
-        world.Triggers.Add(new Trigger { Pattern = "secret", Actions = new TriggerActions { Gag = true } });
-        var (session, telnet) = Create(world);
+        var set = new TriggerSet();
+        set.Triggers.Add(new Trigger { Pattern = "secret", Actions = new TriggerActions { Gag = true } });
+        var (session, telnet) = Create(World(), set);
         await session.ConnectAsync();
 
         telnet.EmitLine("a secret message");
@@ -59,13 +62,13 @@ public class WorldSessionTests
     [Test]
     public async Task Trigger_Response_IsSentToServer()
     {
-        var world = World();
-        world.Triggers.Add(new Trigger
+        var set = new TriggerSet();
+        set.Triggers.Add(new Trigger
         {
             Pattern = @"^(\w+) waves",
             Actions = new TriggerActions { SendResponse = "wave $1" },
         });
-        var (session, telnet) = Create(world);
+        var (session, telnet) = Create(World(), set);
         await session.ConnectAsync();
 
         telnet.EmitLine("Gandalf waves");
@@ -76,9 +79,9 @@ public class WorldSessionTests
     [Test]
     public async Task Trigger_Spawn_RoutesLineToSpawnEvent()
     {
-        var world = World();
-        world.Triggers.Add(new Trigger { Pattern = @"\[chat\]", Actions = new TriggerActions { SpawnTarget = "Chat" } });
-        var (session, telnet) = Create(world);
+        var set = new TriggerSet();
+        set.Triggers.Add(new Trigger { Pattern = @"\[chat\]", Actions = new TriggerActions { SpawnTarget = "Chat" } });
+        var (session, telnet) = Create(World(), set);
         SpawnLineEventArgs? spawned = null;
         session.SpawnLine += (_, e) => spawned = e;
         await session.ConnectAsync();
@@ -120,9 +123,9 @@ public class WorldSessionTests
     [Test]
     public async Task UserInput_AliasIsExpandedBeforeSend()
     {
-        var world = World();
-        world.Aliases.Add(new Alias { Pattern = "^gt (.+)", Substitution = "grouptell $1" });
-        var (session, telnet) = Create(world);
+        var set = new TriggerSet();
+        set.Aliases.Add(new Alias { Pattern = "^gt (.+)", Substitution = "grouptell $1" });
+        var (session, telnet) = Create(World(), set);
         await session.ConnectAsync();
 
         await session.SendUserInputAsync("gt hello");
@@ -134,9 +137,9 @@ public class WorldSessionTests
     [Test]
     public async Task Macro_KeyResolvesAndSends()
     {
-        var world = World();
-        world.Macros.Add(new Macro { Key = "Ctrl+F1", Command = "north" });
-        var (session, telnet) = Create(world);
+        var set = new TriggerSet();
+        set.Macros.Add(new Macro { Key = "Ctrl+F1", Command = "north" });
+        var (session, telnet) = Create(World(), set);
         await session.ConnectAsync();
 
         var command = await session.HandleKeyAsync("Ctrl+F1");
@@ -157,6 +160,37 @@ public class WorldSessionTests
 
         await Assert.That(gmcp).IsNotNull();
         await Assert.That(gmcp!.Package).IsEqualTo("Char.Vitals");
+    }
+
+    [Test]
+    public async Task Character_AutoLogin_SendsConnectStringAndOnConnect()
+    {
+        var character = new CharacterDefinition
+        {
+            Name = "Wizard",
+            Password = "swordfish",
+            AutoLogin = true,
+            OnConnect = "look; who",
+        };
+        var telnet = new FakeTelnetSession();
+        var session = new WorldSession(World(), character, sessionFactory: _ => telnet);
+
+        await session.ConnectAsync();
+
+        await Assert.That(telnet.SentLines).Contains("connect Wizard swordfish");
+        await Assert.That(telnet.SentLines).Contains("look");
+        await Assert.That(telnet.SentLines).Contains("who");
+        await Assert.That(session.SessionKey).IsEqualTo("T.Wizard");
+    }
+
+    [Test]
+    public async Task AnonymousSession_KeyIsWorldName_AndDoesNotAutoLogin()
+    {
+        var (session, telnet) = Create(World());
+        await session.ConnectAsync();
+
+        await Assert.That(session.SessionKey).IsEqualTo("T");
+        await Assert.That(telnet.SentLines).IsEmpty();
     }
 
     [Test]

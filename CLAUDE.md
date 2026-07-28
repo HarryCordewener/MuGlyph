@@ -22,18 +22,20 @@ fallbacks) for inline images/maps.
 - **Inline graphics:** in scope from day one (Kitty Unicode placeholders → Sixel → half-block).
 - **Protocols:** aim for all common MU\* protocols. GMCP/MSSP/CHARSET/NAWS/MTTS/EOR via
   TelnetNegotiationCore; **MCCP, MSDP, MXP, and Pueblo are our own app layer.**
-- **Config:** fresh JSON schema of our own + a **BeipMU import/migration** path.
+- **Config:** fresh JSON schema of our own (worlds hold characters; automation lives in shared
+  named trigger sets), versioned with automatic migration between schema revisions.
 - **License:** MIT.
 
 ## Repository state
 
 **M1 delivered, plus substantial M2–M4 work.** `MuGlyph.slnx` builds all nine projects on
-`net10.0`; the solution has **313 passing tests**. In place:
+`net10.0`; the solution has **325 passing tests**. In place:
 
 - **Core** — `AnsiParser` (SGR 16/256/truecolor), styled-line + `ScrollbackBuffer` model,
   `TcpTransport` (TLS + IPv6), `TelnetSession` (wraps TelnetNegotiationCore **2.5.3**),
-  trigger/alias/macro engines + `IntervalScheduler`, plain-text + HTML logging, JSON config +
-  BeipMU importer, `Theme`/`ThemeLibrary`, and `WorldSession`/`SessionManager` orchestration.
+  trigger/alias/macro engines + `IntervalScheduler`, plain-text + HTML logging, versioned JSON
+  config (worlds → characters + shared trigger sets, with migration),
+  `Theme`/`ThemeLibrary`, and `WorldSession`/`SessionManager` orchestration.
 - **Graphics** — Kitty encoder + Unicode placeholders, Sixel + half-block fallbacks, capability
   probe (no UI dependency).
 - **Scripting** — sandboxed MoonSharp `ScriptHost` (world/output/trigger/alias/timer/gmcp/log).
