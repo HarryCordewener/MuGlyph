@@ -1137,7 +1137,11 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         // rail │ thin divider │ 1-col spacer (breathing room) │ output — a solid 1-col bar in the
         // border colour instead of the framework's double-line splitter, for a calmer single-line look.
+        // Stretch (control default is Left) so the window arranges the whole row at the full console
+        // width; without it the row floats at content width and the Flex pane column can't claim the
+        // space to the right edge. (SharpConsoleUI docs/patterns.md — sidebar+content layouts.)
         var row = Controls.HorizontalGrid()
+            .WithAlignment(HorizontalAlignment.Stretch)
             .WithVerticalAlignment(VerticalAlignment.Fill)
             .Column(c => c.Width(railWidth).Add(_rail))
             .Column(c => c.Width(1).Add(Divider()))
@@ -1240,7 +1244,9 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             }
         }
 
-        var grid = Controls.Grid().WithVerticalAlignment(VerticalAlignment.Fill);
+        var grid = Controls.Grid()
+            .WithAlignment(HorizontalAlignment.Stretch)
+            .WithVerticalAlignment(VerticalAlignment.Fill);
         if (split.Direction == SplitDirection.Row)
         {
             grid.Columns(tracks.ToArray()).Rows(GridLength.Star(1));
@@ -1287,7 +1293,9 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             ids.Add(windowId);
         }
 
-        var tabs = builder.Fill().Build();
+        // Stretch so the tab strip + content fill their pane column to the right edge; the control
+        // default is Left, which self-sizes to content and leaves the pane short (docs/patterns.md §12).
+        var tabs = builder.Fill().WithAlignment(HorizontalAlignment.Stretch).Build();
         for (var i = 0; i < ids.Count; i++)
         {
             tabs.TabPages[i].Tag = ids[i];
@@ -1330,7 +1338,9 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         var header = new MarkupControl(new List<string> { CaptureLineRenderer.Line(window.CapturePattern!) });
         var output = PaneContentFor(windowId, window.Title);
 
-        var grid = Controls.Grid().WithVerticalAlignment(VerticalAlignment.Fill);
+        var grid = Controls.Grid()
+            .WithAlignment(HorizontalAlignment.Stretch)
+            .WithVerticalAlignment(VerticalAlignment.Fill);
         grid.Rows(GridLength.Cells(1), GridLength.Star(1)).Columns(GridLength.Star(1));
         grid.Place(header, 0, 0, 1, 1);
         grid.Place(output, 1, 0, 1, 1);
@@ -1357,7 +1367,9 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         // Pinned scrollback gets the lion's share; a single "❄ FROZEN ⌃F ───" line is both label and
         // border, with the live tail a few rows below it.
-        var grid = Controls.Grid().WithVerticalAlignment(VerticalAlignment.Fill);
+        var grid = Controls.Grid()
+            .WithAlignment(HorizontalAlignment.Stretch)
+            .WithVerticalAlignment(VerticalAlignment.Fill);
         grid.Rows(GridLength.Star(3), GridLength.Cells(1), GridLength.Star(1)).Columns(GridLength.Star(1));
         grid.Place(frozen, 0, 0, 1, 1);
         grid.Place(bar, 1, 0, 1, 1);
@@ -1748,30 +1760,37 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private static string Hex(Rgb rgb) => $"#{rgb.R:x2}{rgb.G:x2}{rgb.B:x2}";
 
     /// <summary>
-    /// The design status bar: connection state, HP/EN meters (from GMCP vitals when present),
-    /// host, and the palette hint. Meters render via <see cref="Meters"/>.
+    /// The design status bar. The connection identity (● name · state) anchors the left edge; the
+    /// keepalive sparkline, host/encoding, char-count (or history hint), and palette hint form a
+    /// cluster right-aligned to the far edge — mirroring the header's left/right split.
     /// </summary>
     private string StatusBarMarkup(string character, string host, int port, string state)
     {
         var accent = ActiveWorld() is { } world ? AccentHex(world.Accent) : "#00f5b7";
-        var parts = new List<string> { $"[{accent}]●[/] [bold]{Escape(character)}[/] [dim]{Escape(state)}[/]" };
+        var left = $"[{accent}]●[/] [bold]{Escape(character)}[/] [dim]{Escape(state)}[/]";
+
+        var right = new List<string>();
 
         // Keepalive latency sparkline + last ack (compact), per the design status bar.
         var spark = Meters.Sparkline(new[] { 38, 44, 41, 47, 40, 43 });
         var ackMs = ActiveWorld() is { } w && w.World.KeepaliveSeconds > 0 ? 41 : 0;
-        parts.Add($"[dim]{Glyphs.Heartbeat}[/] [#98c379]{spark}[/] [dim]{ackMs}ms[/]");
+        right.Add($"[dim]{Glyphs.Heartbeat}[/] [#98c379]{spark}[/] [dim]{ackMs}ms[/]");
 
         var encoding = ActiveWorld() is { } enc ? enc.World.Encoding : "UTF-8";
-        parts.Add($"[dim]{Escape($"{host}:{port}")}  {Escape(encoding)}[/]");
+        right.Add($"[dim]{Escape($"{host}:{port}")}  {Escape(encoding)}[/]");
 
         // The character count lives at the bottom now (the input gutter is gone); while recalling
         // history it becomes the "back to draft" hint instead.
-        parts.Add(_history.IsRecalling
+        right.Add(_history.IsRecalling
             ? $"[{AccentHex(AccentPalette[0])}]history[/] [dim]· ↓ back to draft[/]"
             : $"[dim]{_input.Input.Length} chars[/]");
 
-        parts.Add("[dim]⌃P palette[/]");
-        return string.Join("   ", parts);
+        right.Add("[dim]⌃P palette[/]");
+        var rightBar = string.Join("   ", right);
+
+        // Right-align the cluster to the far edge; identity stays pinned left.
+        var gap = Math.Max(3, HeaderWidth() - MarkupWidth(left) - MarkupWidth(rightBar));
+        return $"{left}{new string(' ', gap)}{rightBar}";
     }
 
     /// <summary>Marshals an action onto the UI thread (session events fire on background threads).</summary>
