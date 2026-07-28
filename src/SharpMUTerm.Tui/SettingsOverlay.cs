@@ -9,7 +9,7 @@ namespace SharpMUTerm.Tui;
 /// A full-screen overlay hosting the F2–F9 settings screens. The design specifies these as
 /// full-screen surfaces, not floating dialogs: this maximises a frameless modal (no title bar,
 /// buttons, or resize grip) with a deep panel background. Every screen supplies a control: the
-/// converted ones (F2, F5) a composed tree of real panels, the rest a single <see cref="MarkupPanel"/>
+/// converted ones (F2–F5) a composed tree of real panels, the rest a single <see cref="MarkupPanel"/>
 /// wrapping their markup. Esc (or the same F-key) closes it. The renderers stay pure and tested;
 /// this is a thin host.
 /// </summary>

@@ -714,22 +714,40 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private string? ActiveCharacterKey() => _active?.SessionKey ?? _demoActiveKey;
 
     /// <summary>
-    /// Binds F2–F9 to the full-screen settings overlay. Each screen is rendered on demand from live
-    /// config by its pure renderer, so re-opening always reflects current state. Esc / same F-key closes.
+    /// One settings screen: the F-key that toggles it, the <c>--view</c> names that select it for a
+    /// snapshot, and the factory that builds its control.
+    /// </summary>
+    private readonly record struct SettingsScreen(ConsoleKey Key, string[] Views, Func<IWindowControl> Control);
+
+    /// <summary>
+    /// The F2–F9 settings screens, in F-key order. Both the global shortcuts and the <c>--view</c>
+    /// snapshot lookup read this one table, so a screen can't be bound to a key without also being
+    /// reachable by name. Each control is built on demand from live config by its pure renderer, so
+    /// re-opening always reflects current state — converted screens (F2–F5) hand back a composed
+    /// tree of real panels, the rest a <see cref="Markup"/> panel.
+    /// </summary>
+    private IReadOnlyList<SettingsScreen> SettingsScreens() => new SettingsScreen[]
+    {
+        new(ConsoleKey.F2, new[] { "triggers" }, TriggersControl),
+        new(ConsoleKey.F3, new[] { "aliases" }, AliasesControl),
+        new(ConsoleKey.F4, new[] { "keypad" }, KeypadControl),
+        new(ConsoleKey.F5, new[] { "worlds", "settings" }, WorldsControl),
+        new(ConsoleKey.F6, new[] { "timers" }, Markup(() => TimersScreenRenderer.Render(_config.TriggerSets, 0))),
+        new(ConsoleKey.F7, new[] { "textansi" }, Markup(OptionsScreenRenderer.TextAnsi)),
+        new(ConsoleKey.F8, new[] { "input" }, Markup(OptionsScreenRenderer.InputSpellcheck)),
+        new(ConsoleKey.F9, new[] { "logging" }, Markup(() => OptionsScreenRenderer.Logging(ActiveLogging()))),
+    };
+
+    /// <summary>
+    /// Binds each screen's F-key to the full-screen settings overlay. Esc / the same F-key closes.
     /// </summary>
     private void RegisterSettingsShortcuts()
     {
-        void Bind(ConsoleKey key, Func<IWindowControl> control) =>
+        foreach (var screen in SettingsScreens())
+        {
+            var (key, control) = (screen.Key, screen.Control);
             _system.RegisterGlobalShortcut((ConsoleModifiers)0, key, () => _settings.Toggle(key, control));
-
-        Bind(ConsoleKey.F2, TriggersControl);
-        Bind(ConsoleKey.F3, Markup(() => AliasesScreenRenderer.Render(_config.TriggerSets, 0)));
-        Bind(ConsoleKey.F4, Markup(() => KeypadScreenRenderer.Render(Macros())));
-        Bind(ConsoleKey.F5, WorldsControl);
-        Bind(ConsoleKey.F6, Markup(() => TimersScreenRenderer.Render(_config.TriggerSets, 0)));
-        Bind(ConsoleKey.F7, Markup(OptionsScreenRenderer.TextAnsi));
-        Bind(ConsoleKey.F8, Markup(OptionsScreenRenderer.InputSpellcheck));
-        Bind(ConsoleKey.F9, Markup(() => OptionsScreenRenderer.Logging(ActiveLogging())));
+        }
     }
 
     /// <summary>Distinct spawn-window targets referenced by any trigger (for the F2 route-to list).</summary>
@@ -794,23 +812,30 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private IWindowControl TriggersControl() => TriggersScreenView.Build(
         _config.TriggerSets, 0, SpawnTargets(), _system.DesktopDimensions.Width);
 
+    /// <summary>Builds the F3 Aliases screen as a composed control tree (real panels).</summary>
+    private IWindowControl AliasesControl() => AliasesScreenView.Build(
+        _config.TriggerSets, 0, _system.DesktopDimensions.Width);
+
+    /// <summary>Builds the F4 Keypad &amp; hotkeys screen as a composed control tree (real panels).</summary>
+    private IWindowControl KeypadControl() => KeypadScreenView.Build(Macros(), _system.DesktopDimensions.Width);
+
     /// <summary>Hosts a screen that is still one markup block in the overlay's full-screen panel.</summary>
     private static Func<IWindowControl> Markup(Func<IReadOnlyList<string>> content) =>
         () => SettingsOverlay.MarkupPanel(content());
 
     /// <summary>Maps a <c>--view</c> name to a settings screen (F-key + control factory) for snapshots.</summary>
-    private (ConsoleKey Key, Func<IWindowControl> Control)? SettingsView(string view) => view.ToLowerInvariant() switch
+    private (ConsoleKey Key, Func<IWindowControl> Control)? SettingsView(string view)
     {
-        "triggers" => (ConsoleKey.F2, TriggersControl),
-        "aliases" => (ConsoleKey.F3, Markup(() => AliasesScreenRenderer.Render(_config.TriggerSets, 0))),
-        "keypad" => (ConsoleKey.F4, Markup(() => KeypadScreenRenderer.Render(Macros()))),
-        "worlds" or "settings" => (ConsoleKey.F5, WorldsControl),
-        "timers" => (ConsoleKey.F6, Markup(() => TimersScreenRenderer.Render(_config.TriggerSets, 0))),
-        "textansi" => (ConsoleKey.F7, Markup(OptionsScreenRenderer.TextAnsi)),
-        "input" => (ConsoleKey.F8, Markup(OptionsScreenRenderer.InputSpellcheck)),
-        "logging" => (ConsoleKey.F9, Markup(() => OptionsScreenRenderer.Logging(ActiveLogging()))),
-        _ => null,
-    };
+        foreach (var screen in SettingsScreens())
+        {
+            if (screen.Views.Contains(view, StringComparer.OrdinalIgnoreCase))
+            {
+                return (screen.Key, screen.Control);
+            }
+        }
+
+        return null;
+    }
 
     /// <summary>The accent for a world at <paramref name="index"/>: its own, or the palette fallback.</summary>
     private static TerminalColor AccentFor(WorldDefinition world, int index) =>
