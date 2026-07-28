@@ -46,3 +46,7 @@ jobs:
       - name: Test — Scripting
         shell: bash
         run: dotnet run -c Release --no-build --project tests/MuClient.Scripting.Tests/MuClient.Scripting.Tests.csproj
+
+      - name: Test — Web
+        shell: bash
+        run: dotnet run -c Release --no-build --project tests/MuClient.Web.Tests/MuClient.Web.Tests.csproj

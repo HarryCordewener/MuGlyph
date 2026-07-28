@@ -27,8 +27,10 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private readonly Label _status;
     private readonly OutputView _output;
     private readonly CommandInput _input;
+    private readonly WebView _webView;
     private readonly GmcpStats _stats = new();
     private readonly HashSet<string> _spawnTargets = new(StringComparer.OrdinalIgnoreCase);
+    private readonly MuClient.Web.WebPageFetcher _fetcher = new();
 
     private WorldSession? _active;
 
@@ -65,11 +67,23 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             Width = Dim.Fill(),
             Height = 1,
         };
+        _webView = new WebView
+        {
+            X = 0,
+            Y = 1,
+            Width = Dim.Fill(),
+            Height = Dim.Fill(1),
+            Mapper = new ColorMapper(_theme),
+            Visible = false,
+        };
+        _webView.Navigate += OpenWeb;
+        _webView.Closed += HideWeb;
+
         _input.CommandEntered += OnCommandEntered;
         _output.CommandActivated += OnCommandActivated;
-        _output.LinkActivated += OpenLink;
+        _output.LinkActivated += OpenWeb; // follow links in the in-TUI web view
 
-        _window.Add(_status, _output, _input);
+        _window.Add(_status, _output, _webView, _input);
         _window.KeyDown += OnGlobalKey;
     }
 
@@ -142,6 +156,13 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
     private void OnCommandEntered(string command)
     {
+        // `/web <url>` opens the in-TUI web view; everything else goes to the world.
+        if (command.StartsWith("/web ", StringComparison.OrdinalIgnoreCase))
+        {
+            OpenWeb(command[5..].Trim());
+            return;
+        }
+
         var session = _active;
         if (session is null)
         {
@@ -149,6 +170,37 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         }
 
         _ = session.SendUserInputAsync(command);
+    }
+
+    private void OpenWeb(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return;
+        }
+
+        _webView.Visible = true;
+        _webView.SetFocus();
+        _active?.PrintSystem($"*** Opening {url} in the web view (Esc to close)...");
+        _ = LoadWebAsync(url);
+    }
+
+    private async Task LoadWebAsync(string url)
+    {
+        var width = Math.Max(20, _webView.Viewport.Width);
+        var page = await _fetcher.FetchAsync(url, width).ConfigureAwait(false);
+        Application.Invoke(() =>
+        {
+            _webView.Show(page);
+            _webView.SetNeedsDraw();
+        });
+    }
+
+    private void HideWeb()
+    {
+        _webView.Visible = false;
+        _input.SetFocus();
+        _output.SetNeedsDraw();
     }
 
     private void OnCommandActivated(string command, bool promptOnly)
@@ -163,27 +215,6 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _ = _active?.SendRawAsync(command);
     }
 
-    private static void OpenLink(string url)
-    {
-        // Only open well-formed http(s) links, via the OS default handler.
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
-            uri.Scheme is not ("http" or "https"))
-        {
-            return;
-        }
-
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri.ToString())
-            {
-                UseShellExecute = true,
-            });
-        }
-        catch
-        {
-            // No browser available (e.g. headless) — ignore.
-        }
-    }
 
     private void OnGlobalKey(object? sender, Key key)
     {
@@ -246,6 +277,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _fetcher.Dispose();
         await _sessions.DisposeAsync().ConfigureAwait(false);
     }
 }

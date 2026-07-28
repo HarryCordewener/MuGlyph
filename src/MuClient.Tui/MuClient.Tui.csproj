@@ -29,6 +29,7 @@
     <ProjectReference Include="..\MuClient.Core\MuClient.Core.csproj" />
     <ProjectReference Include="..\MuClient.Graphics\MuClient.Graphics.csproj" />
     <ProjectReference Include="..\MuClient.Scripting\MuClient.Scripting.csproj" />
+    <ProjectReference Include="..\MuClient.Web\MuClient.Web.csproj" />
   </ItemGroup>
 
 </Project>

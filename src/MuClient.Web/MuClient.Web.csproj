@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>MuClient.Web</RootNamespace>
+    <AssemblyName>MuClient.Web</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AngleSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MuClient.Core\MuClient.Core.csproj" />
+  </ItemGroup>
+
+</Project>

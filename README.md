@@ -8,7 +8,7 @@ client: rich truecolor text, inline graphics, powerful automation, and full MU\*
 
 > **Status:** milestone **M1 delivered** (usable text client foundation) with substantial work
 > from M2–M4 in place — automation engines, inline-graphics subsystem, Lua scripting, and theming.
-> `MuClient.Core` is fully unit-tested (299 tests across the solution). See
+> `MuClient.Core` is fully unit-tested (313 tests across the solution). See
 > [`docs/PLAN.md`](docs/PLAN.md) for the full architecture and roadmap.
 
 ## Why a TUI
@@ -69,6 +69,10 @@ HTML logging · GMCP / MSDP / MSSP / MCCP · MXP + Pueblo · Unicode/emoji.
 - **TUI** — a Terminal.Gui v2 app: truecolor output pane with wrapping/scrollback, clickable
   MXP/Pueblo links, command input with history and tab-completion, a GMCP-driven stat line, and
   key routing.
+- **Web view** — an in-TUI text-mode browser (`MuClient.Web`, AngleSharp): fetch a URL or
+  follow an MXP/Pueblo/HTML link and read the page as styled, word-wrapped text with clickable
+  links you can navigate in-pane. `<img>` shows as a labelled link (graphics-terminal image
+  rendering reuses the Kitty/Sixel/half-block pipeline).
 - **Packaging** — self-contained single-file publishing for Linux/Windows/macOS (see
   [`docs/PACKAGING.md`](docs/PACKAGING.md)); a tagged release workflow builds the binaries.
 
@@ -98,6 +102,7 @@ The test projects use [TUnit], which runs on the Microsoft.Testing.Platform. Run
 dotnet run --project tests/MuClient.Core.Tests
 dotnet run --project tests/MuClient.Graphics.Tests
 dotnet run --project tests/MuClient.Scripting.Tests
+dotnet run --project tests/MuClient.Web.Tests
 ```
 
 ## License
