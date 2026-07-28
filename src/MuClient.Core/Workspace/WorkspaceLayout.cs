@@ -22,6 +22,29 @@ public sealed class WorkspaceLayout
         FocusedPaneId = pane.Id;
     }
 
+    /// <summary>
+    /// Rebuilds a layout from a pre-constructed tree (used when resuming a saved session). Focus and
+    /// zoom fall back to a valid pane when the given ids are stale, and the internal pane counter is
+    /// advanced past the highest <c>pN</c> id so future splits never collide with restored ids.
+    /// </summary>
+    public WorkspaceLayout(LayoutNode root, string focusedPaneId, string? zoomedPaneId = null)
+    {
+        Root = root ?? throw new ArgumentNullException(nameof(root));
+        var panes = Root.Panes().ToList();
+        if (panes.Count == 0)
+        {
+            throw new ArgumentException("A layout must contain at least one pane.", nameof(root));
+        }
+
+        FocusedPaneId = panes.Any(p => p.Id == focusedPaneId) ? focusedPaneId : panes[0].Id;
+        ZoomedPaneId = zoomedPaneId is not null && panes.Any(p => p.Id == zoomedPaneId) ? zoomedPaneId : null;
+        _paneCounter = panes.Select(p => ParsePaneCounter(p.Id)).DefaultIfEmpty(0).Max();
+    }
+
+    /// <summary>Extracts the numeric suffix of a <c>pN</c> pane id, or 0 for an unrecognised shape.</summary>
+    private static int ParsePaneCounter(string id) =>
+        id.Length > 1 && id[0] == 'p' && int.TryParse(id.AsSpan(1), out var n) ? n : 0;
+
     /// <summary>The root of the split tree (a <see cref="PaneNode"/> or <see cref="SplitNode"/>).</summary>
     public LayoutNode Root { get; private set; }
 

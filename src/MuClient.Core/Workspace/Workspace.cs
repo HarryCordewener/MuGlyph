@@ -20,6 +20,20 @@ public sealed class Workspace
         _windows[main.Id] = main;
     }
 
+    /// <summary>
+    /// Rebuilds a workspace from a restored set of windows and a pre-built layout (session resume).
+    /// The two are assumed consistent — every window id referenced by a pane tab should have a window.
+    /// </summary>
+    public Workspace(IEnumerable<WorkspaceWindow> windows, WorkspaceLayout layout)
+    {
+        ArgumentNullException.ThrowIfNull(windows);
+        Layout = layout ?? throw new ArgumentNullException(nameof(layout));
+        foreach (var window in windows)
+        {
+            _windows[window.Id] = window;
+        }
+    }
+
     /// <summary>The pane tree.</summary>
     public WorkspaceLayout Layout { get; }
 
