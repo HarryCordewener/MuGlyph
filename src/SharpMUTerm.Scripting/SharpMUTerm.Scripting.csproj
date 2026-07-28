@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SharpMUTerm.Scripting</RootNamespace>
+    <AssemblyName>SharpMUTerm.Scripting</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MoonSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharpMUTerm.Core\SharpMUTerm.Core.csproj" />
+  </ItemGroup>
+
+</Project>
