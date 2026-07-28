@@ -362,10 +362,21 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         // Settings screens (composed-control or markup — SettingsView hands back a control factory
-        // either way) open over the workspace for their --view name.
-        if (view is not null && SettingsView(view) is { } screen)
+        // either way) open over the workspace for their --view name. A "<name>-edit" view opens the
+        // same screen and then drives real keys into it, so the frame shows a field genuinely mid-edit
+        // rather than a hand-drawn impression of one.
+        var editing = view is not null && view.EndsWith(EditViewSuffix, StringComparison.OrdinalIgnoreCase);
+        var screenView = editing ? view![..^EditViewSuffix.Length] : view;
+        if (screenView is not null && SettingsView(screenView) is { } screen)
         {
             _settings.OpenForSnapshot(screen.Key, screen.Open());
+            if (editing)
+            {
+                foreach (var key in EditSnapshotKeys(screenView))
+                {
+                    _settings.SimulateKey(key);
+                }
+            }
         }
 
         SyncInputWidth(); // the window now carries the snapshot size, so the band fills its full width
@@ -1043,6 +1054,39 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         return new ScreenBinding(session, () => OptionsScreenView.Build(
             screen(), _system.DesktopDimensions.Width, session.Focus()));
     }
+
+    /// <summary>The <c>--view</c> suffix that opens a settings screen with a field being typed into.</summary>
+    private const string EditViewSuffix = "-edit";
+
+    /// <summary>
+    /// The keys a <c>&lt;name&gt;-edit</c> snapshot drives into a freshly opened screen. ⏎ opens the
+    /// focused row's first field; ⇥ commits it and steps to the next; the rest is typing. F5 walks on
+    /// to the host and rewrites its suffix, because "no way to change a host" is the gap this whole
+    /// mode closes and a frame should show exactly that.
+    /// </summary>
+    private static IEnumerable<ConsoleKeyInfo> EditSnapshotKeys(string view)
+    {
+        yield return Stroke('\r', ConsoleKey.Enter);
+
+        if (!string.Equals(view, "worlds", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(view, "settings", StringComparison.OrdinalIgnoreCase))
+        {
+            yield break;
+        }
+
+        yield return Stroke('\t', ConsoleKey.Tab);
+        for (var i = 0; i < 3; i++)
+        {
+            yield return Stroke('\b', ConsoleKey.Backspace);
+        }
+
+        foreach (var c in "net")
+        {
+            yield return Stroke(c, ConsoleKey.NoName);
+        }
+    }
+
+    private static ConsoleKeyInfo Stroke(char c, ConsoleKey key) => new(c, key, false, false, false);
 
     /// <summary>Maps a <c>--view</c> name to a settings screen (F-key + open factory) for snapshots.</summary>
     private (ConsoleKey Key, Func<ScreenBinding> Open)? SettingsView(string view)

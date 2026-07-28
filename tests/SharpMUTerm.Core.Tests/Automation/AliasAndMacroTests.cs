@@ -52,6 +52,28 @@ public class AliasEngineTests
         var result = engine.Expand("abc");
         await Assert.That(result.Matched).IsFalse();
     }
+
+    /// <summary>
+    /// Pattern and substitution are settable so the F3 settings screen can edit a live alias. The
+    /// compiled regex is cached, so writing the pattern has to drop that cache — the same trap
+    /// <see cref="Alias.CaseSensitive"/> already guards against.
+    /// </summary>
+    [Test]
+    public async Task RewritingThePatternAndExpansion_TakesEffectImmediately()
+    {
+        var alias = new Alias { Pattern = "^k$", Substitution = "kill" };
+        var engine = new AliasEngine();
+        engine.Add(alias);
+        await Assert.That(engine.Expand("k").Matched).IsTrue();
+
+        alias.Pattern = "^kk$";
+        alias.Substitution = "kill target";
+
+        await Assert.That(engine.Expand("k").Matched).IsFalse();
+        var result = engine.Expand("kk");
+        await Assert.That(result.Matched).IsTrue();
+        await Assert.That(result.Commands[0]).IsEqualTo("kill target");
+    }
 }
 
 public class MacroEngineTests

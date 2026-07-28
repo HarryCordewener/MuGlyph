@@ -20,11 +20,17 @@ internal static class OptionsScreenRenderer
 
     /// <summary>
     /// A single options-list row: a toggle, a value row, a section header, or a spacer.
-    /// <paramref name="Bind"/> is the config the checkbox writes to; a row without one still takes the
-    /// cursor but Space does nothing there (the value rows, until field editing exists).
+    /// <paramref name="Bind"/> is the config the checkbox writes to; <paramref name="Edit"/> is the
+    /// config the value writes to, which is what makes a value row activatable with ⏎. A row with
+    /// neither still takes the cursor but nothing happens there.
     /// </summary>
     public readonly record struct OptionRow(
-        string Label, string? Value, bool? Toggle, string? Hint = null, ScreenToggle? Bind = null);
+        string Label,
+        string? Value,
+        bool? Toggle,
+        string? Hint = null,
+        ScreenToggle? Bind = null,
+        ScreenField? Edit = null);
 
     /// <summary>One options screen: the title and F-key its chrome shows, plus the rows it lists.</summary>
     internal readonly record struct OptionsScreen(string Title, string FKey, IReadOnlyList<OptionRow> Rows);
@@ -37,7 +43,8 @@ internal static class OptionsScreenRenderer
     {
         ArgumentNullException.ThrowIfNull(rows);
 
-        var lines = new List<string> { HeaderLine(title, fkey, 0), string.Empty };
+        var screen = new OptionsScreen(title, fkey, rows);
+        var lines = new List<string> { HeaderLine(title, fkey, 0, Model(screen)), string.Empty };
         lines.AddRange(BodyColumn(rows));
         lines.Add(string.Empty);
         lines.Add(FooterLine(rows, 0));
@@ -49,12 +56,20 @@ internal static class OptionsScreenRenderer
 
     /// <summary>
     /// The back affordance and screen title on the left, the keyboard hints right-aligned to
-    /// <paramref name="width"/>.
+    /// <paramref name="width"/>. The hints are derived from <paramref name="model"/> and
+    /// <paramref name="focus"/> rather than written here, so the header cannot advertise an edit the
+    /// screen doesn't offer; called without them it describes a screen that only navigates.
     /// </summary>
-    internal static string HeaderLine(string title, string fkey, int width)
+    internal static string HeaderLine(
+        string title, string fkey, int width, ScreenModel? model = null, ScreenFocus? focus = null)
     {
         var heading = $"[{Label}]‹ back[/]   [bold {Value}]{Escape(title)}[/]";
-        return SpreadLR(" " + heading, ScreenChrome.Hints(ScreenChrome.SingleListHints, Escape(fkey)), width);
+        var hints = ScreenChrome.Hints(
+            ScreenChrome.SingleListHints,
+            Escape(fkey),
+            model?.HasEditableRow ?? false,
+            focus);
+        return SpreadLR(" " + heading, hints, width);
     }
 
     /// <summary>The action bar: how much the screen holds on the left, cancel/save on the right.</summary>
@@ -88,13 +103,13 @@ internal static class OptionsScreenRenderer
         var navigable = 0;
         foreach (var row in rows)
         {
-            var line = RenderRow(row);
             if (IsSpacer(row) || IsSection(row))
             {
-                lines.Add(line);
+                lines.Add(RenderRow(row, null));
                 continue;
             }
 
+            var line = RenderRow(row, cursor.EditOn(0, navigable, 0));
             lines.Add(ScreenChrome.Cursor(line, cursor.IsOn(0, navigable), width));
             navigable++;
         }
@@ -104,18 +119,19 @@ internal static class OptionsScreenRenderer
 
     /// <summary>
     /// The screen's one navigable pane: every row that isn't a spacer or a section header, in display
-    /// order, each carrying whatever config binding it was built with.
+    /// order, each carrying whatever config bindings it was built with — the checkbox Space flips and
+    /// the value ⏎ opens.
     /// </summary>
     internal static ScreenModel Model(OptionsScreen screen)
     {
         var rows = screen.Rows
             .Where(r => !IsSpacer(r) && !IsSection(r))
-            .Select(r => r.Bind)
+            .Select(r => r.Edit is { } field ? new ScreenRow(r.Bind, new[] { field }) : new ScreenRow(r.Bind))
             .ToArray();
         return new ScreenModel(rows);
     }
 
-    private static string RenderRow(OptionRow row)
+    private static string RenderRow(OptionRow row, ScreenFieldEdit? edit)
     {
         if (IsSpacer(row))
         {
@@ -136,7 +152,8 @@ internal static class OptionsScreenRenderer
         }
 
         var label = Escape(row.Label).PadRight(LabelWidth);
-        return $"[dim]{label}[/] {Escape(row.Value ?? string.Empty)}{hint}";
+        var value = ScreenChrome.Field(Escape(row.Value ?? string.Empty), edit);
+        return $"[dim]{label}[/] {value}{hint}";
     }
 
     /// <summary>A blank separator carrying no label, value, or toggle.</summary>
@@ -168,9 +185,20 @@ internal static class OptionsScreenRenderer
             new("├ UNICODE", null, null),
             new("emoji substitution", null, settings.EmojiSubstitution, null,
                 ScreenToggle.Bind(() => settings.EmojiSubstitution, v => settings.EmojiSubstitution = v)),
-            new("ambiguous width", settings.AmbiguousWidth, null),
+            new("ambiguous width", settings.AmbiguousWidth, null, null, null,
+                ScreenField.Choice(
+                    "ambiguous width",
+                    () => settings.AmbiguousWidth,
+                    v => settings.AmbiguousWidth = v,
+                    AmbiguousWidths)),
         });
     }
+
+    /// <summary>
+    /// How East Asian ambiguous-width characters may be measured. A fixed set rather than free text:
+    /// the measurer only knows these two, and a typo would silently fall back to one of them.
+    /// </summary>
+    private static readonly string[] AmbiguousWidths = { "narrow", "wide" };
 
     /// <summary>
     /// The F8 "Input &amp; spellcheck" screen, reflecting — and writing back to — the app's
@@ -187,12 +215,14 @@ internal static class OptionsScreenRenderer
                 ScreenToggle.Bind(() => settings.LocalEcho, v => settings.LocalEcho = v)),
             new("keep per-tab drafts", null, settings.KeepDrafts, null,
                 ScreenToggle.Bind(() => settings.KeepDrafts, v => settings.KeepDrafts = v)),
-            new("newline key", settings.NewlineKey, null),
+            new("newline key", settings.NewlineKey, null, null, null,
+                ScreenField.Text("newline key", () => settings.NewlineKey, v => settings.NewlineKey = v)),
             new(string.Empty, null, null),
             new("├ SPELLCHECK", null, null),
             new("check spelling", null, settings.CheckSpelling, null,
                 ScreenToggle.Bind(() => settings.CheckSpelling, v => settings.CheckSpelling = v)),
-            new("dictionary", settings.Dictionary, null),
+            new("dictionary", settings.Dictionary, null, null, null,
+                ScreenField.Text("dictionary", () => settings.Dictionary, v => settings.Dictionary = v)),
         });
     }
 
@@ -217,8 +247,10 @@ internal static class OptionsScreenRenderer
         return new OptionsScreen("Logging", "F9", new List<OptionRow>
         {
             new("├ SESSION LOG", null, null),
-            new("format", logging.Format.ToString(), null),
-            new("directory", logging.Directory ?? "(default)", null),
+            new("format", logging.Format.ToString(), null, null, null,
+                ScreenField.Enumeration("format", () => logging.Format, v => logging.Format = v)),
+            new("directory", logging.Directory ?? "(default)", null, null, null,
+                ScreenField.Optional("directory", () => logging.Directory, v => logging.Directory = v)),
             new("auto-start on connect", null, logging.Format != LogFormat.None, null, autoStart),
         });
     }

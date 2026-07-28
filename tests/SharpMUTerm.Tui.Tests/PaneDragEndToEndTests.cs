@@ -12,6 +12,13 @@ namespace SharpMUTerm.Tui.Tests;
 /// real. The only link these tests cannot cover is the terminal's own mouse reporting, which is
 /// SharpConsoleUI's <c>NetConsoleDriver</c> turning escape sequences into the very frames fed here.
 /// </summary>
+/// <remarks>
+/// Serialised: <see cref="SharpMUTermApp.RenderSnapshot"/> redirects <c>Console.Out</c> to capture the
+/// frame, and <see cref="Split"/> redirects <c>Console.In</c>. Both are process-global, so two of these
+/// running at once swap each other's streams and one gets a truncated frame — which arranges no layout,
+/// which yields pane rects that don't match the screen. That surfaced as roughly a one-in-six failure.
+/// </remarks>
+[NotInParallel]
 public class PaneDragEndToEndTests
 {
     private const int Width = 120;

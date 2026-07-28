@@ -41,7 +41,7 @@ internal static class TriggersScreenRenderer
         var left = RulesColumn(sets, selectedTrigger);
         var right = EditorColumn(sets, selectedTrigger, spawnTargets);
 
-        var lines = new List<string> { HeaderLine(0), string.Empty };
+        var lines = new List<string> { HeaderLine(0, Model(sets, selectedTrigger)), string.Empty };
 
         var rowCount = Math.Max(left.Count, right.Count);
         for (var i = 0; i < rowCount; i++)
@@ -57,36 +57,46 @@ internal static class TriggersScreenRenderer
         return lines;
     }
 
-    /// <summary>The screen title on the left, the keyboard hints right-aligned to <paramref name="width"/>.</summary>
-    internal static string HeaderLine(int width)
+    /// <summary>
+    /// The screen title on the left, the keyboard hints right-aligned to <paramref name="width"/>. The
+    /// hints are derived from <paramref name="model"/> and <paramref name="focus"/> rather than
+    /// written here, so the header cannot advertise an edit the screen doesn't offer.
+    /// </summary>
+    internal static string HeaderLine(int width, ScreenModel? model = null, ScreenFocus? focus = null)
     {
         var title = $"[bold {Value}] Triggers & spawn routing[/]";
-        var hints = ScreenChrome.Hints(ScreenChrome.ListHints, "F2");
+        var hints = ScreenChrome.Hints(
+            ScreenChrome.ListHints, "F2", model?.HasEditableRow ?? false, focus);
         return SpreadLR(" " + title, hints, width);
     }
 
     /// <summary>
-    /// The screen's navigable panes: the rule list (Space enables/disables a trigger) and the
-    /// selected rule's checkbox rows, in the order <see cref="EditorColumn"/> draws them.
+    /// The screen's navigable panes: the rule list (Space enables/disables a trigger, ⏎ edits its
+    /// match pattern) and the selected rule's checkbox rows, in the order <see cref="EditorColumn"/>
+    /// draws them. The pattern belongs to the rule row rather than to the editor pane so giving it an
+    /// editor doesn't renumber the rows the cursor already navigates by; the editor still draws the
+    /// buffer, under its own label, because that is where the pattern is displayed in full.
     /// </summary>
     internal static ScreenModel Model(IReadOnlyList<TriggerSet> sets, int selectedTrigger)
     {
         ArgumentNullException.ThrowIfNull(sets);
 
         var flattened = Flatten(sets);
-        var rules = ScreenModel.Toggles(
-            flattened, e => e.Trigger.Enabled, (e, v) => e.Trigger.Enabled = v);
+        var rules = ScreenModel.Rows(flattened, entry => ScreenRow.Of(
+            ScreenToggle.Bind(() => entry.Trigger.Enabled, v => entry.Trigger.Enabled = v),
+            ScreenField.Pattern(
+                "match pattern", () => entry.Trigger.Pattern, v => entry.Trigger.Pattern = v)));
 
         if (selectedTrigger < 0 || selectedTrigger >= flattened.Count)
         {
-            return new ScreenModel(rules, Array.Empty<ScreenToggle?>());
+            return new ScreenModel(rules, Array.Empty<ScreenRow>());
         }
 
         var trigger = flattened[selectedTrigger].Trigger;
-        var editor = new ScreenToggle?[]
+        var editor = new[]
         {
-            ScreenToggle.Bind(() => trigger.Actions.Gag, v => trigger.Actions.Gag = v),
-            ScreenToggle.Bind(() => trigger.StopProcessing, v => trigger.StopProcessing = v),
+            ScreenRow.Of(ScreenToggle.Bind(() => trigger.Actions.Gag, v => trigger.Actions.Gag = v)),
+            ScreenRow.Of(ScreenToggle.Bind(() => trigger.StopProcessing, v => trigger.StopProcessing = v)),
         };
 
         return new ScreenModel(rules, editor);
@@ -147,9 +157,11 @@ internal static class TriggersScreenRenderer
         ArgumentNullException.ThrowIfNull(sets);
         ArgumentNullException.ThrowIfNull(spawnTargets);
 
+        var cursor = focus ?? ScreenFocus.None;
         var flattened = Flatten(sets);
         return selectedTrigger >= 0 && selectedTrigger < flattened.Count
-            ? BuildEditor(flattened[selectedTrigger].Trigger, spawnTargets, focus ?? ScreenFocus.None)
+            ? BuildEditor(flattened[selectedTrigger].Trigger, spawnTargets, cursor,
+                cursor.EditOn(0, selectedTrigger, 0))
             : new List<string>();
     }
 
@@ -210,14 +222,15 @@ internal static class TriggersScreenRenderer
         return flags.Count == 0 ? "—" : string.Join(" ", flags);
     }
 
-    private static List<string> BuildEditor(Trigger trigger, IReadOnlyList<string> spawnTargets, ScreenFocus cursor)
+    private static List<string> BuildEditor(
+        Trigger trigger, IReadOnlyList<string> spawnTargets, ScreenFocus cursor, ScreenFieldEdit? pattern)
     {
         var currentRoute = trigger.Actions.SpawnTarget ?? "main";
 
         var lines = new List<string>
         {
             "[dim]match pattern (regex)[/]",
-            $"  {Escape(trigger.Pattern)}",
+            $"  {ScreenChrome.Field(Escape(trigger.Pattern), pattern)}",
             string.Empty,
             "[dim]route to[/]",
             RouteRow("main", currentRoute),

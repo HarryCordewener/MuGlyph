@@ -12,10 +12,29 @@ public sealed class Alias
 {
     private Regex? _compiled;
     private bool _caseSensitive;
+    private string _pattern = string.Empty;
 
     public string Name { get; init; } = string.Empty;
 
-    public required string Pattern { get; init; }
+    /// <summary>
+    /// The .NET regular expression matched against typed input. Settable so the F3 settings screen can
+    /// edit it live; writing it drops the cached <see cref="Regex"/> so the next match recompiles
+    /// against the new pattern rather than silently going on matching the old one.
+    /// </summary>
+    public required string Pattern
+    {
+        get => _pattern;
+        set
+        {
+            if (string.Equals(_pattern, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _pattern = value;
+            _compiled = null;
+        }
+    }
 
     public bool Enabled { get; set; } = true;
 
@@ -39,8 +58,12 @@ public sealed class Alias
         }
     }
 
-    /// <summary>The expansion template. May contain multiple newline-separated commands.</summary>
-    public string Substitution { get; init; } = string.Empty;
+    /// <summary>
+    /// The expansion template. May contain multiple newline-separated commands. Settable so the F3
+    /// screen can edit it live; the engine reads it per expansion, so a change applies to the next
+    /// line typed. Nothing is cached from it.
+    /// </summary>
+    public string Substitution { get; set; } = string.Empty;
 
     /// <summary>Optional named script callback invoked instead of / in addition to expansion.</summary>
     public string? ScriptCallback { get; init; }

@@ -46,7 +46,8 @@ internal static class WorldsScreenRenderer
         ArgumentNullException.ThrowIfNull(triggerSets);
 
         var accent = AccentFor(worlds, selectedWorld);
-        var lines = new List<string> { Band(HeaderLine(width), HeaderBg, width) };
+        var model = Model(worlds, triggerSets, selectedWorld, selectedCharacter);
+        var lines = new List<string> { Band(HeaderLine(width, model), HeaderBg, width) };
         lines.AddRange(MergeColumns(WorldsColumn(worlds, selectedWorld),
             DetailColumn(worlds, triggerSets, selectedWorld, selectedCharacter, accent), LeftColumnWidth));
 
@@ -55,7 +56,7 @@ internal static class WorldsScreenRenderer
             var character = worlds[selectedWorld].Characters[selectedCharacter];
             lines.Add(string.Empty);
             lines.Add(Band($"[{Rule}]{new string('─', width > 4 ? width - 2 : 60)}[/]", EditBg, width));
-            foreach (var row in MergeColumns(FormColumn(character, accent),
+            foreach (var row in MergeColumns(FormColumn(character, accent, null, selectedCharacter),
                 TriggersColumn(character, triggerSets, accent), CharDetailColumnWidth))
             {
                 lines.Add(Band(" " + row, EditBg, width));
@@ -78,19 +79,34 @@ internal static class WorldsScreenRenderer
         selectedWorld >= 0 && selectedWorld < worlds.Count &&
         selectedCharacter >= 0 && selectedCharacter < worlds[selectedWorld].Characters.Count;
 
-    internal static string HeaderLine(int width)
+    /// <summary>
+    /// The screen title on the left, the keyboard hints right-aligned to <paramref name="width"/>. The
+    /// hints are derived from <paramref name="model"/> and <paramref name="focus"/> rather than
+    /// written here, so the header cannot advertise an edit the screen doesn't offer.
+    /// </summary>
+    internal static string HeaderLine(int width, ScreenModel? model = null, ScreenFocus? focus = null)
     {
         var title = $"[bold {Value}] Worlds & Characters[/]";
-        var hints = ScreenChrome.Hints(ScreenChrome.ListHints, "F5");
+        var hints = ScreenChrome.Hints(
+            ScreenChrome.ListHints, "F5", model?.HasEditableRow ?? false, focus);
         return SpreadLR(" " + title, hints, width);
     }
 
+    /// <summary>The wire encodings a world may be set to; the detail column cycles them with ↑↓.</summary>
+    private static readonly string[] Encodings = { "UTF-8", "ISO-8859-1", "ASCII", "CP437", "CP1252" };
+
     /// <summary>
-    /// The screen's three navigable panes, in ⇥ order: the WORLDS list (selection only — a world has
-    /// no checkbox on its row), the selected world's characters (Space flips auto-login, which the row
-    /// itself reports), and the selected character's assigned trigger sets (Space assigns/unassigns).
-    /// The last two collapse to empty when there is nothing selected above them, and ⇥ skips empty
-    /// panes, so the cursor never lands somewhere with no rows.
+    /// The screen's three navigable panes, in ⇥ order: the WORLDS list (no checkbox on a world's row,
+    /// but ⏎ opens the world's own fields — the ones the detail column lists), the selected world's
+    /// characters (Space flips auto-login, ⏎ edits the character's name and on-connect line), and the
+    /// selected character's assigned trigger sets (Space assigns/unassigns). The last two collapse to
+    /// empty when there is nothing selected above them, and ⇥ skips empty panes, so the cursor never
+    /// lands somewhere with no rows.
+    /// <para>
+    /// A world's fields hang off its list row rather than becoming a pane of their own: the detail
+    /// column is a projection of whatever the WORLDS list has selected, so its values already belong
+    /// to that row, and a fourth pane would put ⇥ somewhere the eye doesn't go.
+    /// </para>
     /// </summary>
     internal static ScreenModel Model(
         IReadOnlyList<WorldDefinition> worlds,
@@ -101,19 +117,28 @@ internal static class WorldsScreenRenderer
         ArgumentNullException.ThrowIfNull(worlds);
         ArgumentNullException.ThrowIfNull(triggerSets);
 
-        var worldRows = ScreenModel.Stops(worlds.Count);
+        var worldRows = ScreenModel.Rows(worlds, w => ScreenRow.Of(
+            ScreenField.Text("name", () => w.Name, v => w.Name = v),
+            ScreenField.Text("host", () => w.Host, v => w.Host = v),
+            ScreenField.Integer("port", () => w.Port, v => w.Port = v, 1, 65535),
+            ScreenField.Choice("encoding", () => w.Encoding, v => w.Encoding = v, Encodings),
+            ScreenField.Integer("keepalive", () => w.KeepaliveSeconds, v => w.KeepaliveSeconds = v, 0, 86400)));
+
         var world = selectedWorld >= 0 && selectedWorld < worlds.Count ? worlds[selectedWorld] : null;
         var characterRows = world is null
-            ? Array.Empty<ScreenToggle?>()
-            : ScreenModel.Toggles(world.Characters, c => c.AutoLogin, (c, v) => c.AutoLogin = v);
+            ? Array.Empty<ScreenRow>()
+            : ScreenModel.Rows(world.Characters, c => ScreenRow.Of(
+                ScreenToggle.Bind(() => c.AutoLogin, v => c.AutoLogin = v),
+                ScreenField.Text("name", () => c.Name, v => c.Name = v),
+                ScreenField.Optional("on connect", () => c.OnConnect, v => c.OnConnect = v)));
 
         if (!HasCharacter(worlds, selectedWorld, selectedCharacter))
         {
-            return new ScreenModel(worldRows, characterRows, Array.Empty<ScreenToggle?>());
+            return new ScreenModel(worldRows, characterRows, Array.Empty<ScreenRow>());
         }
 
         var character = worlds[selectedWorld].Characters[selectedCharacter];
-        var setRows = new ScreenToggle?[triggerSets.Count];
+        var setRows = new ScreenRow[triggerSets.Count];
         for (var i = 0; i < triggerSets.Count; i++)
         {
             var name = triggerSets[i].Name;
@@ -121,7 +146,7 @@ internal static class WorldsScreenRenderer
             // Assignment is list membership, and the character's own order decides which set wins a
             // conflict (see AppConfiguration.ResolveTriggerSets) — so the snapshot restores the whole
             // list rather than re-adding the name at the end, which would silently reorder priority.
-            setRows[i] = new ScreenToggle(
+            setRows[i] = ScreenRow.Of(new ScreenToggle(
                 () => character.TriggerSets.Contains(name),
                 () =>
                 {
@@ -138,7 +163,7 @@ internal static class WorldsScreenRenderer
                         character.TriggerSets.Clear();
                         character.TriggerSets.AddRange(previous);
                     };
-                });
+                }));
         }
 
         return new ScreenModel(worldRows, characterRows, setRows);
@@ -211,20 +236,28 @@ internal static class WorldsScreenRenderer
         }
 
         var world = worlds[selectedWorld];
+
+        // The world's own fields are the WORLDS-list row's fields, in this order — the detail column is
+        // where they are displayed, so it is where an open edit draws its caret.
         var right = new List<string>
         {
             $"[bold {Value}]{Escape(world.Name)}[/]  [{Label}]{Escape(world.Host)}:{world.Port.ToString(CultureInfo.InvariantCulture)}[/]"
             + $"  [{accent}]TLS {OnOff(world.UseTls)}[/][{Label}] · {Escape(world.Encoding)}[/]",
             string.Empty,
             $"[{accent}]├ WORLD[/]",
-            WorldField("name", $"[{Value}]{Escape(world.Name)}[/]"),
-            WorldField("host", $"[{Value}]{Escape(world.Host)}[/]"),
-            WorldField("port", $"[{Value}]{world.Port.ToString(CultureInfo.InvariantCulture)}[/]"),
+            WorldField("name", Field($"[{Value}]{Escape(world.Name)}[/]", cursor, selectedWorld, 0)),
+            WorldField("host", Field($"[{Value}]{Escape(world.Host)}[/]", cursor, selectedWorld, 1)),
+            WorldField("port", Field(
+                $"[{Value}]{world.Port.ToString(CultureInfo.InvariantCulture)}[/]", cursor, selectedWorld, 2)),
             WorldField("security", $"[{Value}]{Security(world)}[/]"),
-            WorldField("encoding", $"[{Value}]{Escape(world.Encoding)}[/]"),
-            WorldField("keepalive", world.KeepaliveSeconds > 0
-                ? $"[{Value}]{world.KeepaliveSeconds.ToString(CultureInfo.InvariantCulture)}s[/]"
-                : $"[{Label}]off[/]"),
+            WorldField("encoding", Field($"[{Value}]{Escape(world.Encoding)}[/]", cursor, selectedWorld, 3)),
+            WorldField("keepalive", Field(
+                world.KeepaliveSeconds > 0
+                    ? $"[{Value}]{world.KeepaliveSeconds.ToString(CultureInfo.InvariantCulture)}s[/]"
+                    : $"[{Label}]off[/]",
+                cursor,
+                selectedWorld,
+                4)),
             string.Empty,
             $"[{accent}]├ CHARACTERS[/]   [{Label}]a character is a connection[/]",
             $"[{Label}]  name          state       login        trigger sets[/]",
@@ -250,17 +283,32 @@ internal static class WorldsScreenRenderer
         return right;
     }
 
-    /// <summary>The character form — labels left-aligned with their values, one field per row.</summary>
-    internal static List<string> FormColumn(CharacterDefinition character, string accent) => new()
+    /// <summary>
+    /// The character form — labels left-aligned with their values, one field per row. The editable
+    /// ones are the character row's own fields (name, then on-connect); the password is deliberately
+    /// not among them, and the session line is a report, not a setting.
+    /// </summary>
+    internal static List<string> FormColumn(
+        CharacterDefinition character, string accent, ScreenFocus? focus = null, int selectedCharacter = -1)
     {
-        $"[bold {accent}]└ CHARACTER · {Escape(character.Name)}[/]",
-        string.Empty,
-        CharField("name", $"[{Value}]{Escape(character.Name)}[/]"),
-        CharField("password", $"[{Value}]••••••••[/] [{Label}]keychain[/]"),
-        CharField("on connect", $"[{Value}]{Escape(character.OnConnect ?? "—")}[/]"),
-        CharField("auto-login", character.AutoLogin ? $"[{accent}]yes[/]" : $"[{Label}]no[/]"),
-        CharField("session", $"[{Label}]offline[/]"),
-    };
+        var cursor = focus ?? ScreenFocus.None;
+        return new List<string>
+        {
+            $"[bold {accent}]└ CHARACTER · {Escape(character.Name)}[/]",
+            string.Empty,
+            CharField("name", Field(
+                $"[{Value}]{Escape(character.Name)}[/]", cursor, selectedCharacter, 0, pane: 1)),
+            CharField("password", $"[{Value}]••••••••[/] [{Label}]keychain[/]"),
+            CharField("on connect", Field(
+                $"[{Value}]{Escape(character.OnConnect ?? "—")}[/]", cursor, selectedCharacter, 1, pane: 1)),
+            CharField("auto-login", character.AutoLogin ? $"[{accent}]yes[/]" : $"[{Label}]no[/]"),
+            CharField("session", $"[{Label}]offline[/]"),
+        };
+    }
+
+    /// <summary>Draws a value as a field, showing the buffer and caret when its edit is the open one.</summary>
+    private static string Field(string display, ScreenFocus cursor, int index, int field, int pane = 0) =>
+        ScreenChrome.Field(display, cursor.EditOn(pane, index, field));
 
     /// <summary>The assigned-trigger-sets checklist for a character.</summary>
     internal static List<string> TriggersColumn(

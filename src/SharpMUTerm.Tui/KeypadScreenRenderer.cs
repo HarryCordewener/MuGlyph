@@ -45,7 +45,7 @@ internal static class KeypadScreenRenderer
         var left = NumpadColumn(macros);
         var right = HotkeysColumn(macros);
 
-        var lines = new List<string> { HeaderLine(0), string.Empty };
+        var lines = new List<string> { HeaderLine(0, Model(macros)), string.Empty };
 
         var rowCount = Math.Max(left.Count, right.Count);
         for (var i = 0; i < rowCount; i++)
@@ -61,23 +61,31 @@ internal static class KeypadScreenRenderer
         return lines;
     }
 
-    /// <summary>The screen title on the left, the keyboard hints right-aligned to <paramref name="width"/>.</summary>
-    internal static string HeaderLine(int width)
+    /// <summary>
+    /// The screen title on the left, the keyboard hints right-aligned to <paramref name="width"/>. The
+    /// hints are derived from <paramref name="model"/> and <paramref name="focus"/> rather than
+    /// written here, so the header cannot advertise an edit the screen doesn't offer.
+    /// </summary>
+    internal static string HeaderLine(int width, ScreenModel? model = null, ScreenFocus? focus = null)
     {
         var title = $"[bold {Value}] Keypad & hotkeys[/]";
-        var hints = ScreenChrome.Hints(ScreenChrome.SingleListHints, "F4");
+        var hints = ScreenChrome.Hints(
+            ScreenChrome.SingleListHints, "F4", model?.HasEditableRow ?? false, focus);
         return SpreadLR(" " + title, hints, width);
     }
 
     /// <summary>
-    /// The screen's one navigable pane: the binding list, where Space enables or disables a macro.
-    /// The numpad grid is a projection of the same macros, so it has no cursor of its own — it
-    /// updates as the list is toggled.
+    /// The screen's one navigable pane: the binding list, where Space enables or disables a macro and
+    /// ⏎ edits the command it sends. The numpad grid is a projection of the same macros, so it has no
+    /// cursor of its own — it updates as the list is toggled and edited.
     /// </summary>
     internal static ScreenModel Model(IReadOnlyList<Macro> macros)
     {
         ArgumentNullException.ThrowIfNull(macros);
-        return new ScreenModel(ScreenModel.Toggles(macros, m => m.Enabled, (m, v) => m.Enabled = v));
+
+        return new ScreenModel(ScreenModel.Rows(macros, macro => ScreenRow.Of(
+            ScreenToggle.Bind(() => macro.Enabled, v => macro.Enabled = v),
+            ScreenField.Text("command", () => macro.Command, v => macro.Command = v))));
     }
 
     /// <summary>The action bar: how much of the keypad is bound on the left, cancel/save on the right.</summary>
@@ -134,7 +142,8 @@ internal static class KeypadScreenRenderer
 
         for (var i = 0; i < macros.Count; i++)
         {
-            lines.Add(ScreenChrome.Cursor(Hotkey(macros[i]), cursor.IsOn(0, i), ColumnWidth));
+            lines.Add(ScreenChrome.Cursor(
+                Hotkey(macros[i], cursor.EditOn(0, i, 0)), cursor.IsOn(0, i), ColumnWidth));
         }
 
         return lines;
@@ -163,11 +172,11 @@ internal static class KeypadScreenRenderer
         return $"[bold {Accent}][[{digit}]][/] {command}";
     }
 
-    private static string Hotkey(Macro macro)
+    private static string Hotkey(Macro macro, ScreenFieldEdit? edit)
     {
         var tick = macro.Enabled ? $"[{Accent}]✓[/]" : "[dim]·[/]";
         var key = $"[bold]{Escape(macro.Key).PadRight(KeyColumnWidth)}[/]";
-        return $"{tick} {key} → {Escape(macro.Command)}";
+        return $"{tick} {key} → {ScreenChrome.Field(Escape(macro.Command), edit)}";
     }
 
     private static Macro? FindByKey(IReadOnlyList<Macro> macros, string key)

@@ -4,8 +4,8 @@ Context for whoever (human or agent) picks up this work next.
 
 - **Repository:** `SharpMUSH/SharpMUTerm`
 - **Start from:** a fresh branch off `main`
-- **Tests:** 764 across the solution (325 Core / 83 Graphics / 42 Scripting /
-  28 Web / 286 Tui), all green; `dotnet build SharpMUTerm.slnx` clean (0 warnings
+- **Tests:** 811 across the solution (327 Core / 83 Graphics / 42 Scripting /
+  28 Web / 331 Tui), all green; `dotnet build SharpMUTerm.slnx` clean (0 warnings
   from this repo; building against a local SharpConsoleUI clone surfaces 2 upstream
   NuGet advisory warnings for AngleSharp, which are the framework's, not ours)
 
@@ -18,23 +18,22 @@ polish/feature backlog.
 
 ### 1. Field editing on the config screens
 
-The settings screens navigate (↑↓, ⇥) and toggle (Space), but **nothing lets you
-type**: no new host, interval, or pattern. No header advertises editing either,
-and a test pins that (`ScreenCursorTests.cs:191` asserts no screen shows
-`⏎ edit` / `⏎ rebind` / `⏎ change`) — that assertion moves with the feature.
+**Text/number/enum editing is done** — see *Settings screens* under Critical
+Gotchas for how it works. What is left of this item:
 
-Outstanding:
-
-- **Text/number/enum rows** — the actual edit mode, plus whatever key opens it.
-- **Add/remove rows.** `[+ world]` / `[- del]` (`WorldsScreenRenderer.cs:195`)
-  and `[+ add character]` / `[⧉ duplicate]` / `[- remove]`
-  (`WorldsScreenRenderer.cs:249`) are painted but inert.
+- **Add/remove rows.** `[+ world]` / `[- del]` (`WorldsScreenRenderer.cs`) and
+  `[+ add character]` / `[⧉ duplicate]` / `[- remove]` are painted but inert.
+  ⏎ is already the "activate the focused row" key, so a button row is a
+  `ScreenRow` with an action rather than a field — that is the natural shape.
 - **F2's route-to radio list and highlight-colour picker**
   (`TriggersScreenRenderer.cs`). Both are read-only indicators today; the
   highlight row deliberately never takes the cursor, because there is nothing to
   turn a colour on with yet.
-
-See *Settings screens* under Critical Gotchas for the pieces you'd be extending.
+- **Rows still not editable** (deliberately, this pass): a macro's *key*
+  (rebinding needs a key-capture mode, not a text buffer), a character's
+  password (it is `[JsonIgnore]` and belongs in a credential store), a world's
+  TLS/certificate "security" line (two booleans, so checkboxes, not a field),
+  and everything derived (the numpad grid, the session/state readouts).
 
 ### 2. Real-terminal verification still owed
 
@@ -119,7 +118,9 @@ Things that will waste your time if you don't know them.
 - **Snapshot view names:** `worlds`/`settings`, `triggers`, `aliases`, `timers`,
   `keypad`, `textansi`, `input`, `logging`, `freeze`, `spawn`, `split`, `move`,
   `drag`, `history`, `menu`, `menu-split`, plus the default (no `--view`) workspace.
-  Extra state toggles: `collapsed`, `prefix`, `timestamps`.
+  Extra state toggles: `collapsed`, `prefix`, `timestamps`. Any settings screen also
+  takes a `-edit` suffix (`worlds-edit`, `logging-edit`, …), which opens it and
+  drives real keys in so the frame shows a field mid-edit.
 - **Send the user the `.svg`** — they view it fine. Do **not** rely on your own
   SVG→PNG for pixel checks near the bottom (see next point).
 - **SVG→PNG clipping trap:** Chromium clips the bottom of a bare `.svg` file
@@ -261,12 +262,43 @@ What the framework actually provides (read at v2.5.14, not assumed):
   padding, spread).
 - Interaction pieces: `ScreenSelection` (pure cursor state; pane sizes are passed
   in per move rather than cached, because a keystroke can change them),
-  `ScreenModel`/`ScreenToggle` (navigable panes + the config each checkbox writes
-  to, rebuilt from live config on every key by the renderer's own `Model(...)`),
-  `ScreenEdits` (the undo log), `SettingsSession` (key → `Redraw`/`Save`/`Cancel`/…,
-  where all the rules live so they're testable without a terminal), and
-  `SettingsOverlay` (the only UI-aware piece: on `Redraw` it does `ClearControls()`
-  + `AddControl(factory())` + `Invalidate(true)`).
+  `ScreenModel` (navigable panes of `ScreenRow`s, rebuilt from live config on every
+  key by the renderer's own `Model(...)`), `ScreenEdits` (the undo log),
+  `SettingsSession` (key → `Redraw`/`Save`/`Cancel`/…, where all the rules live so
+  they're testable without a terminal), and `SettingsOverlay` (the only UI-aware
+  piece: on `Redraw` it does `ClearControls()` + `AddControl(factory())` +
+  `Invalidate(true)`).
+- **A row is a `ScreenRow`**: an optional `ScreenToggle` (Space) plus an ordered
+  list of `ScreenField`s (⏎ opens the first, ⇥ steps to the next). A row can be
+  both — a keypad binding is Space-enables + ⏎-edits-the-command.
+- **Fields hang off existing rows, never off new ones.** A world's name/host/port/
+  encoding/keepalive are the *WORLDS-list row's* fields, drawn in the detail
+  column; a timer's interval/command are the *timer row's*, drawn in the editor
+  pane. That is deliberate: giving a value an editor must not renumber the cursor
+  indices the panes already navigate by (and that the renderer tests pin).
+- **Keys.** ⏎ activates the focused row when it has a field, else it saves and
+  closes. ⌃S always saves (committing an open field first, and refusing if that
+  field won't validate). Esc cancels the screen — except mid-edit, where it
+  abandons the buffer and leaves the screen up. Inside an edit: typing inserts,
+  Backspace/Delete remove, ←→/Home/End move the caret, ↑↓ cycle an enum's choices,
+  ⇥ commits and steps to the row's next field, ⏎ commits.
+- **Validation is at commit, not per keystroke.** Any character can be typed;
+  ⏎/⇥/⌃S validate. A rejected value keeps the edit open, marks the field with the
+  reason, and writes nothing — `ScreenEdits.Apply(field, value)` is the only path
+  from a buffer into config, which is what keeps an invalid one out.
+- **Header hints are derived, not written.** `HeaderLine(width, model, focus)`
+  reads `model.HasEditableRow`, so a screen physically cannot advertise `⏎ edit`
+  without offering one; `ScreenCursorTests` asserts the *if and only if* both ways.
+  While an edit is open the hints swap wholesale, because Esc no longer closes.
+- **Making a Core property settable? Check for cached derived state.**
+  `Trigger.Pattern` and `Alias.Pattern` drop their compiled `Regex` on write, like
+  `Alias.CaseSensitive` already did — otherwise the rule goes on matching the
+  pattern it no longer has, invisibly, until a line arrives.
+- **Snapshot `--view <name>-edit`** opens a settings screen and then drives real
+  keys into it through `SettingsOverlay.SimulateKey` (the same handler
+  `PreviewKeyPressed` raises), so a frame can show a field genuinely mid-edit.
+  Keys cannot go in through the console driver here: the framework only subscribes
+  its key pump inside `Run()`, which a snapshot never enters.
 - **Screens edit config in place.** Cloning `AppConfiguration` would drop
   `[JsonIgnore]` fields like a character's in-memory password, so Esc is a replayed
   undo. A toggle's snapshot captures the **value**, not the boolean — F9's
@@ -317,7 +349,8 @@ What the framework actually provides (read at v2.5.14, not assumed):
 | `src/SharpMUTerm.Tui/SettingsOverlay.cs` | Frameless full-screen overlay; routes keys to the screen's session and rebuilds its content |
 | `src/SharpMUTerm.Tui/SettingsSession.cs` | Key → action for an open settings screen (the whole interaction contract, testable) |
 | `src/SharpMUTerm.Tui/ScreenSelection.cs` | Pure pane/cursor state machine for the settings screens |
-| `src/SharpMUTerm.Tui/ScreenModel.cs` | A screen's navigable panes + the config each checkbox binds to |
+| `src/SharpMUTerm.Tui/ScreenModel.cs` | A screen's navigable panes; a `ScreenRow` is a stop, a checkbox, a record of editable fields, or both |
+| `src/SharpMUTerm.Tui/ScreenField.cs` | One editable value: read / validate / write / snapshot, plus the text, number, regex, choice and enum kinds |
 | `src/SharpMUTerm.Tui/ScreenEdits.cs` | The undo log behind Cancel/Save |
 | `src/SharpMUTerm.Tui/PaneDragTracker.cs` | Pure drag gesture state machine + `MouseFlags` decoding |
 | `src/SharpMUTerm.Tui/PaneDragSurface.cs` | Pane rectangles + active windows, frozen at press |

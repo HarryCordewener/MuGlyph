@@ -154,6 +154,7 @@ internal static class Program
         Console.WriteLine("  --snapshot           Render one demo frame (ANSI) headlessly and exit.");
         Console.WriteLine("  --size <WxH>         Snapshot size in cells (default 160x48).");
         Console.WriteLine("  --view <name>        Snapshot an overlay (e.g. 'settings') over the workspace.");
+        Console.WriteLine("                       '<name>-edit' opens that settings screen mid field edit.");
         Console.WriteLine("  --out <file>         Write the snapshot to a file instead of stdout.");
         Console.WriteLine("  -h, --help           Show this help.");
         Console.WriteLine();

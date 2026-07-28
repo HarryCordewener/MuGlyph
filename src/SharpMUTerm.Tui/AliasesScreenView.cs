@@ -20,7 +20,9 @@ internal static class AliasesScreenView
     public static IWindowControl Build(
         IReadOnlyList<TriggerSet> sets, int selected, int width, ScreenFocus? focus = null)
     {
-        var header = ScreenChrome.Band(AliasesScreenRenderer.HeaderLine(width), ScreenPalette.HeaderBg);
+        var header = ScreenChrome.Band(
+            AliasesScreenRenderer.HeaderLine(width, AliasesScreenRenderer.Model(sets, selected), focus),
+            ScreenPalette.HeaderBg);
         var footer = ScreenChrome.Band(AliasesScreenRenderer.FooterLine(sets, selected, width), ScreenPalette.FooterBg);
 
         // Body: alias list │ editor, as two real columns.

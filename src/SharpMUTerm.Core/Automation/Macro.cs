@@ -14,8 +14,11 @@ public sealed class Macro
 
     public bool Enabled { get; set; } = true;
 
-    /// <summary>The command to send when the key is pressed.</summary>
-    public string Command { get; init; } = string.Empty;
+    /// <summary>
+    /// The command to send when the key is pressed. Settable so the F4 screen can edit it live; the
+    /// engine reads it per press, so a change applies to the next one. Nothing is cached from it.
+    /// </summary>
+    public string Command { get; set; } = string.Empty;
 
     /// <summary>Optional named script callback (resolved by the scripting layer).</summary>
     public string? ScriptCallback { get; init; }

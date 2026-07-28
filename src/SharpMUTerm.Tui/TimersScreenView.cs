@@ -20,7 +20,9 @@ internal static class TimersScreenView
     public static IWindowControl Build(
         IReadOnlyList<TriggerSet> sets, int selected, int width, ScreenFocus? focus = null)
     {
-        var header = ScreenChrome.Band(TimersScreenRenderer.HeaderLine(width), ScreenPalette.HeaderBg);
+        var header = ScreenChrome.Band(
+            TimersScreenRenderer.HeaderLine(width, TimersScreenRenderer.Model(sets, selected), focus),
+            ScreenPalette.HeaderBg);
         var footer = ScreenChrome.Band(
             TimersScreenRenderer.FooterLine(sets, selected, width), ScreenPalette.FooterBg);
 

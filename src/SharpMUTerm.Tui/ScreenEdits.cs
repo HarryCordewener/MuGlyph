@@ -5,8 +5,8 @@ namespace SharpMUTerm.Tui;
 /// place — cloning <see cref="SharpMUTerm.Core.Configuration.AppConfiguration"/> would silently drop
 /// the fields that deliberately don't round-trip (a character's in-memory password is
 /// <c>[JsonIgnore]</c>) — so "discard" is a replayed undo rather than a swapped object. Each applied
-/// toggle pushes the restore action captured *before* it ran; Esc replays them newest-first, ⏎ drops
-/// them. Pure state, so the semantics are unit-testable without a window.
+/// toggle or committed field pushes the restore action captured *before* it ran; Esc replays them
+/// newest-first, ⏎ drops them. Pure state, so the semantics are unit-testable without a window.
 /// </summary>
 internal sealed class ScreenEdits
 {
@@ -23,6 +23,27 @@ internal sealed class ScreenEdits
     {
         _undo.Add(toggle.Snapshot());
         toggle.Flip();
+    }
+
+    /// <summary>
+    /// Writes a typed value to a field, recording how to put the old one back — the same undo entry a
+    /// toggle pushes, so Esc restores an edited host exactly as it restores a flipped checkbox.
+    /// Nothing is written and nothing is recorded when the value doesn't validate: returns null when
+    /// the value was accepted, otherwise why it was refused. This is the only path from a buffer into
+    /// config, which is what keeps an invalid value out of it.
+    /// </summary>
+    internal string? Apply(ScreenField field, string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+
+        if (field.Validate(value) is { } error)
+        {
+            return error;
+        }
+
+        _undo.Add(field.Snapshot());
+        field.Set(value);
+        return null;
     }
 
     /// <summary>Undoes every pending change, newest first, so overlapping edits unwind correctly.</summary>

@@ -24,7 +24,10 @@ internal static class TriggersScreenView
         int width,
         ScreenFocus? focus = null)
     {
-        var header = ScreenChrome.Band(TriggersScreenRenderer.HeaderLine(width), ScreenPalette.HeaderBg);
+        var header = ScreenChrome.Band(
+            TriggersScreenRenderer.HeaderLine(
+                width, TriggersScreenRenderer.Model(sets, selectedTrigger), focus),
+            ScreenPalette.HeaderBg);
         var footer = ScreenChrome.Band(
             TriggersScreenRenderer.FooterLine(sets, selectedTrigger, width), ScreenPalette.FooterBg);
 

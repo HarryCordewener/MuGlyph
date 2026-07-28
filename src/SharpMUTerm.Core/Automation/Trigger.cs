@@ -42,11 +42,29 @@ public sealed class TriggerActions
 public sealed class Trigger
 {
     private Regex? _compiled;
+    private string _pattern = string.Empty;
 
     public string Name { get; init; } = string.Empty;
 
-    /// <summary>The .NET regular expression matched against a line's plain text.</summary>
-    public required string Pattern { get; init; }
+    /// <summary>
+    /// The .NET regular expression matched against a line's plain text. Settable so the F2 settings
+    /// screen can edit it live; writing it drops the cached <see cref="Regex"/> so the next match
+    /// recompiles against the new pattern rather than silently going on matching the old one.
+    /// </summary>
+    public required string Pattern
+    {
+        get => _pattern;
+        set
+        {
+            if (string.Equals(_pattern, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _pattern = value;
+            _compiled = null;
+        }
+    }
 
     public bool Enabled { get; set; } = true;
 

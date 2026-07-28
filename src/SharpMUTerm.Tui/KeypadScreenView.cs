@@ -20,7 +20,9 @@ internal static class KeypadScreenView
 
     public static IWindowControl Build(IReadOnlyList<Macro> macros, int width, ScreenFocus? focus = null)
     {
-        var header = ScreenChrome.Band(KeypadScreenRenderer.HeaderLine(width), ScreenPalette.HeaderBg);
+        var header = ScreenChrome.Band(
+            KeypadScreenRenderer.HeaderLine(width, KeypadScreenRenderer.Model(macros), focus),
+            ScreenPalette.HeaderBg);
         var footer = ScreenChrome.Band(KeypadScreenRenderer.FooterLine(macros, width), ScreenPalette.FooterBg);
 
         // Body: numpad grid │ hotkey list, as two real columns.

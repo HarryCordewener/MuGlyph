@@ -119,4 +119,23 @@ public class TriggerEngineTests
         var result = engine.Process(Line("hello world"));
         await Assert.That(result.Suppress).IsTrue();
     }
+
+    /// <summary>
+    /// The pattern is settable so the F2 settings screen can edit a live trigger. The compiled regex
+    /// is cached, so writing it has to drop that cache — otherwise the rule keeps matching the pattern
+    /// it no longer has, which is invisible until a line arrives.
+    /// </summary>
+    [Test]
+    public async Task RewritingThePattern_RecompilesTheMatcher()
+    {
+        var trigger = new Trigger { Pattern = "spam", Actions = new TriggerActions { Gag = true } };
+        var engine = new TriggerEngine();
+        engine.Add(trigger);
+        await Assert.That(engine.Process(Line("this is spam")).Suppress).IsTrue();
+
+        trigger.Pattern = "noise";
+
+        await Assert.That(engine.Process(Line("this is spam")).Suppress).IsFalse();
+        await Assert.That(engine.Process(Line("this is noise")).Suppress).IsTrue();
+    }
 }

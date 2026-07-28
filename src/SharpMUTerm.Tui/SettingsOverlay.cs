@@ -72,6 +72,14 @@ internal sealed class SettingsOverlay
     /// <summary>Renders a screen into a headless frame (used by snapshots).</summary>
     public void OpenForSnapshot(ConsoleKey key, ScreenBinding binding) => Open(key, binding);
 
+    /// <summary>
+    /// Feeds one key to the open screen through the very handler <c>PreviewKeyPressed</c> raises, so a
+    /// snapshot can show a screen in a state only the keyboard can reach (a field mid-edit) without
+    /// any of it being faked. Keys cannot be driven in through the console driver here: the framework
+    /// only subscribes its key pump inside <c>Run()</c>, which a headless snapshot never enters.
+    /// </summary>
+    public void SimulateKey(ConsoleKeyInfo key) => OnKey(this, new KeyPressedEventArgs(key, false));
+
     private void Open(ConsoleKey key, ScreenBinding binding)
     {
         _openKey = key;

@@ -16,10 +16,26 @@ internal static class ScreenChrome
     /// <summary>
     /// The right-hand keyboard hints of a header band: the screen's verbs, then how to close it.
     /// <paramref name="fkey"/> is the F-key that also toggles the screen (<c>F6/Esc close</c>).
+    /// <para>
+    /// <paramref name="editable"/> comes from the screen's <see cref="ScreenModel"/>, never from the
+    /// screen itself: a header may only claim ⏎ opens an editor when a row actually offers one. While
+    /// an edit *is* open the hints change wholesale — Esc no longer closes the screen, it abandons the
+    /// buffer, and saying otherwise would be the same lie in the other direction.
+    /// </para>
     /// </summary>
-    internal static string Hints(string verbs, string fkey) =>
-        $"[{ScreenPalette.Label}]{verbs} · [/][{ScreenPalette.Accent}]{fkey}[/][{ScreenPalette.Label}]/[/]"
-        + $"[{ScreenPalette.Accent}]Esc[/][{ScreenPalette.Label}] close [/]";
+    internal static string Hints(string verbs, string fkey, bool editable = false, ScreenFocus? focus = null)
+    {
+        if (focus?.Edit is { } edit)
+        {
+            var editing = edit.RowFields > 1 ? EditingHints + NextFieldHint : EditingHints;
+            return $"[{ScreenPalette.Label}]{editing} · [/][{ScreenPalette.Accent}]{fkey}[/]"
+                + $"[{ScreenPalette.Label}] close [/]";
+        }
+
+        var all = editable ? verbs + EditHint : verbs;
+        return $"[{ScreenPalette.Label}]{all} · [/][{ScreenPalette.Accent}]{fkey}[/][{ScreenPalette.Label}]/[/]"
+            + $"[{ScreenPalette.Accent}]Esc[/][{ScreenPalette.Label}] close [/]";
+    }
 
     /// <summary>
     /// The keyboard hints every screen with a list and a checkbox pane shares. Kept in one place so a
@@ -29,6 +45,17 @@ internal static class ScreenChrome
 
     /// <summary>The hints for a screen that is a single list with no second pane to ⇥ into.</summary>
     internal const string SingleListHints = "↑↓ select · Space toggle";
+
+    /// <summary>
+    /// What a screen adds to its hints when — and only when — its model offers a row ⏎ can open.
+    /// </summary>
+    internal const string EditHint = " · ⏎ edit";
+
+    /// <summary>The hints that replace a screen's own while a field edit is open.</summary>
+    internal const string EditingHints = "⏎ commit · Esc revert";
+
+    /// <summary>Added to <see cref="EditingHints"/> only when the row has another field to step to.</summary>
+    internal const string NextFieldHint = " · ⇥ next field";
 
     /// <summary>
     /// The right-hand actions of a footer bar. <paramref name="accent"/> lets a screen with a
@@ -45,6 +72,38 @@ internal static class ScreenChrome
     /// </summary>
     internal static string Cursor(string row, bool focused, int width) =>
         focused ? $"[on {ScreenPalette.CursorBg}]{MarkupText.PadVisible(row, width)}[/]" : row;
+
+    /// <summary>
+    /// Draws a row's editable value: its committed text when nothing is being typed, or — when
+    /// <paramref name="edit"/> is the open edit for that field — the buffer, a block caret sitting
+    /// inside it, and the reason the last commit was refused. Every screen draws fields, so the
+    /// affordance lives here rather than being re-invented (and drifting) per renderer.
+    /// <para>
+    /// <paramref name="display"/> is already markup, because a screen decides for itself how a
+    /// committed value reads (a null log directory shows as <c>(default)</c>); the buffer is escaped
+    /// here, since what has been typed is raw text.
+    /// </para>
+    /// </summary>
+    internal static string Field(string display, ScreenFieldEdit? edit)
+    {
+        if (edit is not { } open)
+        {
+            return display;
+        }
+
+        var caret = Math.Clamp(open.Caret, 0, open.Text.Length);
+        var before = MarkupText.Escape(open.Text[..caret]);
+        var under = caret < open.Text.Length ? MarkupText.Escape(open.Text[caret].ToString()) : " ";
+        var after = caret < open.Text.Length ? MarkupText.Escape(open.Text[(caret + 1)..]) : string.Empty;
+
+        var buffer = $"[{ScreenPalette.Value} on {ScreenPalette.FieldBg}]{before}[/]"
+            + $"[{ScreenPalette.Ink} on {ScreenPalette.Accent}]{under}[/]"
+            + $"[{ScreenPalette.Value} on {ScreenPalette.FieldBg}]{after} [/]";
+
+        return open.Error is { } error
+            ? $"{buffer}  [{ScreenPalette.Warn}]▲ {MarkupText.Escape(error)}[/]"
+            : buffer;
+    }
 
     /// <summary>A full-width one-row band — the header or the footer.</summary>
     internal static MarkupControl Band(string line, string bg) => new(new List<string> { line })

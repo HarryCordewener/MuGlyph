@@ -26,7 +26,9 @@ internal static class WorldsScreenView
     {
         var accent = WorldsScreenRenderer.AccentFor(worlds, selectedWorld);
 
-        var header = ScreenChrome.Band(WorldsScreenRenderer.HeaderLine(width), ScreenPalette.HeaderBg);
+        var model = WorldsScreenRenderer.Model(worlds, triggerSets, selectedWorld, selectedCharacter);
+        var header = ScreenChrome.Band(
+            WorldsScreenRenderer.HeaderLine(width, model, focus), ScreenPalette.HeaderBg);
         var footer = ScreenChrome.Band(
             WorldsScreenRenderer.FooterLine(worlds, selectedWorld, selectedCharacter, accent, width),
             ScreenPalette.FooterBg);
@@ -54,7 +56,7 @@ internal static class WorldsScreenView
         if (WorldsScreenRenderer.HasCharacter(worlds, selectedWorld, selectedCharacter))
         {
             var character = worlds[selectedWorld].Characters[selectedCharacter];
-            var form = WorldsScreenRenderer.FormColumn(character, accent).ToList();
+            var form = WorldsScreenRenderer.FormColumn(character, accent, focus, selectedCharacter).ToList();
             var triggers = WorldsScreenRenderer.TriggersColumn(character, triggerSets, accent, focus).ToList();
             var editHeight = Math.Max(form.Count, triggers.Count);
 

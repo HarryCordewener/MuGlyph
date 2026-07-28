@@ -1,0 +1,395 @@
+using SharpMUTerm.Core.Automation;
+using SharpMUTerm.Core.Configuration;
+using SharpMUTerm.Tui;
+
+namespace SharpMUTerm.Tui.Tests;
+
+/// <summary>
+/// The field-edit state machine: what ⏎ does on each kind of row, what the keyboard means once an
+/// edit is open, what a rejected value does, and what Cancel puts back. All of it is pure, so the
+/// whole contract is asserted here rather than being discovered in a terminal.
+/// </summary>
+public class SettingsSessionEditTests
+{
+    private static ConsoleKeyInfo Key(ConsoleKey key, ConsoleModifiers modifiers = default) =>
+        new('\0', key, modifiers.HasFlag(ConsoleModifiers.Shift), false,
+            modifiers.HasFlag(ConsoleModifiers.Control));
+
+    private static ConsoleKeyInfo Char(char c) => new(c, ConsoleKey.NoName, false, false, false);
+
+    private static void Type(SettingsSession session, string text)
+    {
+        foreach (var c in text)
+        {
+            session.Handle(Char(c));
+        }
+    }
+
+    /// <summary>A one-pane screen: a stop, a checkbox, and a two-field record (a host and a port).</summary>
+    private sealed class Scene
+    {
+        public bool Flag { get; set; }
+
+        public string Host { get; set; } = "aardmud.org";
+
+        public int Port { get; set; } = 4000;
+
+        public SettingsSession Session() => new(_ => new ScreenModel(new[]
+        {
+            ScreenRow.Stop,
+            ScreenRow.Of(ScreenToggle.Bind(() => Flag, v => Flag = v)),
+            ScreenRow.Of(
+                ScreenField.Text("host", () => Host, v => Host = v),
+                ScreenField.Integer("port", () => Port, v => Port = v, 1, 65535)),
+        }));
+    }
+
+    /// <summary>Puts the cursor on the record row (index 2) and opens its first field.</summary>
+    private static SettingsSession Editing(Scene scene)
+    {
+        var session = scene.Session();
+        session.Handle(Key(ConsoleKey.DownArrow));
+        session.Handle(Key(ConsoleKey.DownArrow));
+        session.Handle(Key(ConsoleKey.Enter));
+        return session;
+    }
+
+    [Test]
+    public async Task Enter_OnARowWithNoFieldStillSavesAndCloses()
+    {
+        var session = new Scene().Session();
+
+        await Assert.That(session.Handle(Key(ConsoleKey.Enter))).IsEqualTo(ScreenAction.Save);
+        await Assert.That(session.IsEditing).IsFalse();
+
+        session.Handle(Key(ConsoleKey.DownArrow));
+        await Assert.That(session.Handle(Key(ConsoleKey.Enter))).IsEqualTo(ScreenAction.Save);
+    }
+
+    [Test]
+    public async Task Enter_OnAFieldRowOpensAnEditSeededWithTheCurrentValue()
+    {
+        var session = Editing(new Scene());
+
+        await Assert.That(session.IsEditing).IsTrue();
+        await Assert.That(session.Focus().Edit).IsEqualTo(
+            new ScreenFieldEdit(0, "aardmud.org", 11, null, RowFields: 2));
+    }
+
+    [Test]
+    public async Task TypingInsertsAtTheCaretAndBackspaceRemovesBehindIt()
+    {
+        var scene = new Scene();
+        var session = Editing(scene);
+
+        session.Handle(Key(ConsoleKey.Backspace));
+        session.Handle(Key(ConsoleKey.Backspace));
+        session.Handle(Key(ConsoleKey.Backspace));
+        Type(session, "net");
+
+        await Assert.That(session.Focus().Edit!.Value.Text).IsEqualTo("aardmud.net");
+
+        // Nothing is written until it is committed — the buffer is not config.
+        await Assert.That(scene.Host).IsEqualTo("aardmud.org");
+
+        await Assert.That(session.Handle(Key(ConsoleKey.Enter))).IsEqualTo(ScreenAction.Redraw);
+        await Assert.That(scene.Host).IsEqualTo("aardmud.net");
+        await Assert.That(session.IsEditing).IsFalse();
+    }
+
+    [Test]
+    public async Task SpaceTypesASpaceInsteadOfTogglingWhileAnEditIsOpen()
+    {
+        var scene = new Scene();
+        var session = Editing(scene);
+
+        session.Handle(new ConsoleKeyInfo(' ', ConsoleKey.Spacebar, false, false, false));
+
+        await Assert.That(session.Focus().Edit!.Value.Text).IsEqualTo("aardmud.org ");
+        await Assert.That(scene.Flag).IsFalse();
+    }
+
+    [Test]
+    public async Task TheCaretMovesWithTheArrowsHomeAndEnd_AndDeleteTakesTheCharacterUnderIt()
+    {
+        var session = Editing(new Scene());
+
+        session.Handle(Key(ConsoleKey.Home));
+        await Assert.That(session.Focus().Edit!.Value.Caret).IsEqualTo(0);
+
+        session.Handle(Key(ConsoleKey.Delete));
+        await Assert.That(session.Focus().Edit!.Value.Text).IsEqualTo("ardmud.org");
+
+        session.Handle(Key(ConsoleKey.RightArrow));
+        Type(session, "-");
+        await Assert.That(session.Focus().Edit!.Value.Text).IsEqualTo("a-rdmud.org");
+
+        session.Handle(Key(ConsoleKey.End));
+        await Assert.That(session.Focus().Edit!.Value.Caret).IsEqualTo(11);
+
+        // Neither end wraps, and a caret that can't move doesn't cost a redraw.
+        await Assert.That(session.Handle(Key(ConsoleKey.RightArrow))).IsEqualTo(ScreenAction.Consumed);
+        session.Handle(Key(ConsoleKey.Home));
+        await Assert.That(session.Handle(Key(ConsoleKey.LeftArrow))).IsEqualTo(ScreenAction.Consumed);
+    }
+
+    [Test]
+    public async Task Escape_AbandonsTheEditAndLeavesTheScreenOpen()
+    {
+        var scene = new Scene();
+        var session = Editing(scene);
+        Type(session, "!!!");
+
+        await Assert.That(session.Handle(Key(ConsoleKey.Escape))).IsEqualTo(ScreenAction.Redraw);
+
+        await Assert.That(session.IsEditing).IsFalse();
+        await Assert.That(scene.Host).IsEqualTo("aardmud.org");
+        await Assert.That(session.Edits.IsDirty).IsFalse();
+
+        // Only now does Esc mean the screen.
+        await Assert.That(session.Handle(Key(ConsoleKey.Escape))).IsEqualTo(ScreenAction.Cancel);
+    }
+
+    [Test]
+    public async Task ARejectedValueKeepsTheEditOpen_MarksTheField_AndNeverReachesConfig()
+    {
+        var scene = new Scene();
+        var session = Editing(scene);
+
+        session.Handle(Key(ConsoleKey.Tab)); // commit the host, step to the port
+        for (var i = 0; i < 4; i++)
+        {
+            session.Handle(Key(ConsoleKey.Backspace));
+        }
+
+        Type(session, "99999");
+        await Assert.That(session.Handle(Key(ConsoleKey.Enter))).IsEqualTo(ScreenAction.Redraw);
+
+        await Assert.That(session.IsEditing).IsTrue();
+        await Assert.That(session.Focus().Edit!.Value.Error).IsEqualTo("port must be a whole number 1-65535");
+        await Assert.That(scene.Port).IsEqualTo(4000);
+
+        // Correcting it clears the mark and lets it through.
+        session.Handle(Key(ConsoleKey.Backspace));
+        await Assert.That(session.Focus().Edit!.Value.Error).IsNull();
+        session.Handle(Key(ConsoleKey.Enter));
+
+        await Assert.That(scene.Port).IsEqualTo(9999);
+        await Assert.That(session.IsEditing).IsFalse();
+    }
+
+    [Test]
+    public async Task Tab_CommitsTheFieldAndStepsToTheRowsNext_WrappingBack()
+    {
+        var scene = new Scene();
+        var session = Editing(scene);
+        Type(session, ".uk");
+
+        session.Handle(Key(ConsoleKey.Tab));
+
+        await Assert.That(scene.Host).IsEqualTo("aardmud.org.uk");
+        await Assert.That(session.Focus().Edit!.Value.Field).IsEqualTo(1);
+        await Assert.That(session.Focus().Edit!.Value.Text).IsEqualTo("4000");
+
+        session.Handle(Key(ConsoleKey.Tab));
+        await Assert.That(session.Focus().Edit!.Value.Field).IsEqualTo(0);
+
+        session.Handle(Key(ConsoleKey.Tab, ConsoleModifiers.Shift));
+        await Assert.That(session.Focus().Edit!.Value.Field).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task Tab_WillNotStepPastAValueThatDoesNotValidate()
+    {
+        var scene = new Scene();
+        var session = Editing(scene);
+        session.Handle(Key(ConsoleKey.Home));
+        for (var i = 0; i < 11; i++)
+        {
+            session.Handle(Key(ConsoleKey.Delete));
+        }
+
+        session.Handle(Key(ConsoleKey.Tab));
+
+        await Assert.That(session.Focus().Edit!.Value.Field).IsEqualTo(0);
+        await Assert.That(session.Focus().Edit!.Value.Error).IsNotNull();
+        await Assert.That(scene.Host).IsEqualTo("aardmud.org");
+    }
+
+    [Test]
+    public async Task ControlS_SavesFromNavigation_AndCommitsAnOpenFieldFirst()
+    {
+        var scene = new Scene();
+        var session = scene.Session();
+
+        await Assert.That(session.Handle(Key(ConsoleKey.S, ConsoleModifiers.Control)))
+            .IsEqualTo(ScreenAction.Save);
+
+        session = Editing(scene);
+        Type(session, ".uk");
+        await Assert.That(session.Handle(Key(ConsoleKey.S, ConsoleModifiers.Control)))
+            .IsEqualTo(ScreenAction.Save);
+        await Assert.That(scene.Host).IsEqualTo("aardmud.org.uk");
+        await Assert.That(session.IsEditing).IsFalse();
+    }
+
+    [Test]
+    public async Task ControlS_WillNotSaveAValueThatDoesNotValidate()
+    {
+        var scene = new Scene();
+        var session = Editing(scene);
+
+        session.Handle(Key(ConsoleKey.Tab));
+        for (var i = 0; i < 4; i++)
+        {
+            session.Handle(Key(ConsoleKey.Backspace));
+        }
+
+        Type(session, "http");
+
+        await Assert.That(session.Handle(Key(ConsoleKey.S, ConsoleModifiers.Control)))
+            .IsEqualTo(ScreenAction.Redraw);
+        await Assert.That(session.IsEditing).IsTrue();
+        await Assert.That(scene.Port).IsEqualTo(4000);
+    }
+
+    [Test]
+    public async Task NavigationIsSuspendedWhileAnEditIsOpen()
+    {
+        var session = Editing(new Scene());
+
+        session.Handle(Key(ConsoleKey.UpArrow));
+        session.Handle(Key(ConsoleKey.DownArrow));
+
+        await Assert.That(session.Focus().Index).IsEqualTo(2);
+        await Assert.That(session.IsEditing).IsTrue();
+    }
+
+    [Test]
+    public async Task UpAndDownCycleAnEnumFieldsChoices()
+    {
+        var format = LogFormat.Plain;
+        var session = new SettingsSession(_ => new ScreenModel(new[]
+        {
+            ScreenRow.Of(ScreenField.Enumeration("format", () => format, v => format = v)),
+        }));
+
+        session.Handle(Key(ConsoleKey.Enter));
+        session.Handle(Key(ConsoleKey.DownArrow));
+
+        await Assert.That(session.Focus().Edit!.Value.Text).IsEqualTo("Html");
+        session.Handle(Key(ConsoleKey.UpArrow));
+        await Assert.That(session.Focus().Edit!.Value.Text).IsEqualTo("Plain");
+
+        session.Handle(Key(ConsoleKey.Enter));
+        await Assert.That(format).IsEqualTo(LogFormat.Plain);
+    }
+
+    [Test]
+    public async Task CancellingTheScreenPutsAnEditedValueBack_JustLikeAToggle()
+    {
+        var scene = new Scene();
+        var session = Editing(scene);
+        Type(session, ".uk");
+        session.Handle(Key(ConsoleKey.Tab)); // commits the host, opens the port
+        for (var i = 0; i < 4; i++)
+        {
+            session.Handle(Key(ConsoleKey.Backspace));
+        }
+
+        Type(session, "4201");
+        session.Handle(Key(ConsoleKey.Enter));
+        session.Handle(Key(ConsoleKey.UpArrow));
+        session.Handle(new ConsoleKeyInfo(' ', ConsoleKey.Spacebar, false, false, false));
+
+        await Assert.That(scene.Host).IsEqualTo("aardmud.org.uk");
+        await Assert.That(scene.Port).IsEqualTo(4201);
+        await Assert.That(scene.Flag).IsTrue();
+
+        // What SettingsOverlay does on Esc / the F-key toggle.
+        session.Edits.Revert();
+
+        await Assert.That(scene.Host).IsEqualTo("aardmud.org");
+        await Assert.That(scene.Port).IsEqualTo(4000);
+        await Assert.That(scene.Flag).IsFalse();
+    }
+
+    [Test]
+    public async Task AnEditAbandonsItselfWhenTheRowItWasOpenedOnDisappears()
+    {
+        var rows = new List<string> { "one", "two" };
+        var session = new SettingsSession(_ => new ScreenModel(
+            ScreenModel.Rows(rows, r => ScreenRow.Of(
+                ScreenField.Text("name", () => r, _ => { })))));
+
+        session.Handle(Key(ConsoleKey.DownArrow));
+        session.Handle(Key(ConsoleKey.Enter));
+        await Assert.That(session.IsEditing).IsTrue();
+
+        rows.RemoveAt(1);
+        await Assert.That(session.Handle(Char('x'))).IsEqualTo(ScreenAction.Redraw);
+        await Assert.That(session.IsEditing).IsFalse();
+    }
+
+    [Test]
+    public async Task AnUnrelatedKeyIsStillLeftForTheFrameworkMidEdit()
+    {
+        var session = Editing(new Scene());
+
+        await Assert.That(session.Handle(Key(ConsoleKey.F5))).IsEqualTo(ScreenAction.None);
+        await Assert.That(session.IsEditing).IsTrue();
+    }
+
+    /// <summary>
+    /// The screens' real bindings, end to end: the field ordinals a renderer draws against are the
+    /// ordinals the session opens, and each writes to the property the screen says it does.
+    /// </summary>
+    [Test]
+    public async Task TheRealScreensBindTheirFieldsInTheOrderTheyAreDrawn()
+    {
+        var world = new WorldDefinition { Name = "Aardwolf", Host = "aardmud.org", Port = 4000 };
+        var worlds = new List<WorldDefinition> { world };
+        var model = WorldsScreenRenderer.Model(worlds, Array.Empty<TriggerSet>(), 0, -1);
+
+        await Assert.That(model.FieldAt(0, 0, 0)!.Value.Get()).IsEqualTo("Aardwolf");
+        await Assert.That(model.FieldAt(0, 0, 1)!.Value.Get()).IsEqualTo("aardmud.org");
+        await Assert.That(model.FieldAt(0, 0, 2)!.Value.Get()).IsEqualTo("4000");
+        await Assert.That(model.FieldAt(0, 0, 3)!.Value.Get()).IsEqualTo("UTF-8");
+        await Assert.That(model.FieldAt(0, 0, 4)!.Value.Get()).IsEqualTo("0");
+
+        new ScreenEdits().Apply(model.FieldAt(0, 0, 1)!.Value, "example.net");
+        await Assert.That(world.Host).IsEqualTo("example.net");
+    }
+
+    [Test]
+    public async Task EditingATriggersPatternRecompilesItsMatcher()
+    {
+        var sets = new List<TriggerSet>
+        {
+            new() { Name = "Comms", Triggers = new List<Trigger> { new() { Name = "Tell", Pattern = "tells you" } } },
+        };
+        var trigger = sets[0].Triggers[0];
+        await Assert.That(trigger.Regex.IsMatch("she tells you hi")).IsTrue();
+
+        new ScreenEdits().Apply(TriggersScreenRenderer.Model(sets, 0).FieldAt(0, 0, 0)!.Value, "pages you");
+
+        await Assert.That(trigger.Regex.IsMatch("she tells you hi")).IsFalse();
+        await Assert.That(trigger.Regex.IsMatch("she pages you")).IsTrue();
+    }
+
+    [Test]
+    public async Task EditingAnAliasPatternRecompilesItsMatcher()
+    {
+        var sets = new List<TriggerSet>
+        {
+            new() { Name = "Comms", Aliases = new List<Alias> { new() { Name = "k", Pattern = "^k$" } } },
+        };
+        var alias = sets[0].Aliases[0];
+        await Assert.That(alias.Regex.IsMatch("k")).IsTrue();
+
+        new ScreenEdits().Apply(AliasesScreenRenderer.Model(sets, 0).FieldAt(0, 0, 0)!.Value, "^kk$");
+
+        await Assert.That(alias.Regex.IsMatch("k")).IsFalse();
+        await Assert.That(alias.Regex.IsMatch("kk")).IsTrue();
+    }
+}

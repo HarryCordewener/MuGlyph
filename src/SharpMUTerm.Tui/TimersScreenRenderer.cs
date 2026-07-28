@@ -36,7 +36,7 @@ internal static class TimersScreenRenderer
         var left = ListColumn(sets, selected);
         var right = EditorColumn(sets, selected);
 
-        var lines = new List<string> { HeaderLine(0), string.Empty };
+        var lines = new List<string> { HeaderLine(0, Model(sets, selected)), string.Empty };
 
         var rowCount = Math.Max(left.Count, right.Count);
         for (var i = 0; i < rowCount; i++)
@@ -52,39 +52,64 @@ internal static class TimersScreenRenderer
         return lines;
     }
 
-    /// <summary>The screen title on the left, the keyboard hints right-aligned to <paramref name="width"/>.</summary>
-    internal static string HeaderLine(int width)
+    /// <summary>
+    /// The screen title on the left, the keyboard hints right-aligned to <paramref name="width"/>. The
+    /// hints are derived from <paramref name="model"/> and <paramref name="focus"/> rather than
+    /// written here, so the header cannot advertise an edit the screen doesn't offer.
+    /// </summary>
+    internal static string HeaderLine(int width, ScreenModel? model = null, ScreenFocus? focus = null)
     {
         var title = $"[bold {Value}] Timers[/]";
-        var hints = ScreenChrome.Hints(ScreenChrome.ListHints, "F6");
+        var hints = ScreenChrome.Hints(
+            ScreenChrome.ListHints, "F6", model?.HasEditableRow ?? false, focus);
         return SpreadLR(" " + title, hints, width);
     }
 
     /// <summary>
-    /// The screen's navigable panes: the timer list (Space enables/disables one) and the selected
-    /// timer's checkbox rows, in the order <see cref="EditorColumn"/> draws them.
+    /// The screen's navigable panes: the timer list (Space enables/disables one, ⏎ edits its interval
+    /// and then — with ⇥ — its command) and the selected timer's checkbox rows, in the order
+    /// <see cref="EditorColumn"/> draws them. Both values hang off the list row rather than becoming
+    /// rows of their own, so the editor pane's cursor indices keep meaning what they meant.
     /// </summary>
     internal static ScreenModel Model(IReadOnlyList<TriggerSet> sets, int selected)
     {
         ArgumentNullException.ThrowIfNull(sets);
 
         var entries = Flatten(sets);
-        var list = ScreenModel.Toggles(entries, e => e.Timer.Enabled, (e, v) => e.Timer.Enabled = v);
+        var list = ScreenModel.Rows(entries, entry => ScreenRow.Of(
+            ScreenToggle.Bind(() => entry.Timer.Enabled, v => entry.Timer.Enabled = v),
+            ScreenField.Number(
+                "interval",
+                () => entry.Timer.IntervalSeconds,
+                v => entry.Timer.IntervalSeconds = v,
+                MinIntervalSeconds,
+                MaxIntervalSeconds),
+            ScreenField.Text("command", () => entry.Timer.Command, v => entry.Timer.Command = v)));
 
         if (selected < 0 || selected >= entries.Count)
         {
-            return new ScreenModel(list, Array.Empty<ScreenToggle?>());
+            return new ScreenModel(list, Array.Empty<ScreenRow>());
         }
 
         var timer = entries[selected].Timer;
-        var editor = new ScreenToggle?[]
+        var editor = new[]
         {
-            ScreenToggle.Bind(() => timer.OneShot, v => timer.OneShot = v),
-            ScreenToggle.Bind(() => timer.Enabled, v => timer.Enabled = v),
+            ScreenRow.Of(ScreenToggle.Bind(() => timer.OneShot, v => timer.OneShot = v)),
+            ScreenRow.Of(ScreenToggle.Bind(() => timer.Enabled, v => timer.Enabled = v)),
         };
 
         return new ScreenModel(list, editor);
     }
+
+    /// <summary>
+    /// The shortest interval a timer may be given. Zero or less is "disabled" to the scheduler, which
+    /// is what the Enabled checkbox is for — typing it into the interval would silently turn the timer
+    /// off while it still read as on.
+    /// </summary>
+    private const double MinIntervalSeconds = 0.1;
+
+    /// <summary>A day; past this the value is far likelier to be a typo than a schedule.</summary>
+    private const double MaxIntervalSeconds = 86400;
 
     /// <summary>The action bar: which timer is selected on the left, cancel/save on the right.</summary>
     internal static string FooterLine(IReadOnlyList<TriggerSet> sets, int selected, int width)
@@ -136,9 +161,10 @@ internal static class TimersScreenRenderer
     {
         ArgumentNullException.ThrowIfNull(sets);
 
+        var cursor = focus ?? ScreenFocus.None;
         var entries = Flatten(sets);
         return selected >= 0 && selected < entries.Count
-            ? BuildEditor(entries[selected].Timer, focus ?? ScreenFocus.None)
+            ? BuildEditor(entries[selected].Timer, cursor, selected)
             : new List<string>();
     }
 
@@ -167,13 +193,13 @@ internal static class TimersScreenRenderer
         return $"{check} {marker} [bold]{name}[/] {schedule} [dim]▪ {Escape(setName)}[/] → {command}";
     }
 
-    private static List<string> BuildEditor(TimerDefinition timer, ScreenFocus cursor) => new()
+    private static List<string> BuildEditor(TimerDefinition timer, ScreenFocus cursor, int selected) => new()
     {
         "[dim]interval (seconds)[/]",
-        $"  {Seconds(timer)}",
+        $"  {ScreenChrome.Field(Seconds(timer), cursor.EditOn(0, selected, 0))}",
         string.Empty,
         "[dim]command[/]",
-        $"  {Escape(timer.Command)}",
+        $"  {ScreenChrome.Field(Escape(timer.Command), cursor.EditOn(0, selected, 1))}",
         string.Empty,
         ScreenChrome.Cursor(Checkbox("one-shot", timer.OneShot), cursor.IsOn(1, 0), ColumnWidth),
         ScreenChrome.Cursor(Checkbox("enabled", timer.Enabled), cursor.IsOn(1, 1), ColumnWidth),

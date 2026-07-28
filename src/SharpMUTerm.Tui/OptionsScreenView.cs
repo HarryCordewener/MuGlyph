@@ -26,7 +26,9 @@ internal static class OptionsScreenView
         OptionsScreenRenderer.OptionsScreen screen, int width, ScreenFocus? focus = null)
     {
         var header = ScreenChrome.Band(
-            OptionsScreenRenderer.HeaderLine(screen.Title, screen.FKey, width), ScreenPalette.HeaderBg);
+            OptionsScreenRenderer.HeaderLine(
+                screen.Title, screen.FKey, width, OptionsScreenRenderer.Model(screen), focus),
+            ScreenPalette.HeaderBg);
         var footer = ScreenChrome.Band(
             OptionsScreenRenderer.FooterLine(screen.Rows, width), ScreenPalette.FooterBg);
 

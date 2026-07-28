@@ -43,6 +43,15 @@ internal static class ScreenPalette
     /// </summary>
     internal const string CursorBg = "#2e3950";
 
-    /// <summary>Near-black, for text printed *on* the accent (the Save chip).</summary>
+    /// <summary>Near-black, for text printed *on* the accent (the Save chip, and the block caret).</summary>
     internal const string Ink = "#0f1620";
+
+    /// <summary>
+    /// The well behind a field being typed into. Darker than every panel it can appear on, so an open
+    /// edit reads as a recessed input whichever screen it lands on rather than as another cursor bar.
+    /// </summary>
+    internal const string FieldBg = "#0f1420";
+
+    /// <summary>A refused value's marker — the one place these screens raise their voice.</summary>
+    internal const string Warn = "#ff6b6b";
 }

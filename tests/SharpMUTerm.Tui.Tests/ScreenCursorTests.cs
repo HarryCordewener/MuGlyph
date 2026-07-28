@@ -177,7 +177,8 @@ public class ScreenCursorTests
         await Assert.That(OptionsScreenRenderer.HeaderLine("Logging", "F9", 0))
             .Contains(ScreenChrome.SingleListHints);
 
-        // Nothing edits a field yet, so no screen may claim ⏎ opens an editor.
+        // A header handed no model describes a screen that only navigates, so it may not claim ⏎
+        // opens an editor — nor any of the verbs an editor would be advertised under.
         foreach (var header in new[]
         {
             TriggersScreenRenderer.HeaderLine(0),
@@ -193,4 +194,108 @@ public class ScreenCursorTests
             await Assert.That(header).DoesNotContain("⏎ change");
         }
     }
+
+    /// <summary>
+    /// The hint honesty rule, in both directions: a screen advertises <c>⏎ edit</c> <b>if and only
+    /// if</b> its <see cref="ScreenModel"/> actually holds a row ⏎ can open. Every header is built
+    /// from the same model the live view hands it, so a screen that grew (or lost) an editable row
+    /// cannot end up saying otherwise.
+    /// </summary>
+    [Test]
+    public async Task HeaderHints_ClaimAnEditorExactlyWhenTheModelOffersOne()
+    {
+        var populated = Populated();
+        var bare = Bare();
+
+        // Both cases must be represented, or an "if and only if" would pass vacuously.
+        await Assert.That(populated.Any(s => s.Model.HasEditableRow)).IsTrue();
+        await Assert.That(bare.Any(s => !s.Model.HasEditableRow)).IsTrue();
+
+        foreach (var (header, model) in populated.Concat(bare))
+        {
+            await Assert.That(header.Contains(ScreenChrome.EditHint, StringComparison.Ordinal))
+                .IsEqualTo(model.HasEditableRow);
+        }
+    }
+
+    /// <summary>
+    /// While a field is open the header stops offering the screen's own verbs — Esc reverts the buffer
+    /// rather than closing, and saying "Esc close" there would be the same lie pointed the other way.
+    /// </summary>
+    [Test]
+    public async Task HeaderHints_SwapToTheEditingKeysWhileAFieldIsOpen()
+    {
+        var sets = Sets();
+        var model = TimersScreenRenderer.Model(sets, 0);
+        var editing = new ScreenFocus(0, 0, new ScreenFieldEdit(0, "30", 2, null, RowFields: 2));
+
+        var header = TimersScreenRenderer.HeaderLine(0, model, editing);
+
+        await Assert.That(header).Contains(ScreenChrome.EditingHints);
+        await Assert.That(header).Contains(ScreenChrome.NextFieldHint);
+        await Assert.That(header).DoesNotContain(ScreenChrome.ListHints);
+        await Assert.That(header).DoesNotContain("Esc[/][#7c8699] close");
+
+        // A row with a single field has nowhere for ⇥ to go, so it doesn't offer it.
+        var single = TimersScreenRenderer.HeaderLine(
+            0, model, new ScreenFocus(0, 0, new ScreenFieldEdit(0, "30", 2, null)));
+        await Assert.That(single).DoesNotContain(ScreenChrome.NextFieldHint);
+    }
+
+    /// <summary>Screens whose models hold editable rows, each header built from that same model.</summary>
+    private static List<(string Header, ScreenModel Model)> Populated()
+    {
+        var sets = Sets();
+        var worlds = new List<WorldDefinition>
+        {
+            new() { Name = "Aardwolf", Host = "aardmud.org", Characters = new List<CharacterDefinition> { new() } },
+        };
+        var logging = OptionsScreenRenderer.LoggingScreen(new LoggingSettings());
+
+        return new List<(string, ScreenModel)>
+        {
+            Pair(TriggersScreenRenderer.Model(sets, 0), m => TriggersScreenRenderer.HeaderLine(0, m)),
+            Pair(AliasesScreenRenderer.Model(sets, 0), m => AliasesScreenRenderer.HeaderLine(0, m)),
+            Pair(TimersScreenRenderer.Model(sets, 0), m => TimersScreenRenderer.HeaderLine(0, m)),
+            Pair(KeypadScreenRenderer.Model(sets[0].Macros), m => KeypadScreenRenderer.HeaderLine(0, m)),
+            Pair(
+                WorldsScreenRenderer.Model(worlds, sets, 0, 0),
+                m => WorldsScreenRenderer.HeaderLine(0, m)),
+            Pair(
+                OptionsScreenRenderer.Model(logging),
+                m => OptionsScreenRenderer.HeaderLine(logging.Title, logging.FKey, 0, m)),
+        };
+    }
+
+    /// <summary>The same screens with nothing to edit — empty lists, and an options screen of toggles.</summary>
+    private static List<(string Header, ScreenModel Model)> Bare()
+    {
+        var empty = new List<TriggerSet>();
+        var toggles = new OptionsScreenRenderer.OptionsScreen(
+            "Toggles",
+            "F7",
+            new List<OptionsScreenRenderer.OptionRow>
+            {
+                new("local echo", null, true, null, ScreenToggle.Bind(() => true, _ => { })),
+            });
+
+        return new List<(string, ScreenModel)>
+        {
+            Pair(TriggersScreenRenderer.Model(empty, -1), m => TriggersScreenRenderer.HeaderLine(0, m)),
+            Pair(AliasesScreenRenderer.Model(empty, -1), m => AliasesScreenRenderer.HeaderLine(0, m)),
+            Pair(TimersScreenRenderer.Model(empty, -1), m => TimersScreenRenderer.HeaderLine(0, m)),
+            Pair(
+                KeypadScreenRenderer.Model(Array.Empty<Macro>()),
+                m => KeypadScreenRenderer.HeaderLine(0, m)),
+            Pair(
+                WorldsScreenRenderer.Model(Array.Empty<WorldDefinition>(), empty, -1, -1),
+                m => WorldsScreenRenderer.HeaderLine(0, m)),
+            Pair(
+                OptionsScreenRenderer.Model(toggles),
+                m => OptionsScreenRenderer.HeaderLine(toggles.Title, toggles.FKey, 0, m)),
+        };
+    }
+
+    private static (string Header, ScreenModel Model) Pair(ScreenModel model, Func<ScreenModel, string> header) =>
+        (header(model), model);
 }

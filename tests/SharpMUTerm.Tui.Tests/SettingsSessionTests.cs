@@ -121,7 +121,7 @@ public class SettingsSessionTests
     [Test]
     public async Task Focus_IsNoneWhenTheScreenHasNoRowsAtAll()
     {
-        var session = new SettingsSession(_ => new ScreenModel(Array.Empty<ScreenToggle?>()));
+        var session = new SettingsSession(_ => new ScreenModel(Array.Empty<ScreenRow>()));
 
         await Assert.That(session.Focus()).IsEqualTo(ScreenFocus.None);
     }
