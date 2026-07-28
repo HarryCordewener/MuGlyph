@@ -127,7 +127,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _window = new WindowBuilder(_system)
             .WithTitle("MuGlyph — MU* client")
             .Maximized()
-            .WithBorderStyle(BorderStyle.Single)
+            .Frameless() // no outer chrome — the workspace fills the whole screen for maximum room
             .WithColors(fg, bg)
             .AddControl(_header)
             .AddControl(_workspaceRow)
