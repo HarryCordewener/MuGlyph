@@ -1083,14 +1083,23 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _rail.SetContent(railLines);
         var railWidth = RailWidth(railLines);
 
-        // rail │ ║splitter │ 1-col spacer (breathing room after the divider) │ output
-        return Controls.HorizontalGrid()
+        // rail │ thin divider │ 1-col spacer (breathing room) │ output — a solid 1-col bar in the
+        // border colour instead of the framework's double-line splitter, for a calmer single-line look.
+        var row = Controls.HorizontalGrid()
             .WithVerticalAlignment(VerticalAlignment.Fill)
             .Column(c => c.Width(railWidth).Add(_rail))
+            .Column(c => c.Width(1).Add(Divider()))
             .Column(c => c.Width(1).Add(_railSpacer))
             .Column(c => c.Flex(1).Add(paneArea))
-            .WithSplitterAfter(0)
             .Build();
+        return row;
+    }
+
+    /// <summary>A thin solid divider control (one cell of the border colour), filling its cell.</summary>
+    private MarkupControl Divider()
+    {
+        var control = new MarkupControl(new List<string>()) { BackgroundColor = ToColor(_theme.Border) };
+        return control;
     }
 
     /// <summary>Renders the current rail rows to markup (collapsed or expanded).</summary>
@@ -1166,35 +1175,42 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         var split = (SplitNode)node;
         var children = split.Children.Select(BuildLayoutNode).ToList();
-        var lengths = split.Sizes.Select(s => GridLength.Star(Math.Max(0.01, s))).ToArray();
+
+        // Interleave a thin 1-cell divider between children (a solid border-colour bar) instead of the
+        // framework's double-line splitter, so splits read as a single calm line.
+        var tracks = new List<GridLength>();
+        for (var i = 0; i < children.Count; i++)
+        {
+            tracks.Add(GridLength.Star(Math.Max(0.01, split.Sizes[i])));
+            if (i < children.Count - 1)
+            {
+                tracks.Add(GridLength.Cells(1));
+            }
+        }
 
         var grid = Controls.Grid().WithVerticalAlignment(VerticalAlignment.Fill);
         if (split.Direction == SplitDirection.Row)
         {
-            // Columns divide the width; a single full-height row hosts them. Place(control, row, col…).
-            grid.Columns(lengths).Rows(GridLength.Star(1));
+            grid.Columns(tracks.ToArray()).Rows(GridLength.Star(1));
             for (var i = 0; i < children.Count; i++)
             {
-                grid.Place(children[i], 0, i, 1, 1);
-            }
-
-            for (var i = 0; i < children.Count - 1; i++)
-            {
-                grid.ColumnSplitterAfter(i);
+                grid.Place(children[i], 0, i * 2, 1, 1);
+                if (i < children.Count - 1)
+                {
+                    grid.Place(Divider(), 0, i * 2 + 1, 1, 1);
+                }
             }
         }
         else
         {
-            // Rows divide the height; a single full-width column hosts them. Place(control, row, col…).
-            grid.Rows(lengths).Columns(GridLength.Star(1));
+            grid.Rows(tracks.ToArray()).Columns(GridLength.Star(1));
             for (var i = 0; i < children.Count; i++)
             {
-                grid.Place(children[i], i, 0, 1, 1);
-            }
-
-            for (var i = 0; i < children.Count - 1; i++)
-            {
-                grid.RowSplitterAfter(i);
+                grid.Place(children[i], i * 2, 0, 1, 1);
+                if (i < children.Count - 1)
+                {
+                    grid.Place(Divider(), i * 2 + 1, 0, 1, 1);
+                }
             }
         }
 
@@ -1618,7 +1634,12 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         // The ☰ affordance opens the command surface (caret flips to ▾ while it's open); it's a
         // clickable link routed through OnLinkClicked, matching ⌃P.
         var caret = _palette is { IsOpen: true } ? "▾" : Glyphs.Menu;
-        var brand = $"[link={MenuScheme}toggle][bold #00f5b7]{caret} glyph·tui[/][/]";
+
+        // A filled "button": the menu glyph + "glyph" wordmark on the accent, padded a space each side
+        // so the background fully wraps them. Dark text (the window background) keeps it legible.
+        var bg = _theme.Resolve(TerminalColor.Default, isBackground: true);
+        var brandText = $"#{bg.R:x2}{bg.G:x2}{bg.B:x2}";
+        var brand = $"[link={MenuScheme}toggle][bold {brandText} on #00f5b7] {caret} glyph [/][/]";
 
         string middle;
         if (ActiveWorld() is { } active)
