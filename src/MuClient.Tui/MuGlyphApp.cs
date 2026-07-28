@@ -43,6 +43,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private readonly MarkupControl _header;
     private readonly MarkupControl _statusBar;
     private readonly MarkupControl _rail;
+    private readonly MarkupControl _inputGutter;
     private readonly TabControl _tabs;
     private readonly PromptControl _input;
     private readonly GmcpStats _stats = new();
@@ -99,6 +100,10 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             .WithSplitterAfter(0)
             .Build();
 
+        // A thin gutter above the input: which window the line goes to, other windows holding drafts,
+        // and the character count — the design's input-region affordance. StatusFormatter builds it.
+        _inputGutter = Controls.Markup("[dim]→ main  0[/]").StickyBottom().Build();
+
         _input = Controls.Prompt("›").WithHistory(true).StickyBottom().Build();
         _input.Entered += (_, text) => OnCommandEntered(text);
         _input.InputChanged += (_, text) => OnInputChanged(text);
@@ -114,6 +119,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             .WithColors(fg, bg)
             .AddControl(_header)
             .AddControl(workspaceRow)
+            .AddControl(_inputGutter)
             .AddControl(_input)
             .AddControl(_statusBar)
             .Build();
@@ -382,10 +388,32 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         _workspace.SetUnsentInput(windowId, !string.IsNullOrEmpty(text));
         RefreshTabTitles();
+        UpdateInputChrome();
     }
 
     /// <summary>The window id of the visible tab (the input line belongs to it).</summary>
     private string ActiveWindowId() => _workspace.Layout.FocusedPane.ActiveTab ?? MainWindowId;
+
+    /// <summary>
+    /// Refreshes the input region: the character-bound prompt (<c>Corvid@Aetherfall ›</c>) and the
+    /// gutter (destination window, other windows holding drafts, character count). Both come from the
+    /// tested <see cref="StatusFormatter"/>.
+    /// </summary>
+    private void UpdateInputChrome()
+    {
+        var session = _active;
+        var character = session?.Character?.Name ?? (ActiveWorld() is { } aw ? aw.Character : null);
+        var world = session?.World.Name ?? ActiveWorld()?.World.Name;
+        _input.Prompt = StatusFormatter.CharacterPrompt(character, world);
+
+        var activeId = ActiveWindowId();
+        var destination = _workspace.FindWindow(activeId)?.Title ?? activeId;
+        var drafts = _workspace.Windows
+            .Where(w => w.HasUnsentInput && w.Id != activeId)
+            .Select(w => w.Title)
+            .ToList();
+        _inputGutter.SetContent(new List<string> { $"[dim]{Escape(StatusFormatter.InputGutter(destination, drafts, _input.Input.Length))}[/]" });
+    }
 
     /// <summary>The <c>world.character</c> key of the character whose windows the rail expands.</summary>
     private string? ActiveCharacterKey() => _active?.SessionKey ?? _demoActiveKey;
@@ -712,6 +740,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         }
 
         RefreshRail();
+        UpdateInputChrome();
     }
 
     private void ReportWindowSize()
