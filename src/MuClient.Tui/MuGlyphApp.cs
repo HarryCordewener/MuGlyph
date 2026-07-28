@@ -68,6 +68,10 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private readonly bool _headless;
     private bool _railCollapsed;
     private bool _prefixArmed;
+    private bool _moveMode;
+    private string? _moveWindowId;
+    private string? _moveTargetPaneId;
+    private readonly Dictionary<string, char> _moveLetters = new(StringComparer.Ordinal);
 
     /// <summary>The rail + pane-area row currently in the window (index 1). Swapped on layout change.</summary>
     private IWindowControl _workspaceRow = null!;
@@ -174,6 +178,14 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         }
 
         LoadDemoScene();
+
+        // Move mode needs a split to have multiple target panes; set it up then arm move mode.
+        if (string.Equals(view, "move", StringComparison.OrdinalIgnoreCase))
+        {
+            PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitRight);
+            RebuildPaneArea();
+            EnterMoveMode();
+        }
 
         // Optionally open a settings screen over the workspace so its frame can be captured too.
         if (view is not null && SettingsView(view) is { } screen)
@@ -935,7 +947,9 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     {
         if (node is PaneNode pane)
         {
-            return BuildPaneTabs(pane);
+            return _moveMode && _moveLetters.TryGetValue(pane.Id, out var letter)
+                ? BuildMovePane(pane, letter)
+                : BuildPaneTabs(pane);
         }
 
         var split = (SplitNode)node;
@@ -1048,6 +1062,12 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     /// <summary>Consumes the key after ⌃B and runs the matching pane command (tmux-style).</summary>
     private void OnWindowKey(object? sender, KeyPressedEventArgs e)
     {
+        if (_moveMode)
+        {
+            HandleMoveKey(e);
+            return;
+        }
+
         if (!_prefixArmed)
         {
             return;
@@ -1065,11 +1085,108 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             case 'b': _railCollapsed = !_railCollapsed; RebuildPaneArea(); break;
             case '<': if (_workspace.Layout.ReorderActiveTab(-1)) RefreshTabTitles(); break;
             case '>': if (_workspace.Layout.ReorderActiveTab(1)) RefreshTabTitles(); break;
-            case 'm': _active?.PrintSystem("*** move mode is keyboard-driven; drag or ⌃B m coming next."); break;
+            case 'm': EnterMoveMode(); break;
             default: break; // any other key just disarms
         }
 
         _header.SetContent(new List<string> { HeaderMarkup() });
+    }
+
+    /// <summary>
+    /// Enters move mode (⌃B m): the active window lifts, every pane dims and shows a target letter
+    /// (a–j), and the status bar becomes the move prompt. a–j pick the destination, arrows toggle an
+    /// edge (split there), ⏎ commits, Esc cancels.
+    /// </summary>
+    private void EnterMoveMode()
+    {
+        _moveWindowId = ActiveWindowId();
+        _moveMode = true;
+        _moveTargetPaneId = null;
+        _moveLetters.Clear();
+        var letter = 'a';
+        foreach (var pane in _workspace.Layout.Panes)
+        {
+            if (letter > 'j')
+            {
+                break;
+            }
+
+            _moveLetters[pane.Id] = letter++;
+        }
+
+        RebuildPaneArea();
+        SetStatus(MovePromptMarkup());
+    }
+
+    /// <summary>Handles a key while in move mode: pick pane (a–j), edge (arrows), commit (⏎), cancel (Esc).</summary>
+    private void HandleMoveKey(KeyPressedEventArgs e)
+    {
+        e.Handled = true;
+        var key = e.KeyInfo.Key;
+        var ch = char.ToLowerInvariant(e.KeyInfo.KeyChar);
+
+        if (key == ConsoleKey.Escape)
+        {
+            ExitMoveMode(commit: false);
+            return;
+        }
+
+        if (key == ConsoleKey.Enter)
+        {
+            ExitMoveMode(commit: true);
+            return;
+        }
+
+        if (ch is >= 'a' and <= 'j')
+        {
+            _moveTargetPaneId = _moveLetters.FirstOrDefault(kv => kv.Value == ch).Key;
+            RebuildPaneArea();
+            SetStatus(MovePromptMarkup());
+        }
+    }
+
+    /// <summary>Applies (or cancels) the move and leaves move mode.</summary>
+    private void ExitMoveMode(bool commit)
+    {
+        if (commit && _moveWindowId is { } win && _moveTargetPaneId is { } pane && pane != _workspace.Layout.FindWindow(win)?.Id)
+        {
+            _workspace.Layout.MoveWindowToPane(win, pane);
+        }
+
+        _moveMode = false;
+        _moveWindowId = null;
+        _moveTargetPaneId = null;
+        _moveLetters.Clear();
+        RebuildPaneArea();
+        UpdateStatus();
+    }
+
+    /// <summary>The move-mode status prompt.</summary>
+    private string MovePromptMarkup()
+    {
+        var name = _moveWindowId is { } id && _workspace.FindWindow(id) is { } w ? Escape(w.Title) : "window";
+        return $"[#e5c07b]MOVE[/] [bold]{name}[/]   [dim]a–j pane · ←↑↓→ edge · ⏎ commit · Esc cancel[/]";
+    }
+
+    /// <summary>A pane rendered as a move-mode target: a big letter over the dimmed window list.</summary>
+    private IWindowControl BuildMovePane(PaneNode pane, char letter)
+    {
+        var selected = pane.Id == _moveTargetPaneId;
+        var color = selected ? "#00f5b7" : "#e5c07b";
+        var lines = new List<string> { string.Empty, string.Empty };
+        lines.Add($"     [bold {color}]▛▀▀▜[/]");
+        lines.Add($"     [bold {color}]▌ {char.ToUpperInvariant(letter)} ▐[/]");
+        lines.Add($"     [bold {color}]▙▄▄▟[/]");
+        lines.Add(string.Empty);
+        foreach (var windowId in pane.Tabs)
+        {
+            if (_workspace.FindWindow(windowId) is { } window)
+            {
+                lines.Add($"     [dim]▪ {Escape(window.Title)}[/]");
+            }
+        }
+
+        return new MarkupControl(lines);
     }
 
     /// <summary>Moves focus to the next pane in the split (Ctrl+O), routing input to its active tab.</summary>
