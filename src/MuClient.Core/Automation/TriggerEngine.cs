@@ -191,7 +191,7 @@ public sealed class TriggerEngine
 
     private static StyledLine ApplyHighlight(StyledLine line, Match match, TriggerActions actions)
     {
-        return StyledText.Restyle(line, match.Index, match.Length, style =>
+        var restyled = StyledText.Restyle(line, match.Index, match.Length, style =>
         {
             if (actions.HighlightForeground is not null)
             {
@@ -210,5 +210,9 @@ public sealed class TriggerEngine
 
             return style;
         });
+
+        // Carry a left-rule colour so the UI can mark the whole line, per the design's output view.
+        var rule = actions.HighlightForeground ?? actions.HighlightBackground;
+        return rule is { } color ? restyled.WithRule(color) : restyled;
     }
 }

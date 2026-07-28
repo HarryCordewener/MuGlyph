@@ -11,11 +11,21 @@ public sealed class StyledLine
     private readonly StyledSpan[] _spans;
     private string? _text;
 
-    public StyledLine(IEnumerable<StyledSpan> spans)
+    public StyledLine(IEnumerable<StyledSpan> spans, TerminalColor? ruleColor = null)
     {
         ArgumentNullException.ThrowIfNull(spans);
         _spans = spans.Where(s => s.Length > 0).ToArray();
+        RuleColor = ruleColor;
     }
+
+    /// <summary>
+    /// When set, the line was marked by a highlight trigger: the renderer draws a left rule in this
+    /// colour (and may tint the row) so matched lines stand out, per the design's output view.
+    /// </summary>
+    public TerminalColor? RuleColor { get; }
+
+    /// <summary>Returns a copy of this line carrying the given trigger-highlight rule colour.</summary>
+    public StyledLine WithRule(TerminalColor color) => new(_spans, color);
 
     /// <summary>An empty line (a blank row of output).</summary>
     public static StyledLine Empty { get; } = new(Array.Empty<StyledSpan>());

@@ -40,6 +40,8 @@ public class TriggerEngineTests
         // The span covering "gold" must carry the highlight colour.
         var goldSpan = result.Line.Spans.First(s => s.Text.Contains("gold"));
         await Assert.That(goldSpan.Style.Foreground).IsEqualTo(TerminalColor.FromIndex(11));
+        // ...and the whole line carries a left-rule colour so the UI can mark it.
+        await Assert.That(result.Line.RuleColor).IsEqualTo(TerminalColor.FromIndex(11));
     }
 
     [Test]

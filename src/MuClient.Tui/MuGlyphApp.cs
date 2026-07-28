@@ -250,6 +250,12 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         });
         main.AppendLine(_formatter.ToMarkup(exits));
 
+        // A trigger-highlighted line: carries a left-rule colour, so it gets the 2-col rule treatment.
+        var highlighted = new StyledLine(
+            new[] { new StyledSpan("[public] Rivane: to the crypt, then!", TextStyle.Default) },
+            TerminalColor.FromRgb(0x00, 0xf5, 0xb7));
+        main.AppendLine(_formatter.ToMarkup(highlighted));
+
         // A spawn window fed by a "Chat" trigger target, left in the background with unread.
         var chat = _workspace.RouteSpawn("Chat");
         var chatPane = PaneContentFor(chat.Id, chat.Title);

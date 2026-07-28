@@ -23,6 +23,20 @@ public class MarkupFormatterTests
     }
 
     [Test]
+    public async Task RuleColor_PrependsLeftRuleGlyph()
+    {
+        var line = new StyledLine(
+            new[] { new StyledSpan("channel", TextStyle.Default) },
+            TerminalColor.FromRgb(0x00, 0xf5, 0xb7));
+
+        var markup = Formatter.ToMarkup(line);
+
+        // A 2-col left rule in the trigger colour precedes the content.
+        await Assert.That(markup).StartsWith("[#00f5b7]▌[/] ");
+        await Assert.That(markup).Contains("channel");
+    }
+
+    [Test]
     public async Task BoldItalic_EmitsAttributeTokens()
     {
         var style = new TextStyle(

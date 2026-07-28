@@ -23,6 +23,13 @@ internal sealed class MarkupFormatter(Theme theme)
     {
         ArgumentNullException.ThrowIfNull(line);
         var sb = new StringBuilder();
+
+        // A trigger-highlighted line gets a 2-col left rule in the trigger's colour (design output view).
+        if (line.RuleColor is { } rule)
+        {
+            sb.Append('[').Append(Hex(_theme.Resolve(rule, isBackground: false))).Append("]▌[/] ");
+        }
+
         foreach (var span in line.Spans)
         {
             AppendSpan(sb, span);
