@@ -51,7 +51,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private readonly MuClient.Web.WebPageFetcher _fetcher = new();
 
     private readonly CommandPalette _palette;
-    private readonly WorldSettingsView _worldSettings;
+    private readonly SettingsOverlay _settings;
 
     /// <summary>Per-world accents when a world hasn't set its own, keyed by position.</summary>
     private static readonly TerminalColor[] AccentPalette =
@@ -127,9 +127,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             .Build();
 
         _palette = new CommandPalette(_system, BuildCatalog, () => _active?.SessionKey, DispatchCommand);
-        _worldSettings = new WorldSettingsView(
-            _system,
-            () => ActiveWorld() is { } w ? (w.World, w.Accent) : ((WorldDefinition, TerminalColor)?)null);
+        _settings = new SettingsOverlay(_system);
 
         _window.OnResize += (_, _) => ReportWindowSize();
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.Q, () => _system.RequestExit(0));
@@ -139,7 +137,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.W, CloseActiveWindow);
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.O, CyclePane);
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.P, () => _palette.Toggle());
-        _system.RegisterGlobalShortcut((ConsoleModifiers)0, ConsoleKey.F2, () => _worldSettings.Toggle());
+        RegisterSettingsShortcuts();
         _system.AddWindow(_window);
     }
 
@@ -160,10 +158,10 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     {
         LoadDemoScene();
 
-        // Optionally open a modal panel over the workspace so its frame can be captured too.
-        if (string.Equals(view, "settings", StringComparison.OrdinalIgnoreCase))
+        // Optionally open a settings screen over the workspace so its frame can be captured too.
+        if (view is not null && SettingsView(view) is { } screen)
         {
-            _worldSettings.Open();
+            _settings.OpenForSnapshot(screen.Key, screen.Content);
         }
 
         // Render exactly one frame, synchronously, inline on this thread. ForceRender() performs a
@@ -510,6 +508,93 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
     /// <summary>The <c>world.character</c> key of the character whose windows the rail expands.</summary>
     private string? ActiveCharacterKey() => _active?.SessionKey ?? _demoActiveKey;
+
+    /// <summary>
+    /// Binds F2–F9 to the full-screen settings overlay. Each screen is rendered on demand from live
+    /// config by its pure renderer, so re-opening always reflects current state. Esc / same F-key closes.
+    /// </summary>
+    private void RegisterSettingsShortcuts()
+    {
+        void Bind(ConsoleKey key, Func<IReadOnlyList<string>> content) =>
+            _system.RegisterGlobalShortcut((ConsoleModifiers)0, key, () => _settings.Toggle(key, content));
+
+        Bind(ConsoleKey.F2, () => TriggersScreenRenderer.Render(_config.TriggerSets, 0, SpawnTargets()));
+        Bind(ConsoleKey.F3, () => AliasesScreenRenderer.Render(_config.TriggerSets, 0));
+        Bind(ConsoleKey.F4, () => KeypadScreenRenderer.Render(Macros()));
+        Bind(ConsoleKey.F5, () => WorldsScreenRenderer.Render(_config.Worlds, _config.TriggerSets, ActiveWorldIndex(), ActiveCharacterIndex()));
+        Bind(ConsoleKey.F6, () => TimersScreenRenderer.Render(_config.TriggerSets, 0));
+        Bind(ConsoleKey.F7, OptionsScreenRenderer.TextAnsi);
+        Bind(ConsoleKey.F8, OptionsScreenRenderer.InputSpellcheck);
+        Bind(ConsoleKey.F9, () => OptionsScreenRenderer.Logging(ActiveLogging()));
+    }
+
+    /// <summary>Distinct spawn-window targets referenced by any trigger (for the F2 route-to list).</summary>
+    private IReadOnlyList<string> SpawnTargets() =>
+        _config.TriggerSets.SelectMany(s => s.Triggers)
+            .Select(t => t.Actions.SpawnTarget)
+            .Where(t => !string.IsNullOrEmpty(t))
+            .Select(t => t!)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+    /// <summary>Every configured macro across all trigger sets (for the F4 keypad/hotkey list).</summary>
+    private IReadOnlyList<Macro> Macros() => _config.TriggerSets.SelectMany(s => s.Macros).ToList();
+
+    /// <summary>Index of the world hosting the active character (0 when none).</summary>
+    private int ActiveWorldIndex()
+    {
+        var key = ActiveCharacterKey();
+        for (var i = 0; i < _config.Worlds.Count; i++)
+        {
+            var world = _config.Worlds[i];
+            if (world.Name == key || world.Characters.Any(c => $"{world.Name}.{c.Name}" == key))
+            {
+                return i;
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>Index of the active character within its world (0 when none).</summary>
+    private int ActiveCharacterIndex()
+    {
+        var key = ActiveCharacterKey();
+        var world = _config.Worlds.ElementAtOrDefault(ActiveWorldIndex());
+        if (world is not null)
+        {
+            for (var i = 0; i < world.Characters.Count; i++)
+            {
+                if ($"{world.Name}.{world.Characters[i].Name}" == key)
+                {
+                    return i;
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>The active character's logging settings, for the F9 logging screen.</summary>
+    private LoggingSettings ActiveLogging()
+    {
+        var world = _config.Worlds.ElementAtOrDefault(ActiveWorldIndex());
+        return world?.Characters.ElementAtOrDefault(ActiveCharacterIndex())?.Logging ?? new LoggingSettings();
+    }
+
+    /// <summary>Maps a <c>--view</c> name to a settings screen (F-key + content) for snapshots.</summary>
+    private (ConsoleKey Key, Func<IReadOnlyList<string>> Content)? SettingsView(string view) => view.ToLowerInvariant() switch
+    {
+        "triggers" => (ConsoleKey.F2, () => TriggersScreenRenderer.Render(_config.TriggerSets, 0, SpawnTargets())),
+        "aliases" => (ConsoleKey.F3, () => AliasesScreenRenderer.Render(_config.TriggerSets, 0)),
+        "keypad" => (ConsoleKey.F4, () => KeypadScreenRenderer.Render(Macros())),
+        "worlds" or "settings" => (ConsoleKey.F5, () => WorldsScreenRenderer.Render(_config.Worlds, _config.TriggerSets, ActiveWorldIndex(), ActiveCharacterIndex())),
+        "timers" => (ConsoleKey.F6, () => TimersScreenRenderer.Render(_config.TriggerSets, 0)),
+        "textansi" => (ConsoleKey.F7, OptionsScreenRenderer.TextAnsi),
+        "input" => (ConsoleKey.F8, OptionsScreenRenderer.InputSpellcheck),
+        "logging" => (ConsoleKey.F9, () => OptionsScreenRenderer.Logging(ActiveLogging())),
+        _ => null,
+    };
 
     /// <summary>The accent for a world at <paramref name="index"/>: its own, or the palette fallback.</summary>
     private static TerminalColor AccentFor(WorldDefinition world, int index) =>
