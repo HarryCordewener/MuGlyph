@@ -277,6 +277,20 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             }
         }
 
+        // The ☰ menu (command surface): optionally split first so the menu is shown over a two-pane
+        // workspace, then open the palette so its modal paints over the demo scene.
+        if (string.Equals(view, "menu", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(view, "menu-split", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.Equals(view, "menu-split", StringComparison.OrdinalIgnoreCase))
+            {
+                PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitRight);
+                RebuildPaneArea();
+            }
+
+            _palette.Toggle();
+        }
+
         // Optionally open a settings screen over the workspace so its frame can be captured too.
         if (view is not null && SettingsView(view) is { } screen)
         {
