@@ -21,6 +21,12 @@ internal static class Program
         // exit, without a terminal or a connection. See tools/ansi_frame_to_image.py.
         if (args.Contains("--snapshot"))
         {
+            // Detach stdin before constructing the window system: even with a headless driver it can
+            // start reading the console for input, which BLOCKS FOREVER when stdin is an interactive
+            // TTY or an open pipe (the frame never renders). A null reader returns EOF immediately, so
+            // the snapshot is deterministic however it's launched (terminal, pipe, or CI redirect).
+            Console.SetIn(TextReader.Null);
+
             var (width, height) = ParseSize(args);
             var app = new MuGlyphApp(config, capabilities, new HeadlessConsoleDriver(width, height));
             var frame = app.RenderSnapshot();

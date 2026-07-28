@@ -390,6 +390,48 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     /// <summary>The <c>world.character</c> key of the character whose windows the rail expands.</summary>
     private string? ActiveCharacterKey() => _active?.SessionKey ?? _demoActiveKey;
 
+    /// <summary>The accent for a world at <paramref name="index"/>: its own, or the palette fallback.</summary>
+    private static TerminalColor AccentFor(WorldDefinition world, int index) =>
+        world.Accent.Kind == TerminalColorKind.Default ? AccentPalette[index % AccentPalette.Length] : world.Accent;
+
+    /// <summary>The active world + resolved accent + focused character name, or null when disconnected.</summary>
+    private (WorldDefinition World, TerminalColor Accent, string? Character)? ActiveWorld()
+    {
+        var key = ActiveCharacterKey();
+        if (key is null)
+        {
+            return null;
+        }
+
+        var index = 0;
+        foreach (var world in _config.Worlds)
+        {
+            var accent = AccentFor(world, index);
+            if (world.Name == key)
+            {
+                return (world, accent, null);
+            }
+
+            foreach (var character in world.Characters)
+            {
+                if ($"{world.Name}.{character.Name}" == key)
+                {
+                    return (world, accent, character.Name);
+                }
+            }
+
+            index++;
+        }
+
+        return null;
+    }
+
+    /// <summary>Renders a <see cref="TerminalColor"/> as a <c>#rrggbb</c> markup colour.</summary>
+    private static string AccentHex(TerminalColor accent) =>
+        accent.Kind == TerminalColorKind.Rgb
+            ? $"#{accent.R:x2}{accent.G:x2}{accent.B:x2}"
+            : "#00f5b7";
+
     /// <summary>
     /// Projects live config + workspace state into rail rows: each world (with an accent), its
     /// characters (connected dot, active marker), and — under the active character — the workspace's
@@ -711,13 +753,37 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         var character = session.Character?.Name ?? session.World.Name;
         SetStatus(StatusBarMarkup(character, session.World.Host, session.World.Port, session.State.ToString().ToLowerInvariant()));
+        _header.SetContent(new List<string> { HeaderMarkup() });
         RefreshRail();
     }
 
-    /// <summary>The design header row: the menu affordance on the left, hints on the right.</summary>
-    private string HeaderMarkup() =>
-        "[bold #00f5b7]☰ glyph·tui[/]   [dim]multi-world MU* workspace[/]" +
-        $"          [dim]◉ LOG off   Graphics {Escape(_capabilities.Protocol.ToString())}   ⌃P palette[/]";
+    /// <summary>
+    /// The design header row: the brand affordance on the left, the active world (with its accent)
+    /// in the middle, and connection/graphics/palette hints on the right.
+    /// </summary>
+    private string HeaderMarkup()
+    {
+        var brand = "[bold #00f5b7]☰ glyph·tui[/]";
+
+        string middle;
+        if (ActiveWorld() is { } active)
+        {
+            var hex = AccentHex(active.Accent);
+            var who = active.Character is { } name ? $" [dim]· {Escape(name)}[/]" : string.Empty;
+            middle = $"[{hex}]▚[/] [bold]{Escape(active.World.Name)}[/]{who}";
+        }
+        else
+        {
+            middle = "[dim]multi-world MU* workspace[/]";
+        }
+
+        var worldCount = _config.Worlds.Count;
+        var connected = _connectedKeys.Count;
+        var conn = worldCount > 0 ? $"{connected}/{worldCount} connected   " : string.Empty;
+        var right = $"[dim]{conn}◉ LOG off   Graphics {Escape(_capabilities.Protocol.ToString())}   ⌃P palette[/]";
+
+        return $"{brand}   {middle}          {right}";
+    }
 
     /// <summary>
     /// The design status bar: connection state, HP/EN meters (from GMCP vitals when present),
@@ -725,7 +791,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     /// </summary>
     private string StatusBarMarkup(string character, string host, int port, string state)
     {
-        var parts = new List<string> { $"[#00f5b7]●[/] [bold]{Escape(character)}[/] [dim]{Escape(state)}[/]" };
+        var accent = ActiveWorld() is { } world ? AccentHex(world.Accent) : "#00f5b7";
+        var parts = new List<string> { $"[{accent}]●[/] [bold]{Escape(character)}[/] [dim]{Escape(state)}[/]" };
 
         var hp = _stats.GetInt("hp");
         var maxhp = _stats.GetInt("maxhp");
