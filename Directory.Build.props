@@ -1,6 +1,6 @@
 <Project>
 
-  <!-- Shared settings for every project in the MuGlyph solution. -->
+  <!-- Shared settings for every project in the SharpMUTerm solution. -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
@@ -11,10 +11,10 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <Authors>Harry Cordewener</Authors>
-    <Product>MuGlyph</Product>
+    <Product>SharpMUTerm</Product>
     <Copyright>Copyright (c) 2026 Harry Cordewener</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/HarryCordewener/MuGlyph</RepositoryUrl>
+    <RepositoryUrl>https://github.com/SharpMUSH/SharpMUTerm</RepositoryUrl>
   </PropertyGroup>
 
 </Project>

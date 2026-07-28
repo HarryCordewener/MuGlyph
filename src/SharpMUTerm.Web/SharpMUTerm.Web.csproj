@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SharpMUTerm.Web</RootNamespace>
+    <AssemblyName>SharpMUTerm.Web</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AngleSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharpMUTerm.Core\SharpMUTerm.Core.csproj" />
+  </ItemGroup>
+
+</Project>

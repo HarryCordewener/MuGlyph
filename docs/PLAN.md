@@ -7,13 +7,13 @@ BeipMU is the best-in-class **Windows-only** MU\* (MUSH/MUCK/MUD) client, but it
 Key reframing from research: **"GPU-enabled" is a property of the terminal emulator, not our app.** Any TUI running inside Kitty/WezTerm/Ghostty gets GPU-accelerated glyph rendering for free. Our job is to (a) emit rich truecolor/styled text and (b) use the **Kitty graphics protocol** (escape sequences) for inline images/maps, with graceful fallbacks. Both are fully achievable from managed C#.
 
 ### Locked decisions (from planning Q&A)
-- **Rendering base:** Terminal.Gui v2 for windows/input/layout/scrollback + a custom placeholder-based `GraphicsView` for images.
+- **Rendering base:** **SharpConsoleUI** (`nickprotop/ConsoleEx`, stable, net8/9/10) — a compositor-based framework with split layouts, tabs, resizable/mouse windows, Spectre-style markup, and a **native Kitty graphics protocol** (+ Sixel/half-block). Superseded the original Terminal.Gui v2 choice (which was prerelease with an `[Obsolete]` mid-migration API); the switch was contained to `SharpMUTerm.Tui` since `SharpMUTerm.Core` is UI-agnostic. References below that describe Terminal.Gui reflect the earlier plan.
 - **Scripting:** Lua via **MoonSharp** (pure-managed, no native deps).
 - **Inline graphics:** must-have from day one.
 - **Scope:** broad BeipMU parity (phased into milestones below).
 - **Target framework:** **.NET 10**.
 - **Protocol coverage:** aim for compatibility with *all* common MU\* protocols; **MXP** is first-class, and **Pueblo** (and its enhancements) are explicitly in scope alongside GMCP/MSDP/MSSP/MCCP.
-- **Config:** **fresh JSON** schema of our own, plus a **BeipMU import/migration** path for initial onboarding (parse BeipMU's settings to seed worlds/triggers/aliases).
+- **Config:** **fresh JSON** schema of our own — worlds (servers) hold **characters**; automation lives in shared, named **trigger sets** that characters opt into by name — versioned with automatic migration between schema revisions.
 
 ---
 
@@ -51,11 +51,11 @@ Layered, with a strict separation between **protocol/session** (headless, unit-t
 ```
 
 ### Solution structure (proposed)
-- `MuClient.Core` — transport, telnet, ANSI/MXP parsers, GMCP/MSDP routing, scrollback model, trigger/alias/macro engines, logging. **No UI deps.**
-- `MuClient.Scripting` — MoonSharp host + the scripting API surface (world, output, triggers, timers, gmcp).
-- `MuClient.Graphics` — Kitty graphics protocol encoder, capability probe, Sixel + half-block fallbacks, `GraphicsView`.
-- `MuClient.Tui` — Terminal.Gui v2 app: windows, panes, key routing, settings UI, wiring.
-- `MuClient.Core.Tests` / `MuClient.Graphics.Tests` — xUnit.
+- `SharpMUTerm.Core` — transport, telnet, ANSI/MXP parsers, GMCP/MSDP routing, scrollback model, trigger/alias/macro engines, logging. **No UI deps.**
+- `SharpMUTerm.Scripting` — MoonSharp host + the scripting API surface (world, output, triggers, timers, gmcp).
+- `SharpMUTerm.Graphics` — Kitty graphics protocol encoder, capability probe, Sixel + half-block fallbacks, `GraphicsView`.
+- `SharpMUTerm.Tui` — SharpConsoleUI app: windows, panes, key routing, settings UI, wiring.
+- `SharpMUTerm.Core.Tests` / `SharpMUTerm.Graphics.Tests` — xUnit.
 - Target **.NET 10** (confirm TelnetNegotiationCore + Terminal.Gui v2 support net10.0; if a dep lags, reference it via `net8.0` compat and keep our own projects on net10.0).
 
 ---
@@ -75,7 +75,7 @@ Layered, with a strict separation between **protocol/session** (headless, unit-t
 ## Rendering & graphics
 
 - **Text UI**: Terminal.Gui v2 provides the window manager, tabbed worlds, dockable panes, scrollback view, multi-input, focus, and truecolor cell rendering. Advertise UTF-8 + truecolor to servers.
-- **`GraphicsView`** (`MuClient.Graphics`): renders images (maps, avatars, inline media) using **Kitty Unicode placeholders** so images occupy real cells and scroll/clip via Terminal.Gui's layout. Pipeline: probe capability → upload image once (base64-chunked `APC _G` transmit) → paint placeholder runes/colors into the view's cells → manage image lifecycle (`a=d` delete on close/replace).
+- **`GraphicsView`** (`SharpMUTerm.Graphics`): renders images (maps, avatars, inline media) using **Kitty Unicode placeholders** so images occupy real cells and scroll/clip via Terminal.Gui's layout. Pipeline: probe capability → upload image once (base64-chunked `APC _G` transmit) → paint placeholder runes/colors into the view's cells → manage image lifecycle (`a=d` delete on close/replace).
 - **Capability probe + fallbacks**: query terminal for Kitty graphics; else **Sixel**; else Unicode **half-block/quadrant** approximation; else a text placeholder. Selection is per-session and user-overridable in settings.
 - **Map rendering**: `MapModel` (rooms/exits/z-levels) rendered either as box-drawing/Unicode vector art in a normal view *or* as a rasterized image through `GraphicsView` — start with box-drawing (works everywhere), add rasterized mode where graphics are available.
 
@@ -99,13 +99,55 @@ Transport (TCP + SslStream TLS + IPv6); TelnetSession over TelnetNegotiationCore
 `TriggerEngine` (regex, gag/highlight/rewrite/spawn actions), `AliasEngine`, `MacroEngine`/keybinds, timers. Settings UI for all of them. Per-world profiles (JSON).
 
 **M3 — Graphics day-one payoff**
-`MuClient.Graphics`: Kitty placeholder `GraphicsView` + Sixel/half-block fallbacks + capability probe. Inline **image viewer**; **map** view (box-drawing first, rasterized where supported); **stat panes** driven by GMCP.
+`SharpMUTerm.Graphics`: Kitty placeholder `GraphicsView` + Sixel/half-block fallbacks + capability probe. Inline **image viewer**; **map** view (box-drawing first, rasterized where supported); **stat panes** driven by GMCP.
 
 **M4 — Scripting**
 MoonSharp `ScriptHost`, scripting API, Lua-backed triggers/aliases, GMCP subscriptions from Lua, hot-reload.
 
 **M5 — Full parity & polish**
-**Spawns** (route matched output to named windows), **puppets**, **multiple input windows**, **MXP + Pueblo** parsers (clickable links/commands/`<SEND>`, inline images via graphics layer), MSDP, **BeipMU config importer**, Unicode emoji + `:)`→🙂, smooth-scroll/appearance options, theming, packaging (dotnet single-file for Windows + Linux; optional distro packages).
+**Spawns** (route matched output to named windows), **puppets**, **multiple input windows**, **MXP + Pueblo** parsers (clickable links/commands/`<SEND>`, inline images via graphics layer), MSDP, Unicode emoji + `:)`→🙂, smooth-scroll/appearance options, theming, packaging (dotnet single-file for Windows + Linux; optional distro packages).
+
+### M5 progress (delivered)
+- **MXP** and **Pueblo** parsers in `Core` (`ILineParser`), selectable per world via
+  `WorldDefinition.ContentFormat`; links/commands surface as `SpanInteraction` and are clickable
+  in the TUI. **Emoji** substitution (`EmojiSubstitutor`), opt-in per world. GMCP-driven **stat
+  line**, **spawn** capture, ReDoS-guarded regex engines, and self-contained **single-file
+  packaging** (`docs/PACKAGING.md`) + a tagged release workflow.
+- **In-TUI web view** (`SharpMUTerm.Web` + `WebView`): fetch a URL or follow an MXP/Pueblo/HTML link
+  and read the page as styled, word-wrapped text with clickable in-pane navigation (AngleSharp →
+  `StyledLine`s, reusing `SpanInteraction`). `<img>` renders as a labelled link today.
+
+### M5 UI design (delivered)
+The multi-pane workspace design (tmux-style pane tree hosting BeipMU-style windows) is rendered by
+the SharpConsoleUI shell over the `Core` models: the **connection rail** (worlds → characters →
+windows), **split panes** with tabbed windows (each leaf pane a tab strip; row/column splits become
+proportional grids with draggable splitters; zoom collapses to one pane), the **command surface**
+(`Ctrl+P`) ranking GO TO / WORLD / TERMINAL / LAYOUT actions, per-world **accent colours** threaded
+through the header/rail/status, a **status bar** with GMCP HP/EN meters, and a character-bound input
+prompt with a destination/draft gutter. Built on these `Core` pieces (pure + tested):
+- **Config schema** (`Core.Configuration`): worlds (servers) hold **characters**; automation lives
+  in shared, named **trigger sets** that characters opt into. Sessions key on `world.character` and
+  compose engines from the union of a character's sets. Versioned with `ConfigurationMigrator`.
+- **Workspace model** (`Core.Workspaces`): a pure `WorkspaceLayout` split tree — `PaneNode`
+  (tab strip of window ids) / `SplitNode` (row/col) with focus, zoom, freeze, and the tmux-style
+  split / close / cycle / move / reorder operations, maintaining the no-empty-pane / no-lone-split
+  invariants.
+- **Windows & spawn routing** (`Core.Workspaces`): a `Workspace` aggregate ties the layout to a
+  registry of `WorkspaceWindow`s (title, kind, owning `world.character`, unread count, unsent-input
+  marker). `RouteSpawn` finds-or-creates a background spawn window per `TriggerEngine` `SpawnTarget`
+  and accrues unread while it is not the visible tab; activating a window clears it. The SharpConsoleUI
+  view hosting (splits, tabs, rail) renders from this model, rebuilding the pane area on every layout
+  change (split / close / zoom / spawn) and swapping it into the live window.
+
+### Still open (M5+)
+- **Freeze view** (split-scrollback) rendering, **settings dialogs** (F-keys), and **mouse/drag**
+  pane resizing — the models and command-surface entries exist; the interactive view work remains.
+- Dedicated **multiple input windows** (capture + routing hooks exist), **puppets**, MSDP-driven
+  stat panes, and the **map** view.
+- **Web view enhancements:** render `<img>` inline through the existing `InlineImageRenderer`
+  (Kitty → Sixel → half-block) in graphics-capable terminals, and an optional high-fidelity mode
+  that snapshots the page with headless Chromium (Playwright) and displays the image via the
+  graphics layer.
 
 ---
 
@@ -121,11 +163,13 @@ MoonSharp `ScriptHost`, scripting API, Lua-backed triggers/aliases, GMCP subscri
 - **Unit tests** (`Core.Tests`): ANSI/SGR parser (256 + truecolor + edge sequences), telnet negotiation round-trips, MCCP decompression against captured zlib streams, trigger/alias regex + action application, GMCP JSON routing.
 - **Graphics tests**: Kitty placeholder-sequence encoder golden-output tests; capability-probe fallback selection.
 - **Manual/integration**: connect to a public test MU\* (and a local throwaway server) from **Kitty, WezTerm, Ghostty, and a non-graphics terminal**; verify truecolor, prompts on input line, logging, triggers firing, an inline image rendering under Kitty and degrading to half-block elsewhere. Run on both **Windows and Linux**.
-- Use `dotnet test` in CI (GitHub Actions matrix: windows-latest + ubuntu-latest).
+- Run the tests in CI with `dotnet run --project <testproj>` per test project (GitHub Actions matrix:
+  windows-latest + ubuntu-latest). TUnit runs on Microsoft.Testing.Platform, where the classic
+  `dotnet test`/VSTest path is unsupported on .NET 10 and later.
 
 ---
 
 ## Open items to confirm before/at M1
 - Confirm TelnetNegotiationCore + Terminal.Gui v2 both build against **net10.0** (fallback: consume via net8.0 compat).
 - Which servers you actually play on (helps prioritize protocol edge cases; all are targeted regardless).
-- Final project/repo **name** (currently scaffolded as `MuGlyph` — trivially renamable).
+- Final project/repo **name** (currently scaffolded as `SharpMUTerm` — trivially renamable).

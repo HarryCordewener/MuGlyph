@@ -55,3 +55,8 @@ desktop.ini
 appsettings.*.local.json
 *.local.json
 secrets.json
+.claude/
+
+# Python bytecode cache
+__pycache__/
+*.pyc
