@@ -8,7 +8,7 @@ public class RailModelTests
     private static readonly TerminalColor Accent = TerminalColor.FromRgb(0, 245, 183);
 
     [Test]
-    public async Task Build_EmitsHeaderThenWorldHostAndCharacters()
+    public async Task Build_EmitsHeaderThenWorldAndCharacters()
     {
         var world = new RailWorld("Aetherfall", "aetherfall.mux", 4201, Accent, new[]
         {
@@ -26,11 +26,11 @@ public class RailModelTests
         await Assert.That(rows[1].Kind).IsEqualTo(RailRowKind.World);
         await Assert.That(rows[1].Label).IsEqualTo("Aetherfall");
         await Assert.That(rows[1].Accent).IsEqualTo(Accent);
-        await Assert.That(rows[2].Kind).IsEqualTo(RailRowKind.Host);
-        await Assert.That(rows[2].Label).IsEqualTo("aetherfall.mux:4201");
-        await Assert.That(rows[3].Kind).IsEqualTo(RailRowKind.Character);
-        await Assert.That(rows[3].Active).IsTrue();
-        await Assert.That(rows[3].Unread).IsEqualTo(3);
+        // The address line is intentionally omitted from the rail (worlds show name + characters only).
+        await Assert.That(rows.Any(r => r.Kind == RailRowKind.Host)).IsFalse();
+        await Assert.That(rows[2].Kind).IsEqualTo(RailRowKind.Character);
+        await Assert.That(rows[2].Active).IsTrue();
+        await Assert.That(rows[2].Unread).IsEqualTo(3);
     }
 
     [Test]

@@ -51,7 +51,7 @@ internal static class Program
         return liveApp.Run(world); // blocks on the SharpConsoleUI main loop until exit
     }
 
-    /// <summary>Parses <c>--size WxH</c> (default 100x30) for the snapshot frame.</summary>
+    /// <summary>Parses <c>--size WxH</c> (default 160x48) for the snapshot frame.</summary>
     private static (int Width, int Height) ParseSize(string[] args)
     {
         var size = GetOption(args, "--size");
@@ -64,7 +64,7 @@ internal static class Program
             }
         }
 
-        return (100, 30);
+        return (160, 48);
     }
 
     private static AppConfiguration LoadConfiguration()
@@ -132,7 +132,7 @@ internal static class Program
         Console.WriteLine("  --insecure           Accept invalid TLS certificates.");
         Console.WriteLine("  --name <name>        Display name for the world.");
         Console.WriteLine("  --snapshot           Render one demo frame (ANSI) headlessly and exit.");
-        Console.WriteLine("  --size <WxH>         Snapshot size in cells (default 100x30).");
+        Console.WriteLine("  --size <WxH>         Snapshot size in cells (default 160x48).");
         Console.WriteLine("  --view <name>        Snapshot an overlay (e.g. 'settings') over the workspace.");
         Console.WriteLine("  --out <file>         Write the snapshot to a file instead of stdout.");
         Console.WriteLine("  -h, --help           Show this help.");

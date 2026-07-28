@@ -66,6 +66,7 @@ internal sealed class CommandPalette
             .WithTitle("Command surface")
             .AsModal()
             .Centered()
+            .WithBorderStyle(BorderStyle.Single)
             .WithSize(66, 18)
             .AddControl(_search)
             .AddControl(_results)

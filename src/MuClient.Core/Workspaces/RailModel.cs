@@ -64,7 +64,6 @@ public static class RailModel
         foreach (var world in worlds)
         {
             rows.Add(new RailRow(RailRowKind.World, 0, world.Name, Accent: world.Accent));
-            rows.Add(new RailRow(RailRowKind.Host, 1, $"{world.Host}:{world.Port}", Accent: world.Accent));
 
             if (world.Characters.Count == 0)
             {

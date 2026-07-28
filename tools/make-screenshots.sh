@@ -25,6 +25,6 @@ render() {
   python3 "$ROOT/tools/ansi_frame_to_image.py" "$OUT/$name.ansi" "$OUT/$name.html"
 }
 
-render muglyph-demo 96x28
+render muglyph-demo 160x48
 
 echo "Done. See $OUT/*.svg"

@@ -58,6 +58,7 @@ internal sealed class SettingsOverlay
             .WithTitle("Settings")
             .AsModal()
             .Maximized()
+            .WithBorderStyle(BorderStyle.Single)
             .AddControl(_panel)
             .OnClosed((_, _) => Reset())
             .Build();
