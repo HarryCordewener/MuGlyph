@@ -49,6 +49,6 @@ public class MetersAndStatusTests
         var gutter = StatusFormatter.InputGutter("main", new[] { "pages", "#public" }, 12);
         await Assert.That(gutter).Contains("→ main");
         await Assert.That(gutter).Contains("✎ pages #public");
-        await Assert.That(gutter).Contains("12");
+        await Assert.That(gutter).Contains("12 chars");
     }
 }

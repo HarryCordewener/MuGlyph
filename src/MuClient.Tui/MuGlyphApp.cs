@@ -113,6 +113,11 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         _header = Controls.Markup(HeaderMarkup()).StickyTop().Build();
         _header.LinkClicked += (_, e) => OnLinkClicked(e.Url);
+        _header.BackgroundColor = ToColor(_theme.StatusBackground); // the menu bar is a distinct chrome band
+        // Keep the clickable "glyph" button on-brand (violet) instead of the driver's default link highlight.
+        var brand = AccentPalette[2];
+        _header.FocusedLinkBackgroundColor = ToColor(new Rgb(brand.R, brand.G, brand.B));
+        _header.FocusedLinkForegroundColor = ToColor(_theme.Resolve(TerminalColor.Default, isBackground: true));
 
         var main = new MarkupControl(new List<string>());
         main.LinkClicked += (_, e) => OnLinkClicked(e.Url);
@@ -126,13 +131,23 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         // from the model and rebuilt whenever the layout changes; the initial row goes into the window.
         _workspaceRow = BuildWorkspaceRow();
 
+        // The input region gets its own subtly-elevated background so it's easy to tell apart from the
+        // output body above and the status bar below.
+        var inputBg = ToColor(new Rgb(0x26, 0x27, 0x30));
+
         // A thin gutter above the input: which window the line goes to, other windows holding drafts,
         // and the character count — the design's input-region affordance. StatusFormatter builds it.
-        _inputGutter = Controls.Markup("[dim]→ main  0[/]").StickyBottom().Build();
+        _inputGutter = Controls.Markup("[dim]→ main  0 chars[/]").StickyBottom().Build();
+        _inputGutter.BackgroundColor = inputBg;
 
         // Draft-safe history is ours (InputHistory), not the framework's: ↑ stashes the live draft,
         // ↓ past the newest entry restores it. So the built-in recall is off.
-        _input = Controls.Prompt("›").WithHistory(false).StickyBottom().Build();
+        _input = Controls.Prompt("›")
+            .WithHistory(false)
+            .WithInputBackgroundColor(inputBg)
+            .WithInputFocusedBackgroundColor(inputBg)
+            .StickyBottom()
+            .Build();
         _input.Entered += (_, text) => OnCommandEntered(text);
         _input.InputChanged += (_, text) => OnInputChanged(text);
 
@@ -1631,32 +1646,41 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     /// </summary>
     private string HeaderMarkup()
     {
-        // The ☰ affordance opens the command surface (caret flips to ▾ while it's open); it's a
-        // clickable link routed through OnLinkClicked, matching ⌃P.
+        // The menu affordance opens the command surface (caret flips to ▾ while it's open). The whole
+        // identity cluster is a powerline ribbon — menu ▸ world ▸ character — flowing accent colours.
         var caret = _palette is { IsOpen: true } ? "▾" : Glyphs.Menu;
+        var dark = Hex(_theme.Resolve(TerminalColor.Default, isBackground: true));
+        var headerBg = Hex(_theme.StatusBackground);
+        var chip = "#3f4859"; // dim chrome the character segment sits on
 
-        // A filled "button": the menu glyph + "glyph" wordmark on the accent, padded a space each side
-        // so the background fully wraps them. Dark text (the window background) keeps it legible.
-        var bg = _theme.Resolve(TerminalColor.Default, isBackground: true);
-        var brandText = $"#{bg.R:x2}{bg.G:x2}{bg.B:x2}";
-        var brand = $"[link={MenuScheme}toggle][bold {brandText} on #00f5b7] {caret} glyph [/][/]";
+        // Build the ribbon by hand so only the glyph "button" is a link (wrapping the whole bar makes
+        // the driver's link highlight repaint every segment and flatten the flowing colours).
+        var brandBg = AccentHex(AccentPalette[2]); // violet
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"[link={MenuScheme}toggle][bold {dark} on {brandBg}] {caret} glyph [/][/]");
 
-        string middle;
+        var tail = brandBg;
         if (ActiveWorld() is { } active)
         {
-            var hex = AccentHex(active.Accent);
-            var who = active.Character is { } name ? $" [dim]· {Escape(name)}[/]" : string.Empty;
-            middle = $"[{hex}]▚[/] [bold]{Escape(active.World.Name)}[/]{who}";
+            var worldAccent = AccentHex(active.Accent);
+            sb.Append($"[{tail} on {worldAccent}]{Glyphs.PowerRight}[/]");
+            sb.Append($"[bold {dark} on {worldAccent}] {Escape(active.World.Name)} [/]");
+            tail = worldAccent;
+            if (active.Character is { } name)
+            {
+                sb.Append($"[{tail} on {chip}]{Glyphs.PowerRight}[/]");
+                sb.Append($"[{worldAccent} on {chip}] ● {Escape(name)} [/]");
+                tail = chip;
+            }
         }
-        else
-        {
-            middle = "[dim]multi-world MU* workspace[/]";
-        }
+
+        sb.Append($"[{tail} on {headerBg}]{Glyphs.PowerRight}[/]");
+        var leftBar = sb.ToString();
 
         // The ⌃B prefix indicator shows only while armed (design: "⌃B — awaiting | - z o x b m < >").
         if (_prefixArmed)
         {
-            return $"{brand}   [#e5c07b]⌃B — awaiting[/]   [dim]| - z o x b m < >[/]";
+            return $"{leftBar}  [#e5c07b]⌃B — awaiting[/]  [dim]| - z o x b m < >[/]";
         }
 
         var connected = _connectedKeys.Count;
@@ -1668,8 +1692,11 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         var clock = _headless ? "09:24" : DateTime.Now.ToString("HH:mm");
         var right = $"[dim]{conn}[/]{log}   [dim]Graphics {Escape(_capabilities.Protocol.ToString())}   {clock}[/]";
 
-        return $"{brand}   {middle}          {right}";
+        return $"{leftBar}          {right}";
     }
+
+    /// <summary>Formats an <see cref="Rgb"/> as <c>#rrggbb</c> markup.</summary>
+    private static string Hex(Rgb rgb) => $"#{rgb.R:x2}{rgb.G:x2}{rgb.B:x2}";
 
     /// <summary>
     /// The design status bar: connection state, HP/EN meters (from GMCP vitals when present),

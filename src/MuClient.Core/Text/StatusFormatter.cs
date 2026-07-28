@@ -36,7 +36,7 @@ public static class StatusFormatter
             parts.Add($"✎ {string.Join(' ', draftWindows)}");
         }
 
-        parts.Add($"{charCount}");
+        parts.Add($"{charCount} chars");
         return string.Join("  ", parts);
     }
 }

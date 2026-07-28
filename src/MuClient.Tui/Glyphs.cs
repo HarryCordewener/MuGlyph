@@ -22,4 +22,8 @@ internal static class Glyphs
     public const string Log = "\uf0f6"; // nf-fa-file_text_o — log indicator (was the fisheye)
     public const string Heartbeat = "\uf21e"; // nf-fa-heartbeat — keepalive (was the recycle mark)
     public const string World = "\uf0ac"; // nf-fa-globe — world/server accent (paired with the spine)
+
+    // Powerline separators (solid triangles) for flowing segmented bars.
+    public const string PowerRight = "\ue0b0"; // 
+    public const string PowerLeft = "\ue0b2";  // 
 }
