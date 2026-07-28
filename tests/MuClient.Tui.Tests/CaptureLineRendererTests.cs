@@ -9,7 +9,7 @@ public class CaptureLineRendererTests
     {
         var line = CaptureLineRenderer.Line("^chat:");
 
-        await Assert.That(line).IsEqualTo("[dim]⇱ capture ^chat:[/]");
+        await Assert.That(line).IsEqualTo($"[dim]{Glyphs.Capture} capture ^chat:[/]");
     }
 
     [Test]
@@ -18,6 +18,6 @@ public class CaptureLineRendererTests
         // A regex like ^\[public\] must not be parsed as markup tags.
         var line = CaptureLineRenderer.Line(@"^\[public\]");
 
-        await Assert.That(line).IsEqualTo(@"[dim]⇱ capture ^\[[public\]][/]");
+        await Assert.That(line).IsEqualTo($@"[dim]{Glyphs.Capture} capture ^\[[public\]][/]");
     }
 }

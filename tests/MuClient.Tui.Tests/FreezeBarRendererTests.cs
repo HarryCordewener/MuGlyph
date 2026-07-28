@@ -9,7 +9,7 @@ public class FreezeBarRendererTests
     {
         var bar = FreezeBarRenderer.Bar("#c678dd");
 
-        await Assert.That(bar).Contains("[#c678dd]▲ FROZEN[/]");
+        await Assert.That(bar).Contains($"[#c678dd]{Glyphs.Freeze} FROZEN[/]");
         await Assert.That(bar).Contains("⌃F");
         await Assert.That(bar).Contains("[dim]");
         await Assert.That(bar).Contains("resume");

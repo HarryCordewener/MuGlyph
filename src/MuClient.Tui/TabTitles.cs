@@ -20,7 +20,7 @@ internal static class TabTitles
     {
         ArgumentNullException.ThrowIfNull(window);
         var unread = window.Unread > 0 ? $" ({window.Unread})" : string.Empty;
-        var pen = window.HasUnsentInput ? " ✎" : string.Empty;
+        var pen = window.HasUnsentInput ? $" {Glyphs.Draft}" : string.Empty;
 
         // ⌁ marks a window owned by a character other than the focused one, so a pane holding
         // borrowed windows stays traceable to their owners.
@@ -30,7 +30,7 @@ internal static class TabTitles
             ? " ⌁"
             : string.Empty;
 
-        var close = isActive ? " ✕" : string.Empty;
+        var close = isActive ? $" {Glyphs.Close}" : string.Empty;
         return window.Title + unread + pen + cross + close;
     }
 }

@@ -19,7 +19,7 @@ internal static class RailRenderer
         {
             lines.Add(row.Kind switch
             {
-                RailRowKind.Header => "[dim]┌ CONNECTIONS[/]",
+                RailRowKind.Header => $"[dim]┌ {Glyphs.Connections} CONNECTIONS[/]",
                 RailRowKind.World => $"[{Accent(row)}]▚[/] [bold]{Escape(row.Label)}[/]",
                 RailRowKind.Host => $"{Indent(row)}[dim]{Escape(row.Label)}[/]",
                 RailRowKind.Empty => $"{Indent(row)}[dim]{Escape(row.Label)}[/]",
@@ -71,7 +71,7 @@ internal static class RailRenderer
     private static string Window(RailRow row)
     {
         var name = Escape(row.Label);
-        var unsent = row.Unsent ? " [#ffd700]✎[/]" : string.Empty;
+        var unsent = row.Unsent ? $" [#ffd700]{Glyphs.Draft}[/]" : string.Empty;
         var unread = row.Unread > 0 ? $" [#00f5b7]{row.Unread}[/]" : string.Empty;
         var pane = row.Closed ? "[dim]closed[/]" : $"[dim]{Escape(row.Pane ?? string.Empty)}[/]";
         return $"{Indent(row)}[dim]▪[/] {name}{unsent}{unread}   {pane}";

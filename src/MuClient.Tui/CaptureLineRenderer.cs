@@ -10,7 +10,7 @@ internal static class CaptureLineRenderer
     public static string Line(string pattern)
     {
         ArgumentNullException.ThrowIfNull(pattern);
-        return $"[dim]⇱ capture {Escape(pattern)}[/]";
+        return $"[dim]{Glyphs.Capture} capture {Escape(pattern)}[/]";
     }
 
     private static string Escape(string text) => text.Replace("[", "[[").Replace("]", "]]");

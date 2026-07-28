@@ -28,7 +28,7 @@ public class TabTitlesTests
         var chat = ws.RouteSpawn("Trade");
         ws.ActivateWindow(chat.Id);        // clears unread
         ws.SetUnsentInput(chat.Id, true);
-        await Assert.That(TabTitles.For(chat)).IsEqualTo("Trade ✎");
+        await Assert.That(TabTitles.For(chat)).IsEqualTo($"Trade {Glyphs.Draft}");
     }
 
     [Test]
@@ -37,14 +37,14 @@ public class TabTitlesTests
         var ws = new Workspace();
         var chat = ws.RouteSpawn("Chat"); // unread 1, background
         ws.SetUnsentInput(chat.Id, true);
-        await Assert.That(TabTitles.For(chat)).IsEqualTo("Chat (1) ✎");
+        await Assert.That(TabTitles.For(chat)).IsEqualTo($"Chat (1) {Glyphs.Draft}");
     }
 
     [Test]
     public async Task ActiveTab_AppendsACloseAffordance()
     {
         var main = new Workspace(mainWindowId: "main", mainTitle: "Server").FindWindow("main")!;
-        await Assert.That(TabTitles.For(main, focusedCharacterKey: null, isActive: true)).IsEqualTo("Server ✕");
+        await Assert.That(TabTitles.For(main, focusedCharacterKey: null, isActive: true)).IsEqualTo($"Server {Glyphs.Close}");
     }
 
     [Test]

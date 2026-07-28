@@ -114,7 +114,7 @@ internal static class TriggersScreenRenderer
 
         if (actions.SpawnTarget is not null)
         {
-            flags.Add("⇱");
+            flags.Add(Glyphs.Capture);
         }
 
         if (actions.ScriptCallback is not null)

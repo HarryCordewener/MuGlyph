@@ -65,7 +65,7 @@ public class RailRendererTests
     {
         var lines = RailRenderer.Render(Scene());
         var pub = lines.Single(l => l.Contains("#public"));
-        await Assert.That(pub).Contains("✎");
+        await Assert.That(pub).Contains(Glyphs.Draft);
         await Assert.That(pub).Contains("3");
         await Assert.That(pub).Contains("right");
 

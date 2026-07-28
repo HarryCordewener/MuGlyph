@@ -1680,7 +1680,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     {
         // The ☰ affordance opens the command surface (caret flips to ▾ while it's open); it's a
         // clickable link routed through OnLinkClicked, matching ⌃P.
-        var caret = _palette is { IsOpen: true } ? "▾" : "☰";
+        var caret = _palette is { IsOpen: true } ? "▾" : Glyphs.Menu;
         var brand = $"[link={MenuScheme}toggle][bold #00f5b7]{caret} glyph·tui[/][/]";
 
         string middle;
@@ -1705,8 +1705,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         var conn = _config.Worlds.Count > 0 ? $"{connected}/{_config.Worlds.Count} connected   " : string.Empty;
         var logFormat = ActiveLogging().Format;
         var log = logFormat == LogFormat.None
-            ? "[dim]◉ LOG off[/]"
-            : $"[#00f5b7]◉[/] [dim]LOG {logFormat.ToString().ToLowerInvariant()}[/]";
+            ? $"[dim]{Glyphs.Log} LOG off[/]"
+            : $"[#00f5b7]{Glyphs.Log}[/] [dim]LOG {logFormat.ToString().ToLowerInvariant()}[/]";
         var clock = _headless ? "09:24" : DateTime.Now.ToString("HH:mm");
         var right = $"[dim]{conn}[/]{log}   [dim]Graphics {Escape(_capabilities.Protocol.ToString())}   {clock}[/]";
 
@@ -1739,7 +1739,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         // Keepalive latency sparkline + last ack (compact), per the design status bar.
         var spark = Meters.Sparkline(new[] { 38, 44, 41, 47, 40, 43 });
         var ackMs = ActiveWorld() is { } w && w.World.KeepaliveSeconds > 0 ? 41 : 0;
-        parts.Add($"[dim]↻[/] [#98c379]{spark}[/] [dim]{ackMs}ms[/]");
+        parts.Add($"[dim]{Glyphs.Heartbeat}[/] [#98c379]{spark}[/] [dim]{ackMs}ms[/]");
 
         var encoding = ActiveWorld() is { } enc ? enc.World.Encoding : "UTF-8";
         parts.Add($"[dim]{Escape($"{host}:{port}")}  {Escape(encoding)}[/]");

@@ -12,6 +12,6 @@ internal static class FreezeBarRenderer
     public static string Bar(string accentHex)
     {
         ArgumentException.ThrowIfNullOrEmpty(accentHex);
-        return $"[{accentHex}]▲ FROZEN[/] [{accentHex}]⌃F[/][dim]  scrollback pinned — ⌃F to resume[/]";
+        return $"[{accentHex}]{Glyphs.Freeze} FROZEN[/] [{accentHex}]⌃F[/][dim]  scrollback pinned — ⌃F to resume[/]";
     }
 }

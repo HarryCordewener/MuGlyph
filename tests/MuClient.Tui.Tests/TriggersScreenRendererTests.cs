@@ -72,7 +72,7 @@ public class TriggersScreenRendererTests
         var tellSub = lines[tellRowIndex + 1];
         await Assert.That(tellSub).Contains("Comms");
         await Assert.That(tellSub).Contains('H'); // highlight foreground set
-        await Assert.That(tellSub).Contains('⇱'); // spawn target set
+        await Assert.That(tellSub).Contains(Glyphs.Capture); // spawn target set
 
         var spamRowIndex = lines.FindIndex(l => l.Contains("[bold]Spam[/]"));
         var spamSub = lines[spamRowIndex + 1];
