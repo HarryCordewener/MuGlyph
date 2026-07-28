@@ -84,13 +84,15 @@ Planned solution layout:
 | `MuClient.Tui` | SharpConsoleUI application |
 | `*.Tests` (Core, Graphics, Scripting, Web, Tui) | TUnit |
 
-## Milestone M1 — first task
+## Milestone M1 — first task (delivered)
 
-1. Create `MuGlyph.sln` with the four projects above targeting `net10.0`, plus the xUnit test projects.
+Kept for context; **M1 is done** (see *Repository state* above). As originally scoped:
+
+1. Create `MuGlyph.slnx` with the projects above targeting `net10.0`, plus the TUnit test projects.
 2. Add NuGet references (see version notes below).
 3. Runnable stub: connect over TCP (+ optional TLS via `SslStream`, IPv6-capable), pipe received
    bytes through a first-pass `AnsiParser` (SGR: 16 / 256 / 24-bit color), render colored output
-   in a Terminal.Gui window with an input line + history.
+   in a SharpConsoleUI window with an input line + history.
 4. Unit-test `AnsiParser` and the telnet-session wrapper in `MuClient.Core.Tests`.
 
 ## Dependency notes / traps
@@ -99,10 +101,13 @@ Planned solution layout:
 - **SharpConsoleUI** — stable release, multi-targets net8/9/10; MIT. Provides split layouts, tabs,
   resizable/mouse windows, and native Kitty graphics, so the multi-pane workspace and inline images
   ride on the framework rather than being hand-drawn.
-- **TelnetNegotiationCore 1.0.0** provides negotiation only (TELOPT, GA, TTYPE/MTTS, EOR, NAWS,
-  CHARSET, MSSP, GMCP). It does **not** provide MCCP, MSDP, MXP, Pueblo, or ANSI parsing — those
-  are our layer. Do not assume APIs for them exist. (Note: the repo owner authored this library,
-  so extending it directly is on the table — propose it via PR rather than assuming.)
+- **TelnetNegotiationCore 2.5.3** (the version in use) has a fluent builder API and now negotiates
+  MCCP/MSDP/MXP itself, on top of the base negotiation (TELOPT, GA, TTYPE/MTTS, EOR, NAWS, CHARSET,
+  MSSP, GMCP). **Pueblo and the ANSI/MXP/Pueblo _parsing_ remain our layer** — the library does the
+  option handshake, not the payload parsing. `TelnetSession` sets the init-only `CallbackOnByteAsync`
+  reflectively to see raw bytes (incl. unterminated prompts); a first-class `OnByte` builder hook is a
+  good upstream PR. (Note: the repo owner authored this library, so extending it directly is on the
+  table — propose it via PR rather than assuming.)
 - **MoonSharp** — package id `MoonSharp`, pure-managed, no native deps.
 
 ## Verification
