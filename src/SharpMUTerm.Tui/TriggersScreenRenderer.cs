@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using SharpMUTerm.Core.Automation;
 using SharpMUTerm.Core.Configuration;
@@ -6,19 +7,33 @@ using SharpMUTerm.Core.Text;
 namespace SharpMUTerm.Tui;
 
 /// <summary>
-/// Renders the F2 "Triggers &amp; spawn routing" screen: a left rule list (flattened across every
-/// <see cref="TriggerSet"/>, each row carrying its enabled state, name/pattern, owning set, action
-/// flags, and route) merged column-by-column with a right-hand editor for the selected trigger
-/// (pattern, route-to list, highlight swatches, and toggles). Pure so the screen is unit-testable;
-/// the modal host just displays what this produces.
+/// Produces the markup sub-blocks for the F2 Triggers &amp; spawn routing screen — the header band,
+/// the rule list (flattened across every <see cref="TriggerSet"/>, each row carrying its enabled
+/// state, name/pattern, owning set, action flags, and route), the editor for the selected trigger
+/// (pattern, route-to list, highlight swatches, and toggles), and the footer action bar.
+/// <see cref="TriggersScreenView"/> composes these into real panels (grids) for the live/snapshot
+/// view; <see cref="Render"/> merges the same blocks into a single line list for the unit tests.
+/// Pure so every block is testable.
 /// </summary>
 internal static class TriggersScreenRenderer
 {
     private const string Accent = "#00f5b7";
     private const int ColumnWidth = 54;
 
+    // Palette shared with the view (which sets these as control backgrounds).
+    internal const string HeaderBg = "#232b3d";
+    internal const string FooterBg = "#232b3d";
+    private const string Label = "#7c8699";
+    private const string Value = "#d7deec";
+    private const string Ink = "#0f1620";
+
     private static readonly Regex TagPattern = new(@"\[[^\[\]]*\]", RegexOptions.Compiled);
 
+    /// <summary>
+    /// Merges every sub-block into one line list (header, rule list | editor, footer). Used by the
+    /// unit tests and as a width-agnostic fallback; the live view composes the same blocks into
+    /// panels instead.
+    /// </summary>
     public static List<string> Render(
         IReadOnlyList<TriggerSet> sets,
         int selectedTrigger,
@@ -27,25 +42,10 @@ internal static class TriggersScreenRenderer
         ArgumentNullException.ThrowIfNull(sets);
         ArgumentNullException.ThrowIfNull(spawnTargets);
 
-        var flattened = new List<(Trigger Trigger, string SetName)>();
-        foreach (var set in sets)
-        {
-            foreach (var trigger in set.Triggers)
-            {
-                flattened.Add((trigger, set.Name));
-            }
-        }
+        var left = RulesColumn(sets, selectedTrigger);
+        var right = EditorColumn(sets, selectedTrigger, spawnTargets);
 
-        var left = BuildLeft(flattened, selectedTrigger);
-        var right = selectedTrigger >= 0 && selectedTrigger < flattened.Count
-            ? BuildEditor(flattened[selectedTrigger].Trigger, spawnTargets)
-            : new List<string>();
-
-        var lines = new List<string>
-        {
-            "[dim]‹ back[/]   [bold]Triggers & spawn routing[/]   [dim]F2[/]",
-            string.Empty,
-        };
+        var lines = new List<string> { HeaderLine(0), string.Empty };
 
         var rowCount = Math.Max(left.Count, right.Count);
         for (var i = 0; i < rowCount; i++)
@@ -56,15 +56,41 @@ internal static class TriggersScreenRenderer
         }
 
         lines.Add(string.Empty);
-        lines.Add("[dim][[Cancel]]   [[Save]][/]");
+        lines.Add(FooterLine(sets, selectedTrigger, 0));
 
         return lines;
     }
 
-    private static List<string> BuildLeft(
-        IReadOnlyList<(Trigger Trigger, string SetName)> flattened,
-        int selectedTrigger)
+    /// <summary>The screen title on the left, the keyboard hints right-aligned to <paramref name="width"/>.</summary>
+    internal static string HeaderLine(int width)
     {
+        var title = $"[bold {Value}] Triggers & spawn routing[/]";
+        var hints = $"[{Label}]↑↓ select · ⇥ switch pane · ⏎ edit · [/][{Accent}]Esc[/][{Label}] close [/]";
+        return SpreadLR(" " + title, hints, width);
+    }
+
+    /// <summary>The action bar: which rule is selected on the left, cancel/save on the right.</summary>
+    internal static string FooterLine(IReadOnlyList<TriggerSet> sets, int selectedTrigger, int width)
+    {
+        var flattened = Flatten(sets);
+        var context = string.Empty;
+        if (flattened.Count > 0 && selectedTrigger >= 0 && selectedTrigger < flattened.Count)
+        {
+            var count = flattened.Count.ToString(CultureInfo.InvariantCulture);
+            context = $"[{Label}]trigger {(selectedTrigger + 1).ToString(CultureInfo.InvariantCulture)}/{count}[/]"
+                + $"[{Label}]  ·  set {Escape(flattened[selectedTrigger].SetName)}[/]";
+        }
+
+        var actions = $"[{Label}] [[Esc]] Cancel [/]  [{Ink} on {Accent}] [[⏎]] Save [/] ";
+        return SpreadLR(" " + context, actions, width);
+    }
+
+    /// <summary>The rule list — every trigger of every set, each over a set/flags sub-row.</summary>
+    internal static List<string> RulesColumn(IReadOnlyList<TriggerSet> sets, int selectedTrigger)
+    {
+        ArgumentNullException.ThrowIfNull(sets);
+
+        var flattened = Flatten(sets);
         var left = new List<string> { "[dim]on  name / pattern → window[/]" };
 
         if (flattened.Count == 0)
@@ -81,6 +107,39 @@ internal static class TriggersScreenRenderer
         }
 
         return left;
+    }
+
+    /// <summary>
+    /// The editor for the selected rule — pattern, route-to list, highlight swatches, and toggles.
+    /// Empty when nothing is selected.
+    /// </summary>
+    internal static List<string> EditorColumn(
+        IReadOnlyList<TriggerSet> sets,
+        int selectedTrigger,
+        IReadOnlyList<string> spawnTargets)
+    {
+        ArgumentNullException.ThrowIfNull(sets);
+        ArgumentNullException.ThrowIfNull(spawnTargets);
+
+        var flattened = Flatten(sets);
+        return selectedTrigger >= 0 && selectedTrigger < flattened.Count
+            ? BuildEditor(flattened[selectedTrigger].Trigger, spawnTargets)
+            : new List<string>();
+    }
+
+    /// <summary>Flattens every set's triggers into one list, each paired with its owning set's name.</summary>
+    private static List<(Trigger Trigger, string SetName)> Flatten(IReadOnlyList<TriggerSet> sets)
+    {
+        var flattened = new List<(Trigger Trigger, string SetName)>();
+        foreach (var set in sets)
+        {
+            foreach (var trigger in set.Triggers)
+            {
+                flattened.Add((trigger, set.Name));
+            }
+        }
+
+        return flattened;
     }
 
     private static string RuleRow(int index, int selectedTrigger, Trigger trigger)
@@ -179,6 +238,18 @@ internal static class TriggersScreenRenderer
 
     private static string Hex(TerminalColor color) =>
         color.Kind == TerminalColorKind.Rgb ? $"#{color.R:x2}{color.G:x2}{color.B:x2}" : Accent;
+
+    /// <summary>Lays a left- and right-hand fragment on one line, right-aligning the right to <paramref name="width"/>.</summary>
+    private static string SpreadLR(string left, string right, int width)
+    {
+        if (width <= 0)
+        {
+            return $"{left}   {right}";
+        }
+
+        var gap = Math.Max(1, width - VisibleLength(left) - VisibleLength(right));
+        return left + new string(' ', gap) + right;
+    }
 
     /// <summary>Pads a markup string to a target *visible* column width, ignoring markup tags.</summary>
     private static string PadVisible(string markup, int width)

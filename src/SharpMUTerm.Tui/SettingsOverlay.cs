@@ -8,9 +8,10 @@ namespace SharpMUTerm.Tui;
 /// <summary>
 /// A full-screen overlay hosting the F2–F9 settings screens. The design specifies these as
 /// full-screen surfaces, not floating dialogs: this maximises a frameless modal (no title bar,
-/// buttons, or resize grip) with a deep panel background. Most screens are a single markup panel;
-/// F5 supplies a composed control tree (real panels). Esc (or the same F-key) closes it. The
-/// renderers stay pure and tested; this is a thin host.
+/// buttons, or resize grip) with a deep panel background. Every screen supplies a control: the
+/// converted ones (F2, F5) a composed tree of real panels, the rest a single <see cref="MarkupPanel"/>
+/// wrapping their markup. Esc (or the same F-key) closes it. The renderers stay pure and tested;
+/// this is a thin host.
 /// </summary>
 internal sealed class SettingsOverlay
 {
@@ -29,19 +30,18 @@ internal sealed class SettingsOverlay
 
     public bool IsOpen => _window is not null;
 
-    /// <summary>Toggles a markup screen (wrapped in a full-screen panel).</summary>
-    public void Toggle(ConsoleKey key, Func<IReadOnlyList<string>> content) =>
-        ToggleControl(key, () => MarkupPanel(content()));
-
-    /// <summary>Toggles a composed-control screen (e.g. F5's real-panel layout).</summary>
+    /// <summary>Toggles a screen (a composed control tree, or a <see cref="MarkupPanel"/>).</summary>
     public void Toggle(ConsoleKey key, Func<IWindowControl> control) => ToggleControl(key, control);
 
-    /// <summary>Renders a markup screen into a headless frame (used by snapshots).</summary>
-    public void OpenForSnapshot(ConsoleKey key, Func<IReadOnlyList<string>> content) =>
-        Open(key, () => MarkupPanel(content()));
-
-    /// <summary>Renders a composed-control screen into a headless frame (used by snapshots).</summary>
+    /// <summary>Renders a screen into a headless frame (used by snapshots).</summary>
     public void OpenForSnapshot(ConsoleKey key, Func<IWindowControl> control) => Open(key, control);
+
+    /// <summary>Wraps a screen that is still one markup block in the full-screen panel.</summary>
+    public static MarkupControl MarkupPanel(IReadOnlyList<string> lines) => new(lines.ToList())
+    {
+        BackgroundColor = new Color(PanelBg),
+        HorizontalAlignment = HorizontalAlignment.Stretch,
+    };
 
     private void ToggleControl(ConsoleKey key, Func<IWindowControl> factory)
     {
@@ -75,12 +75,6 @@ internal sealed class SettingsOverlay
         _window.PreviewKeyPressed += OnKey;
         _system.AddWindow(_window);
     }
-
-    private static MarkupControl MarkupPanel(IReadOnlyList<string> lines) => new(lines.ToList())
-    {
-        BackgroundColor = new Color(PanelBg),
-        HorizontalAlignment = HorizontalAlignment.Stretch,
-    };
 
     private void OnKey(object? sender, KeyPressedEventArgs e)
     {

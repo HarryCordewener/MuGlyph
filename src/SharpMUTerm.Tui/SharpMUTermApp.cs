@@ -291,15 +291,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _palette.Toggle();
         }
 
-        // F5 Worlds & Characters is a composed-control screen (real panels); others are markup.
-        if (string.Equals(view, "worlds", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(view, "settings", StringComparison.OrdinalIgnoreCase))
+        // Settings screens (composed-control or markup — SettingsView hands back a control factory
+        // either way) open over the workspace for their --view name.
+        if (view is not null && SettingsView(view) is { } screen)
         {
-            _settings.OpenForSnapshot(ConsoleKey.F5, WorldsControl);
-        }
-        else if (view is not null && SettingsView(view) is { } screen)
-        {
-            _settings.OpenForSnapshot(screen.Key, screen.Content);
+            _settings.OpenForSnapshot(screen.Key, screen.Control);
         }
 
         // Render exactly one frame, synchronously, inline on this thread. ForceRender() performs a
@@ -723,17 +719,17 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private void RegisterSettingsShortcuts()
     {
-        void Bind(ConsoleKey key, Func<IReadOnlyList<string>> content) =>
-            _system.RegisterGlobalShortcut((ConsoleModifiers)0, key, () => _settings.Toggle(key, content));
+        void Bind(ConsoleKey key, Func<IWindowControl> control) =>
+            _system.RegisterGlobalShortcut((ConsoleModifiers)0, key, () => _settings.Toggle(key, control));
 
-        Bind(ConsoleKey.F2, () => TriggersScreenRenderer.Render(_config.TriggerSets, 0, SpawnTargets()));
-        Bind(ConsoleKey.F3, () => AliasesScreenRenderer.Render(_config.TriggerSets, 0));
-        Bind(ConsoleKey.F4, () => KeypadScreenRenderer.Render(Macros()));
-        _system.RegisterGlobalShortcut((ConsoleModifiers)0, ConsoleKey.F5, () => _settings.Toggle(ConsoleKey.F5, WorldsControl));
-        Bind(ConsoleKey.F6, () => TimersScreenRenderer.Render(_config.TriggerSets, 0));
-        Bind(ConsoleKey.F7, OptionsScreenRenderer.TextAnsi);
-        Bind(ConsoleKey.F8, OptionsScreenRenderer.InputSpellcheck);
-        Bind(ConsoleKey.F9, () => OptionsScreenRenderer.Logging(ActiveLogging()));
+        Bind(ConsoleKey.F2, TriggersControl);
+        Bind(ConsoleKey.F3, Markup(() => AliasesScreenRenderer.Render(_config.TriggerSets, 0)));
+        Bind(ConsoleKey.F4, Markup(() => KeypadScreenRenderer.Render(Macros())));
+        Bind(ConsoleKey.F5, WorldsControl);
+        Bind(ConsoleKey.F6, Markup(() => TimersScreenRenderer.Render(_config.TriggerSets, 0)));
+        Bind(ConsoleKey.F7, Markup(OptionsScreenRenderer.TextAnsi));
+        Bind(ConsoleKey.F8, Markup(OptionsScreenRenderer.InputSpellcheck));
+        Bind(ConsoleKey.F9, Markup(() => OptionsScreenRenderer.Logging(ActiveLogging())));
     }
 
     /// <summary>Distinct spawn-window targets referenced by any trigger (for the F2 route-to list).</summary>
@@ -790,20 +786,29 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         return world?.Characters.ElementAtOrDefault(ActiveCharacterIndex())?.Logging ?? new LoggingSettings();
     }
 
-    /// <summary>Maps a <c>--view</c> name to a settings screen (F-key + content) for snapshots.</summary>
     /// <summary>Builds the F5 Worlds &amp; Characters screen as a composed control tree (real panels).</summary>
     private IWindowControl WorldsControl() => WorldsScreenView.Build(
         _config.Worlds, _config.TriggerSets, ActiveWorldIndex(), ActiveCharacterIndex(), _system.DesktopDimensions.Width);
 
-    private (ConsoleKey Key, Func<IReadOnlyList<string>> Content)? SettingsView(string view) => view.ToLowerInvariant() switch
+    /// <summary>Builds the F2 Triggers &amp; spawn routing screen as a composed control tree (real panels).</summary>
+    private IWindowControl TriggersControl() => TriggersScreenView.Build(
+        _config.TriggerSets, 0, SpawnTargets(), _system.DesktopDimensions.Width);
+
+    /// <summary>Hosts a screen that is still one markup block in the overlay's full-screen panel.</summary>
+    private static Func<IWindowControl> Markup(Func<IReadOnlyList<string>> content) =>
+        () => SettingsOverlay.MarkupPanel(content());
+
+    /// <summary>Maps a <c>--view</c> name to a settings screen (F-key + control factory) for snapshots.</summary>
+    private (ConsoleKey Key, Func<IWindowControl> Control)? SettingsView(string view) => view.ToLowerInvariant() switch
     {
-        "triggers" => (ConsoleKey.F2, () => TriggersScreenRenderer.Render(_config.TriggerSets, 0, SpawnTargets())),
-        "aliases" => (ConsoleKey.F3, () => AliasesScreenRenderer.Render(_config.TriggerSets, 0)),
-        "keypad" => (ConsoleKey.F4, () => KeypadScreenRenderer.Render(Macros())),
-        "timers" => (ConsoleKey.F6, () => TimersScreenRenderer.Render(_config.TriggerSets, 0)),
-        "textansi" => (ConsoleKey.F7, OptionsScreenRenderer.TextAnsi),
-        "input" => (ConsoleKey.F8, OptionsScreenRenderer.InputSpellcheck),
-        "logging" => (ConsoleKey.F9, () => OptionsScreenRenderer.Logging(ActiveLogging())),
+        "triggers" => (ConsoleKey.F2, TriggersControl),
+        "aliases" => (ConsoleKey.F3, Markup(() => AliasesScreenRenderer.Render(_config.TriggerSets, 0))),
+        "keypad" => (ConsoleKey.F4, Markup(() => KeypadScreenRenderer.Render(Macros()))),
+        "worlds" or "settings" => (ConsoleKey.F5, WorldsControl),
+        "timers" => (ConsoleKey.F6, Markup(() => TimersScreenRenderer.Render(_config.TriggerSets, 0))),
+        "textansi" => (ConsoleKey.F7, Markup(OptionsScreenRenderer.TextAnsi)),
+        "input" => (ConsoleKey.F8, Markup(OptionsScreenRenderer.InputSpellcheck)),
+        "logging" => (ConsoleKey.F9, Markup(() => OptionsScreenRenderer.Logging(ActiveLogging()))),
         _ => null,
     };
 

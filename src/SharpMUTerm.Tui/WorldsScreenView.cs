@@ -106,7 +106,21 @@ internal static class WorldsScreenView
         return control;
     }
 
-    private static MarkupControl VerticalRule() => new(new List<string>()) { BackgroundColor = new Color(RuleColor) };
+    /// <summary>
+    /// The one-cell rule between the columns. A <see cref="MarkupControl"/> with no lines measures to
+    /// nothing and never paints its background, so the rule is an empty grid instead — a grid's
+    /// background covers its whole arranged area, giving a full-height hairline.
+    /// </summary>
+    private static IWindowControl VerticalRule()
+    {
+        var rule = Controls.HorizontalGrid()
+            .WithAlignment(HorizontalAlignment.Stretch)
+            .WithVerticalAlignment(VerticalAlignment.Fill)
+            .Column(c => c.Flex(1).Add(new MarkupControl(new List<string>())))
+            .Build();
+        rule.BackgroundColor = new Color(RuleColor);
+        return rule;
+    }
 
     /// <summary>Prefixes each form row with a space so the editing pane doesn't sit flush to the left edge.</summary>
     private static List<string> Indent(IEnumerable<string> lines) => lines.Select(l => " " + l).ToList();
