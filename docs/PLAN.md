@@ -117,9 +117,14 @@ MoonSharp `ScriptHost`, scripting API, Lua-backed triggers/aliases, GMCP subscri
   and read the page as styled, word-wrapped text with clickable in-pane navigation (AngleSharp →
   `StyledLine`s, reusing `SpanInteraction`). `<img>` renders as a labelled link today.
 
-### M5 UI design (in progress)
-Implementing the multi-pane workspace design (tmux-style pane tree hosting BeipMU-style windows),
-in reviewable steps landing on `Core` first (pure + tested), then the SharpConsoleUI shell:
+### M5 UI design (delivered)
+The multi-pane workspace design (tmux-style pane tree hosting BeipMU-style windows) is rendered by
+the SharpConsoleUI shell over the `Core` models: the **connection rail** (worlds → characters →
+windows), **split panes** with tabbed windows (each leaf pane a tab strip; row/column splits become
+proportional grids with draggable splitters; zoom collapses to one pane), the **command surface**
+(`Ctrl+P`) ranking GO TO / WORLD / TERMINAL / LAYOUT actions, per-world **accent colours** threaded
+through the header/rail/status, a **status bar** with GMCP HP/EN meters, and a character-bound input
+prompt with a destination/draft gutter. Built on these `Core` pieces (pure + tested):
 - **Config schema** (`Core.Configuration`): worlds (servers) hold **characters**; automation lives
   in shared, named **trigger sets** that characters opt into. Sessions key on `world.character` and
   compose engines from the union of a character's sets. Versioned with `ConfigurationMigrator`.
@@ -131,12 +136,14 @@ in reviewable steps landing on `Core` first (pure + tested), then the SharpConso
   registry of `WorkspaceWindow`s (title, kind, owning `world.character`, unread count, unsent-input
   marker). `RouteSpawn` finds-or-creates a background spawn window per `TriggerEngine` `SpawnTarget`
   and accrues unread while it is not the visible tab; activating a window clears it. The SharpConsoleUI
-  view hosting (splits, tabs, rail) renders from this model — the base shell (markup output pane with
-  clickable links, prompt input, status, NAWS-on-resize) is in place; splits/tabs/rail layer on next.
+  view hosting (splits, tabs, rail) renders from this model, rebuilding the pane area on every layout
+  change (split / close / zoom / spawn) and swapping it into the live window.
 
 ### Still open (M5+)
-- Dedicated **spawn windows** and **multiple input windows** (capture + routing hooks exist),
-  **puppets**, MSDP-driven stat panes, and the **map** view.
+- **Freeze view** (split-scrollback) rendering, **settings dialogs** (F-keys), and **mouse/drag**
+  pane resizing — the models and command-surface entries exist; the interactive view work remains.
+- Dedicated **multiple input windows** (capture + routing hooks exist), **puppets**, MSDP-driven
+  stat panes, and the **map** view.
 - **Web view enhancements:** render `<img>` inline through the existing `InlineImageRenderer`
   (Kitty → Sixel → half-block) in graphics-capable terminals, and an optional high-fidelity mode
   that snapshots the page with headless Chromium (Playwright) and displays the image via the

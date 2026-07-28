@@ -67,11 +67,14 @@ HTML logging · GMCP / MSDP / MSSP / MCCP · MXP + Pueblo · Unicode/emoji.
   `timer`/`gmcp`/`log`, with hot-reload.
 - **Theming** — yazi-style named themes (Dark / Light / Solarized Dark) with a 16-colour palette
   override and semantic UI colours, serialised to the config as hex.
-- **TUI** — a [SharpConsoleUI](https://github.com/nickprotop/ConsoleEx) app: truecolor markup output
-  pane with clickable MXP/Pueblo/web links (styled spans → Spectre-style markup), a command prompt
-  with history, a GMCP-driven status line, `Ctrl+Q` quit, and NAWS re-advertised on terminal resize.
-  The compositor gives split layouts, tabs, resizable/mouse windows, and native inline images for the
-  multi-pane workspace (layered on the `Core.Workspaces` model) as it lands.
+- **TUI** — a [SharpConsoleUI](https://github.com/nickprotop/ConsoleEx) app rendering the multi-pane
+  workspace design over the `Core.Workspaces` model: a **connection rail** (worlds → characters →
+  windows with connected/active/unread markers), **split panes** with tabbed windows (tmux-style
+  split/close/zoom), a **command surface** (`Ctrl+P`) with ranked GO TO / WORLD / TERMINAL / LAYOUT
+  actions, per-world **accent colours**, a GMCP-driven **status bar** with HP/EN meters, and a
+  character-bound input prompt + destination/draft gutter. Output is truecolor markup with clickable
+  MXP/Pueblo/web spans; NAWS is re-advertised on resize. `Ctrl+N` next window · `Ctrl+O` next pane ·
+  `Ctrl+W` close · `Ctrl+Q` quit.
 - **Web view** — an in-TUI text-mode browser (`MuClient.Web`, AngleSharp): fetch a URL or
   follow an MXP/Pueblo/HTML link and read the page as styled, word-wrapped text with clickable
   links you can navigate in-pane. `<img>` shows as a labelled link (graphics-terminal image

@@ -132,6 +132,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.N, NextWindow);
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.Tab, NextWindow);
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.W, CloseActiveWindow);
+        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.O, CyclePane);
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.P, () => _palette.Toggle());
         _system.AddWindow(_window);
     }
@@ -824,6 +825,25 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         {
             tabs.ActiveTabIndex = (tabs.ActiveTabIndex + 1) % tabs.TabCount;
         }
+    }
+
+    /// <summary>Moves focus to the next pane in the split (Ctrl+O), routing input to its active tab.</summary>
+    private void CyclePane()
+    {
+        if (_workspace.Layout.Panes.Count <= 1)
+        {
+            return;
+        }
+
+        _workspace.Layout.CycleFocus();
+        if (FocusedTabs() is { } tabs)
+        {
+            _window.FocusControl(tabs);
+        }
+
+        // The input line follows focus: restore the newly focused window's draft.
+        _input.Input = _drafts.GetValueOrDefault(ActiveWindowId(), string.Empty);
+        RefreshTabTitles();
     }
 
     /// <summary>Closes the focused pane's active window (Ctrl+W). The main window can't be closed.</summary>

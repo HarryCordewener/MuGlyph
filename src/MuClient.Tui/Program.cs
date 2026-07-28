@@ -139,6 +139,6 @@ internal static class Program
         Console.WriteLine($"Config: {ConfigurationStore.DefaultPath}");
         Console.WriteLine("With no host, the first configured world is used (if any).");
         Console.WriteLine();
-        Console.WriteLine("In-app: Up/Down history · Ctrl+N next window · Ctrl+W close · Ctrl+Q quit.");
+        Console.WriteLine("In-app: Up/Down history · Ctrl+N next window · Ctrl+O next pane · Ctrl+W close · Ctrl+P palette · Ctrl+Q quit.");
     }
 }
