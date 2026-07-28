@@ -67,6 +67,10 @@ internal sealed class GmcpStats
 
     public bool HasData => _values.Count > 0;
 
+    /// <summary>Reads an integer stat (e.g. <c>hp</c>, <c>maxhp</c>), or null if absent/non-numeric.</summary>
+    public int? GetInt(string key) =>
+        _values.TryGetValue(key, out var value) && int.TryParse(value, out var n) ? n : null;
+
     /// <summary>A compact one-line summary, preferred vitals first.</summary>
     public string Summarize()
     {

@@ -38,7 +38,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
     private readonly ConsoleWindowSystem _system;
     private readonly Window _window;
-    private readonly MarkupControl _status;
+    private readonly MarkupControl _header;
+    private readonly MarkupControl _statusBar;
     private readonly TabControl _tabs;
     private readonly PromptControl _input;
     private readonly GmcpStats _stats = new();
@@ -65,7 +66,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             EnableAnimations: !headless);
         _system = new ConsoleWindowSystem(driver ?? new NetConsoleDriver(RenderMode.Buffer), options);
 
-        _status = Controls.Markup("Not connected.").StickyTop().Build();
+        _header = Controls.Markup(HeaderMarkup()).StickyTop().Build();
 
         var main = new MarkupControl(new List<string>());
         main.LinkClicked += (_, e) => OnLinkClicked(e.Url);
@@ -75,9 +76,11 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _tabs.TabPages[0].Tag = MainWindowId;
         _tabs.TabChanged += (_, e) => OnTabChanged(e.NewTab);
 
-        _input = Controls.Prompt(">").WithHistory(true).StickyBottom().Build();
+        _input = Controls.Prompt("›").WithHistory(true).StickyBottom().Build();
         _input.Entered += (_, text) => OnCommandEntered(text);
         _input.InputChanged += (_, text) => OnInputChanged(text);
+
+        _statusBar = Controls.Markup("[dim]not connected[/]").StickyBottom().Build();
 
         var bg = ToColor(_theme.Resolve(TerminalColor.Default, isBackground: true));
         var fg = ToColor(_theme.Resolve(TerminalColor.Default, isBackground: false));
@@ -86,9 +89,10 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             .WithTitle("MuGlyph — MU* client")
             .Maximized()
             .WithColors(fg, bg)
-            .AddControl(_status)
+            .AddControl(_header)
             .AddControl(_tabs)
             .AddControl(_input)
+            .AddControl(_statusBar)
             .Build();
 
         _palette = new CommandPalette(_system, BuildCatalog, () => _active?.SessionKey, DispatchCommand);
@@ -212,11 +216,10 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         _workspace.NoteActivity(chat.Id); // second unread line
 
-        _status.SetContent(new List<string>
-        {
-            $"[bold #00f5b7]Aardwolf[/]  [dim][[Connected]][/]  aardmud.org:4000  " +
-            $"Graphics: {_capabilities.Protocol}.  Ctrl+Q quit.",
-        });
+        // Sample vitals so the status-bar meters render in snapshots.
+        _stats.Update("Char.Vitals", "{\"hp\":312,\"maxhp\":400,\"mp\":180,\"maxmp\":330}");
+        _statusBar.SetContent(new List<string> { StatusBarMarkup("Corvid", "aetherfall.mux", 4201, "connected") });
+        _header.SetContent(new List<string> { HeaderMarkup() });
         _input.Input = "say hello there";
         RefreshTabTitles();
     }
@@ -571,21 +574,52 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _ = session.SetWindowSizeAsync(Math.Max(1, _window.Width), Math.Max(1, _window.Height));
     }
 
+    private void SetStatus(string markup) => _statusBar.SetContent(new List<string> { markup });
+
     private void UpdateStatus()
     {
         var session = _active;
         if (session is null)
         {
-            SetStatus($"Not connected.  Graphics: {_capabilities.Protocol}.  Ctrl+Q to quit.");
+            SetStatus($"[dim]not connected · Graphics {Escape(_capabilities.Protocol.ToString())} · ⌃P palette · ⌃Q quit[/]");
             return;
         }
 
-        var prompt = session.CurrentPrompt is { IsEmpty: false } p ? $"  {_formatter.ToMarkup(p)}" : string.Empty;
-        SetStatus($"{Escape(session.World.Name)}  [{session.State}]  {Escape($"{session.World.Host}:{session.World.Port}")}  " +
-                  $"Graphics: {_capabilities.Protocol}.  Ctrl+Q quit.{prompt}");
+        var character = session.Character?.Name ?? session.World.Name;
+        SetStatus(StatusBarMarkup(character, session.World.Host, session.World.Port, session.State.ToString().ToLowerInvariant()));
     }
 
-    private void SetStatus(string markup) => _status.SetContent(new List<string> { markup });
+    /// <summary>The design header row: the menu affordance on the left, hints on the right.</summary>
+    private string HeaderMarkup() =>
+        "[bold #00f5b7]☰ glyph·tui[/]   [dim]multi-world MU* workspace[/]" +
+        $"          [dim]◉ LOG off   Graphics {Escape(_capabilities.Protocol.ToString())}   ⌃P palette[/]";
+
+    /// <summary>
+    /// The design status bar: connection state, HP/EN meters (from GMCP vitals when present),
+    /// host, and the palette hint. Meters render via <see cref="Meters"/>.
+    /// </summary>
+    private string StatusBarMarkup(string character, string host, int port, string state)
+    {
+        var parts = new List<string> { $"[#00f5b7]●[/] [bold]{Escape(character)}[/] [dim]{Escape(state)}[/]" };
+
+        var hp = _stats.GetInt("hp");
+        var maxhp = _stats.GetInt("maxhp");
+        if (hp is not null && maxhp is > 0)
+        {
+            parts.Add($"[#ff5f5f]HP[/] [#ff5f5f]{Meters.Bar(hp.Value, maxhp.Value, 8)}[/] {hp}");
+        }
+
+        var mp = _stats.GetInt("mp");
+        var maxmp = _stats.GetInt("maxmp");
+        if (mp is not null && maxmp is > 0)
+        {
+            parts.Add($"[#5fafff]EN[/] [#5fafff]{Meters.Bar(mp.Value, maxmp.Value, 8)}[/] {mp}");
+        }
+
+        parts.Add($"[dim]{Escape($"{host}:{port}")}[/]");
+        parts.Add("[dim]⌃P palette[/]");
+        return string.Join("   ", parts);
+    }
 
     /// <summary>Marshals an action onto the UI thread (session events fire on background threads).</summary>
     private void OnUi(Action action) => _system.EnqueueOnUIThread(action);
