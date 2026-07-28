@@ -8,7 +8,7 @@ client: rich truecolor text, inline graphics, powerful automation, and full MU\*
 
 > **Status:** milestone **M1 delivered** (usable text client foundation) with substantial work
 > from M2–M4 in place — automation engines, inline-graphics subsystem, Lua scripting, and theming.
-> `MuClient.Core` is fully unit-tested (325 tests across the solution). See
+> `MuClient.Core` is fully unit-tested (342 tests across the solution). See
 > [`docs/PLAN.md`](docs/PLAN.md) for the full architecture and roadmap.
 
 ## Why a TUI

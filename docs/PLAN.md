@@ -105,7 +105,7 @@ Transport (TCP + SslStream TLS + IPv6); TelnetSession over TelnetNegotiationCore
 MoonSharp `ScriptHost`, scripting API, Lua-backed triggers/aliases, GMCP subscriptions from Lua, hot-reload.
 
 **M5 — Full parity & polish**
-**Spawns** (route matched output to named windows), **puppets**, **multiple input windows**, **MXP + Pueblo** parsers (clickable links/commands/`<SEND>`, inline images via graphics layer), MSDP, **BeipMU config importer**, Unicode emoji + `:)`→🙂, smooth-scroll/appearance options, theming, packaging (dotnet single-file for Windows + Linux; optional distro packages).
+**Spawns** (route matched output to named windows), **puppets**, **multiple input windows**, **MXP + Pueblo** parsers (clickable links/commands/`<SEND>`, inline images via graphics layer), MSDP, Unicode emoji + `:)`→🙂, smooth-scroll/appearance options, theming, packaging (dotnet single-file for Windows + Linux; optional distro packages).
 
 ### M5 progress (delivered)
 - **MXP** and **Pueblo** parsers in `Core` (`ILineParser`), selectable per world via
@@ -116,6 +116,17 @@ MoonSharp `ScriptHost`, scripting API, Lua-backed triggers/aliases, GMCP subscri
 - **In-TUI web view** (`MuClient.Web` + `WebView`): fetch a URL or follow an MXP/Pueblo/HTML link
   and read the page as styled, word-wrapped text with clickable in-pane navigation (AngleSharp →
   `StyledLine`s, reusing `SpanInteraction`). `<img>` renders as a labelled link today.
+
+### M5 UI design (in progress)
+Implementing the multi-pane workspace design (tmux-style pane tree hosting BeipMU-style windows),
+in reviewable steps landing on `Core` first (pure + tested), then the Terminal.Gui shell:
+- **Config schema** (`Core.Configuration`): worlds (servers) hold **characters**; automation lives
+  in shared, named **trigger sets** that characters opt into. Sessions key on `world.character` and
+  compose engines from the union of a character's sets. Versioned with `ConfigurationMigrator`.
+- **Workspace model** (`Core.Workspace`): a pure `WorkspaceLayout` split tree — `PaneNode`
+  (tab strip of window ids) / `SplitNode` (row/col) with focus, zoom, freeze, and the tmux-style
+  split / close / cycle / move / reorder operations, maintaining the no-empty-pane / no-lone-split
+  invariants. The Terminal.Gui view hosting renders from this model (next).
 
 ### Still open (M5+)
 - Dedicated **spawn windows** and **multiple input windows** (capture + routing hooks exist),
