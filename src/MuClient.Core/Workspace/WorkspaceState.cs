@@ -108,6 +108,12 @@ public sealed class WorkspaceState
             return new SplitNode(state.Direction, children, state.Sizes);
         }
 
-        return new PaneNode(state.Id ?? "p1", state.Tabs, state.ActiveIndex, state.Frozen);
+        if (string.Equals(state.Type, "pane", StringComparison.OrdinalIgnoreCase))
+        {
+            return new PaneNode(state.Id ?? "p1", state.Tabs, state.ActiveIndex, state.Frozen);
+        }
+
+        // A typo or a newer serialized node type shouldn't silently degrade to a pane and lose structure.
+        throw new InvalidOperationException($"Unknown layout node type: {state.Type}");
     }
 }

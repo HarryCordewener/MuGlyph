@@ -20,8 +20,10 @@ CELL_H = 18.0
 FONT_SIZE = 15
 PAD = 12
 # A little extra headroom above the first row so a focused header highlight or a tall Nerd glyph
-# isn't clipped against the top edge.
+# isn't clipped against the top edge, and clear breathing room below the last row so previews never
+# look cut off against the bottom edge.
 PAD_TOP = 20
+PAD_BOTTOM = 28
 DEFAULT_BG = (24, 24, 28)
 DEFAULT_FG = (238, 238, 238)
 
@@ -134,7 +136,7 @@ def hexc(rgb):
 
 def to_svg(grid, maxr, maxc):
     width = PAD * 2 + maxc * CELL_W
-    height = PAD_TOP + PAD + maxr * CELL_H
+    height = PAD_TOP + maxr * CELL_H + PAD_BOTTOM
     out = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width:.0f}" height="{height:.0f}" '
         f'viewBox="0 0 {width:.0f} {height:.0f}" font-family="{FONT_FAMILY}" '

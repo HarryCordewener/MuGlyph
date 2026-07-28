@@ -137,7 +137,8 @@ internal sealed class MarkupFormatter(Theme theme)
             tokens.Add("on " + Hex(bg));
         }
 
-        return tokens.Count == 0 ? null : $"[{string.Join(' ', tokens)}]";
+        // A foreground token is always present (the resolved fg above), so the tag is never empty.
+        return $"[{string.Join(' ', tokens)}]";
     }
 
     private static string? LinkFor(SpanInteraction? interaction) => interaction?.Kind switch
@@ -146,7 +147,9 @@ internal sealed class MarkupFormatter(Theme theme)
             PromptScheme + Uri.EscapeDataString(interaction.Target),
         InteractionKind.SendCommand =>
             SendScheme + Uri.EscapeDataString(interaction.Target),
-        InteractionKind.Hyperlink => interaction.Target,
+        // Remote MXP/Pueblo/HTML can put a ']' in a URL (legal in query/fragment); percent-encode the
+        // markup metacharacters so a server can't close the [link=…] tag early and inject markup.
+        InteractionKind.Hyperlink => interaction.Target.Replace("[", "%5B").Replace("]", "%5D"),
         _ => null,
     };
 

@@ -56,6 +56,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private readonly MarkupControl _railSpacer = new(new List<string>());
     private readonly Dictionary<string, TabControl> _paneTabs = new(StringComparer.Ordinal);
     private readonly PromptControl _input;
+    private readonly GridControl _inputRow;
     private readonly GmcpStats _stats = new();
     private readonly MuClient.Web.WebPageFetcher _fetcher = new();
 
@@ -158,7 +159,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             .WithColors(fg, bg)
             .AddControl(_header)
             .AddControl(_workspaceRow)
-            .AddControl(_input)
+            .AddControl(_inputRow)
             .AddControl(_statusBar)
             .Build();
 
@@ -471,6 +472,20 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         }
 
         buffer.Add(markup);
+
+        // Cap the UI-side buffer at the configured scrollback so a long session doesn't grow without
+        // bound (and freeze rebuilds stay cheap); shift the freeze point down by whatever we trimmed.
+        var cap = Math.Max(1, _config.ScrollbackLines);
+        if (buffer.Count > cap)
+        {
+            var excess = buffer.Count - cap;
+            buffer.RemoveRange(0, excess);
+            if (_freezePoints.TryGetValue(windowId, out var point))
+            {
+                _freezePoints[windowId] = Math.Max(0, point - excess);
+            }
+        }
+
         if (_panes.TryGetValue(windowId, out var control))
         {
             control.AppendLine(markup);
@@ -1454,9 +1469,14 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         if (ch is >= 'a' and <= 'j')
         {
-            _moveTargetPaneId = _moveLetters.FirstOrDefault(kv => kv.Value == ch).Key;
-            RebuildPaneArea();
-            SetStatus(MovePromptMarkup());
+            // Only retarget on a real match — an unmapped letter must not clear the current target.
+            var match = _moveLetters.FirstOrDefault(kv => kv.Value == ch);
+            if (match.Key is not null)
+            {
+                _moveTargetPaneId = match.Key;
+                RebuildPaneArea();
+                SetStatus(MovePromptMarkup());
+            }
         }
     }
 
@@ -1545,6 +1565,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         _panes.Remove(id);
         _drafts.Remove(id);
+        _lines.Remove(id);         // don't resurrect old scrollback if a same-id spawn reopens
+        _freezePoints.Remove(id);
         _workspace.CloseWindow(id);
         RebuildPaneArea();
     }
