@@ -1,7 +1,7 @@
 # Bundled screenshot font
 
-`MuGlyphMonoNerd.woff` is a **subset** of **JetBrainsMono Nerd Font Mono**, reduced to only the
-codepoint ranges MuGlyph's snapshots use (ASCII, Latin-1, box drawing, block/geometric shapes,
+`SharpMUTermMonoNerd.woff` is a **subset** of **JetBrainsMono Nerd Font Mono**, reduced to only the
+codepoint ranges SharpMUTerm's snapshots use (ASCII, Latin-1, box drawing, block/geometric shapes,
 arrows, and the Nerd Font icon PUA ranges). It is embedded as a base64 `@font-face` by
 `tools/ansi_frame_to_image.py` so the generated SVG/HTML shows the Nerd Font icons and box drawing
 on any viewer, with no font install required.

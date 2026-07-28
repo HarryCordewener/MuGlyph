@@ -1,4 +1,4 @@
--- Example MuGlyph Lua script.
+-- Example SharpMUTerm Lua script.
 -- Loaded per-world; the sandbox exposes: world, output, trigger, alias, timer, gmcp, log.
 -- (No io/os.execute/require — scripting is sandboxed.)
 

@@ -1,11 +1,11 @@
-# CLAUDE.md — MuGlyph agent brief
+# CLAUDE.md — SharpMUTerm agent brief
 
 Guidance for any Claude agent working in this repository. Read this first, then read
 [`docs/PLAN.md`](docs/PLAN.md) — the plan is the authoritative architecture + roadmap.
 
 ## What this project is
 
-**MuGlyph** is a cross-platform TUI **MU\*** (MUSH / MUCK / MUD) client in **C# / .NET 10**,
+**SharpMUTerm** is a cross-platform TUI **MU\*** (MUSH / MUCK / MUD) client in **C# / .NET 10**,
 targeting feature parity with [BeipMU](https://beipdev.github.io/BeipMU/), running inside
 GPU-accelerated terminals (Kitty, WezTerm, Ghostty) on **Windows and Linux**.
 
@@ -20,7 +20,7 @@ fallbacks) for inline images/maps.
   framework with split layouts, tabs, resizable/mouse-draggable windows, Spectre-style markup, and
   a **native Kitty graphics protocol** (+ Sixel/half-block) for inline images. Replaced Terminal.Gui
   v2 (which was prerelease with an `[Obsolete]` mid-migration API); the switch is contained to
-  `MuClient.Tui` because `MuClient.Core` is UI-agnostic.
+  `SharpMUTerm.Tui` because `SharpMUTerm.Core` is UI-agnostic.
 - **Scripting:** Lua via **MoonSharp** (pure-managed, sandboxed).
 - **Inline graphics:** in scope from day one (Kitty Unicode placeholders → Sixel → half-block).
 - **Protocols:** aim for all common MU\* protocols. GMCP/MSSP/CHARSET/NAWS/MTTS/EOR via
@@ -31,8 +31,8 @@ fallbacks) for inline images/maps.
 
 ## Repository state
 
-**M1 delivered, plus substantial M2–M4 work.** `MuGlyph.slnx` builds all ten projects on
-`net10.0`; the solution has **391 passing tests**. In place:
+**M1 delivered, plus substantial M2–M4 work.** `SharpMUTerm.slnx` builds all ten projects on
+`net10.0`; the solution has **514 passing tests**. In place:
 
 - **Core** — `AnsiParser` (SGR 16/256/truecolor), styled-line + `ScrollbackBuffer` model,
   `TcpTransport` (TLS + IPv6), `TelnetSession` (wraps TelnetNegotiationCore **2.5.3**),
@@ -70,30 +70,30 @@ fallbacks) for inline images/maps.
 
 ## Architecture rule (non-negotiable)
 
-`MuClient.Core` stays **UI-agnostic and fully unit-testable**. All transport, telnet, parsing
+`SharpMUTerm.Core` stays **UI-agnostic and fully unit-testable**. All transport, telnet, parsing
 (ANSI/MXP/Pueblo), GMCP/MSDP routing, scrollback, and trigger/alias/macro engines live there.
-SharpConsoleUI is referenced **only** from `MuClient.Tui`.
+SharpConsoleUI is referenced **only** from `SharpMUTerm.Tui`.
 
 Planned solution layout:
 
 | Project | Responsibility |
 |---|---|
-| `MuClient.Core` | Transport, telnet, ANSI/MXP/Pueblo parsers, GMCP/MSDP routing, scrollback, engines, logging (no UI deps) |
-| `MuClient.Graphics` | Kitty graphics protocol, capability probe, Sixel + half-block fallbacks, `GraphicsView` |
-| `MuClient.Scripting` | MoonSharp host + scripting API |
-| `MuClient.Tui` | SharpConsoleUI application |
+| `SharpMUTerm.Core` | Transport, telnet, ANSI/MXP/Pueblo parsers, GMCP/MSDP routing, scrollback, engines, logging (no UI deps) |
+| `SharpMUTerm.Graphics` | Kitty graphics protocol, capability probe, Sixel + half-block fallbacks, `GraphicsView` |
+| `SharpMUTerm.Scripting` | MoonSharp host + scripting API |
+| `SharpMUTerm.Tui` | SharpConsoleUI application |
 | `*.Tests` (Core, Graphics, Scripting, Web, Tui) | TUnit |
 
 ## Milestone M1 — first task (delivered)
 
 Kept for context; **M1 is done** (see *Repository state* above). As originally scoped:
 
-1. Create `MuGlyph.slnx` with the projects above targeting `net10.0`, plus the TUnit test projects.
+1. Create `SharpMUTerm.slnx` with the projects above targeting `net10.0`, plus the TUnit test projects.
 2. Add NuGet references (see version notes below).
 3. Runnable stub: connect over TCP (+ optional TLS via `SslStream`, IPv6-capable), pipe received
    bytes through a first-pass `AnsiParser` (SGR: 16 / 256 / 24-bit color), render colored output
    in a SharpConsoleUI window with an input line + history.
-4. Unit-test `AnsiParser` and the telnet-session wrapper in `MuClient.Core.Tests`.
+4. Unit-test `AnsiParser` and the telnet-session wrapper in `SharpMUTerm.Core.Tests`.
 
 ## Dependency notes / traps
 
@@ -112,7 +112,8 @@ Kept for context; **M1 is done** (see *Repository state* above). As originally s
 
 ## Verification
 
-- Primary signal: `dotnet build` + `dotnet test`. Keep coverage in `MuClient.Core.Tests`
+- Primary signal: `dotnet build` + `dotnet run --project <testproj>` for each test project
+  (see the TUnit/MTP note above — `dotnet test` does **not** work here). Keep coverage in `SharpMUTerm.Core.Tests`
   (ANSI/SGR parser, telnet round-trips, engines).
 - A headless sandbox **cannot** visually verify a TUI and **cannot** render Kitty graphics.
   Treat the graphics layer as build-verified + capability-probed, never visually confirmed;

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>SharpMUTerm.Core.Tests</RootNamespace>
+    <AssemblyName>SharpMUTerm.Core.Tests</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SharpMUTerm.Core\SharpMUTerm.Core.csproj" />
+    <ProjectReference Include="..\..\src\SharpMUTerm.Scripting\SharpMUTerm.Scripting.csproj" />
+  </ItemGroup>
+
+</Project>

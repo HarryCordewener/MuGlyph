@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>SharpMUTerm.Tui</RootNamespace>
+    <AssemblyName>sharpmuterm</AssemblyName>
+
+    <!--
+      Runtimes we ship single-file builds for. Declaring them here is build-safe (only used on
+      `dotnet publish -r <rid>`); the single-file/self-contained knobs live in the publish
+      profiles under Properties/PublishProfiles so they never affect `dotnet build`/`run`.
+      See docs/PACKAGING.md.
+    -->
+    <RuntimeIdentifiers>linux-x64;linux-arm64;win-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpConsoleUI" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SharpMUTerm.Tui.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharpMUTerm.Core\SharpMUTerm.Core.csproj" />
+    <ProjectReference Include="..\SharpMUTerm.Graphics\SharpMUTerm.Graphics.csproj" />
+    <ProjectReference Include="..\SharpMUTerm.Scripting\SharpMUTerm.Scripting.csproj" />
+    <ProjectReference Include="..\SharpMUTerm.Web\SharpMUTerm.Web.csproj" />
+  </ItemGroup>
+
+</Project>

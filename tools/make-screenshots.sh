@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Generate MuGlyph UI screenshots headlessly — no terminal required.
+# Generate SharpMUTerm UI screenshots headlessly — no terminal required.
 #
-# Renders demo frames with `muglyph --snapshot` (SharpConsoleUI's HeadlessConsoleDriver)
+# Renders demo frames with `sharpmuterm --snapshot` (SharpConsoleUI's HeadlessConsoleDriver)
 # and converts each ANSI frame to an SVG (and HTML) with tools/ansi_frame_to_image.py.
 # Runs anywhere the .NET build runs, including CI.
 #
@@ -12,10 +12,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/docs/screenshots}"
 mkdir -p "$OUT"
 
-echo "Building muglyph…"
-dotnet build "$ROOT/src/MuClient.Tui/MuClient.Tui.csproj" -c Release >/dev/null
+echo "Building sharpmuterm…"
+dotnet build "$ROOT/src/SharpMUTerm.Tui/SharpMUTerm.Tui.csproj" -c Release >/dev/null
 
-DLL="$ROOT/src/MuClient.Tui/bin/Release/net10.0/muglyph.dll"
+DLL="$ROOT/src/SharpMUTerm.Tui/bin/Release/net10.0/sharpmuterm.dll"
 
 render() {
   local name="$1" size="$2"
@@ -25,6 +25,6 @@ render() {
   python3 "$ROOT/tools/ansi_frame_to_image.py" "$OUT/$name.ansi" "$OUT/$name.html"
 }
 
-render muglyph-demo 160x48
+render sharpmuterm-demo 160x48
 
 echo "Done. See $OUT/*.svg"

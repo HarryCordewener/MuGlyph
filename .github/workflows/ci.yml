@@ -28,39 +28,39 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore
-        run: dotnet restore MuGlyph.slnx
+        run: dotnet restore SharpMUTerm.slnx
 
       - name: Build
-        run: dotnet build MuGlyph.slnx -c Release --no-restore
+        run: dotnet build SharpMUTerm.slnx -c Release --no-restore
 
       # TUnit runs on Microsoft.Testing.Platform; execute each test project directly
       # (the classic `dotnet test`/VSTest path is not used by MTP on .NET 10).
       - name: Test — Core
         shell: bash
-        run: dotnet run -c Release --no-build --project tests/MuClient.Core.Tests/MuClient.Core.Tests.csproj
+        run: dotnet run -c Release --no-build --project tests/SharpMUTerm.Core.Tests/SharpMUTerm.Core.Tests.csproj
 
       - name: Test — Graphics
         shell: bash
-        run: dotnet run -c Release --no-build --project tests/MuClient.Graphics.Tests/MuClient.Graphics.Tests.csproj
+        run: dotnet run -c Release --no-build --project tests/SharpMUTerm.Graphics.Tests/SharpMUTerm.Graphics.Tests.csproj
 
       - name: Test — Scripting
         shell: bash
-        run: dotnet run -c Release --no-build --project tests/MuClient.Scripting.Tests/MuClient.Scripting.Tests.csproj
+        run: dotnet run -c Release --no-build --project tests/SharpMUTerm.Scripting.Tests/SharpMUTerm.Scripting.Tests.csproj
 
       - name: Test — Web
         shell: bash
-        run: dotnet run -c Release --no-build --project tests/MuClient.Web.Tests/MuClient.Web.Tests.csproj
+        run: dotnet run -c Release --no-build --project tests/SharpMUTerm.Web.Tests/SharpMUTerm.Web.Tests.csproj
 
       - name: Test — Tui
         shell: bash
-        run: dotnet run -c Release --no-build --project tests/MuClient.Tui.Tests/MuClient.Tui.Tests.csproj
+        run: dotnet run -c Release --no-build --project tests/SharpMUTerm.Tui.Tests/SharpMUTerm.Tui.Tests.csproj
 
       # End-to-end guard: the headless snapshot must render the workspace (rail, worlds, command
       # surface) and exit — catches both UI-render regressions and any return of the stdin-block hang.
       - name: Smoke — headless snapshot
         shell: bash
         run: |
-          dotnet run -c Release --no-build --project src/MuClient.Tui/MuClient.Tui.csproj -- \
+          dotnet run -c Release --no-build --project src/SharpMUTerm.Tui/SharpMUTerm.Tui.csproj -- \
             --snapshot --size 120x30 --out snapshot.ans </dev/null
           test -s snapshot.ans || { echo "snapshot produced no output"; exit 1; }
           for token in CONNECTIONS Aetherfall Corvid palette; do

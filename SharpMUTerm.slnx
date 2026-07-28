@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SharpMUTerm.Core/SharpMUTerm.Core.csproj" />
+    <Project Path="src/SharpMUTerm.Graphics/SharpMUTerm.Graphics.csproj" />
+    <Project Path="src/SharpMUTerm.Scripting/SharpMUTerm.Scripting.csproj" />
+    <Project Path="src/SharpMUTerm.Tui/SharpMUTerm.Tui.csproj" />
+    <Project Path="src/SharpMUTerm.Web/SharpMUTerm.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SharpMUTerm.Core.Tests/SharpMUTerm.Core.Tests.csproj" />
+    <Project Path="tests/SharpMUTerm.Graphics.Tests/SharpMUTerm.Graphics.Tests.csproj" />
+    <Project Path="tests/SharpMUTerm.Scripting.Tests/SharpMUTerm.Scripting.Tests.csproj" />
+    <Project Path="tests/SharpMUTerm.Tui.Tests/SharpMUTerm.Tui.Tests.csproj" />
+    <Project Path="tests/SharpMUTerm.Web.Tests/SharpMUTerm.Web.Tests.csproj" />
+  </Folder>
+</Solution>
