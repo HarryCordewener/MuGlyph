@@ -38,9 +38,11 @@ internal static class CommandSurfaceRenderer
 
     /// <summary>
     /// Builds the markup lines: a context header, then each group's header and its rows. The row at
-    /// flattened index <paramref name="selected"/> is highlighted.
+    /// flattened index <paramref name="selected"/> is highlighted. When <paramref name="width"/> &gt; 0
+    /// the selected row's highlight bar is padded to that visible width so it spans the full surface.
     /// </summary>
-    public static List<string> Render(IReadOnlyList<RankedCommand> ranked, int selected, int total, string? context)
+    public static List<string> Render(
+        IReadOnlyList<RankedCommand> ranked, int selected, int total, string? context, int width = 0)
     {
         var lines = new List<string>
         {
@@ -60,7 +62,7 @@ internal static class CommandSurfaceRenderer
             lines.Add($"[dim]├ {label}[/]");
             foreach (var r in inGroup)
             {
-                lines.Add(Row(r.Item, flatIndex == selected));
+                lines.Add(Row(r.Item, flatIndex == selected, width));
                 flatIndex++;
             }
         }
@@ -73,21 +75,74 @@ internal static class CommandSurfaceRenderer
         return lines;
     }
 
-    private static string Row(CommandItem item, bool selected)
+    /// <summary>The visible width of the widest rendered line — used to size the surface to its content.</summary>
+    public static int MaxWidth(IReadOnlyList<string> lines)
     {
-        var sb = new StringBuilder();
-        var title = Escape(item.Title);
-        var subtitle = item.Subtitle is null ? string.Empty : $"   [dim]{Escape(item.Subtitle)}[/]";
-        if (selected)
+        var max = 0;
+        foreach (var line in lines)
         {
-            sb.Append("[#18181c on #00f5b7] ▸ ").Append(title).Append(" [/]").Append(subtitle);
-        }
-        else
-        {
-            sb.Append("   ").Append(title).Append(subtitle);
+            max = Math.Max(max, VisibleLength(line));
         }
 
-        return sb.ToString();
+        return max;
+    }
+
+    private static string Row(CommandItem item, bool selected, int width)
+    {
+        var title = Escape(item.Title);
+        if (!selected)
+        {
+            var sub = item.Subtitle is null ? string.Empty : $"   [dim]{Escape(item.Subtitle)}[/]";
+            return "   " + title + sub;
+        }
+
+        // Selected: one continuous accent bar across the whole row (title + subtitle), padded to the
+        // surface width so the highlight reads as a full-width band rather than hugging the title.
+        var subtitle = item.Subtitle is null ? string.Empty : $"   {Escape(item.Subtitle)}";
+        var text = $" ▸ {title}{subtitle} ";
+        var pad = width > VisibleLength(text) ? new string(' ', width - VisibleLength(text)) : string.Empty;
+        return $"[#18181c on #00f5b7]{text}{pad}[/]";
+    }
+
+    /// <summary>Visible length of a markup string: strips <c>[…]</c> tags, counts <c>[[</c>/<c>]]</c> as one.</summary>
+    private static int VisibleLength(string markup)
+    {
+        var length = 0;
+        var i = 0;
+        while (i < markup.Length)
+        {
+            var c = markup[i];
+            if (c == '[')
+            {
+                if (i + 1 < markup.Length && markup[i + 1] == '[')
+                {
+                    length++;
+                    i += 2;
+                    continue;
+                }
+
+                var close = markup.IndexOf(']', i);
+                if (close < 0)
+                {
+                    return length + (markup.Length - i);
+                }
+
+                i = close + 1;
+                continue;
+            }
+
+            if (c == ']' && i + 1 < markup.Length && markup[i + 1] == ']')
+            {
+                length++;
+                i += 2;
+                continue;
+            }
+
+            length++;
+            i++;
+        }
+
+        return length;
     }
 
     private static string Escape(string text) => text.Replace("[", "[[").Replace("]", "]]");

@@ -25,6 +25,7 @@ internal sealed class CommandPalette
     private IReadOnlyList<CommandItem> _ordered = Array.Empty<CommandItem>();
     private int _total;
     private int _selected;
+    private int _contentWidth;
 
     public CommandPalette(
         ConsoleWindowSystem system,
@@ -62,14 +63,15 @@ internal sealed class CommandPalette
 
         _results = new MarkupControl(new List<string>());
 
-        // Size the surface to fit the full (unfiltered) catalog so nothing scrolls — search row + all
-        // rendered command lines + the 1-cell top/bottom border — capped to the usable desktop.
+        // Size the surface to hug the full (unfiltered) catalog so nothing scrolls and there's no empty
+        // gutter: fit height to the row count and width to the widest row, both capped to the desktop.
         var catalog = _catalog();
         var initial = CommandSurfaceRenderer.Render(
             CommandMatcher.Rank(string.Empty, catalog), 0, catalog.Count, _context());
         var desktop = _system.DesktopDimensions;
         var height = Math.Clamp(initial.Count + 3, 6, Math.Max(6, desktop.Height - 2));
-        var width = Math.Min(66, Math.Max(40, desktop.Width - 4));
+        _contentWidth = Math.Clamp(CommandSurfaceRenderer.MaxWidth(initial) + 1, 32, Math.Max(32, desktop.Width - 6));
+        var width = _contentWidth + 2; // + the 1-cell left/right border
 
         // A clean overlay: single border, but no window chrome — no minimize/maximize/close buttons
         // (HideTitleButtons) and no resize grip (Resizable(false)); Esc closes it.
@@ -102,7 +104,7 @@ internal sealed class CommandPalette
     }
 
     private void Paint() =>
-        _results?.SetContent(CommandSurfaceRenderer.Render(_ranked, _selected, _total, _context()));
+        _results?.SetContent(CommandSurfaceRenderer.Render(_ranked, _selected, _total, _context(), _contentWidth));
 
     private void Move(int delta)
     {
