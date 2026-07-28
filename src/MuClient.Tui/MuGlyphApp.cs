@@ -11,6 +11,7 @@ using SharpConsoleUI.Configuration;
 using SharpConsoleUI.Controls;
 using SharpConsoleUI.Drivers;
 using SharpConsoleUI.Events;
+using SharpConsoleUI.Layout;
 using SColor = SharpConsoleUI.Color;
 
 namespace MuClient.Tui;
@@ -35,11 +36,13 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private readonly Workspace _workspace = new(MainWindowId, "Main");
     private readonly Dictionary<string, MarkupControl> _panes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _drafts = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _connectedKeys = new(StringComparer.Ordinal);
 
     private readonly ConsoleWindowSystem _system;
     private readonly Window _window;
     private readonly MarkupControl _header;
     private readonly MarkupControl _statusBar;
+    private readonly MarkupControl _rail;
     private readonly TabControl _tabs;
     private readonly PromptControl _input;
     private readonly GmcpStats _stats = new();
@@ -47,8 +50,18 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
     private readonly CommandPalette _palette;
 
+    /// <summary>Per-world accents when a world hasn't set its own, keyed by position.</summary>
+    private static readonly TerminalColor[] AccentPalette =
+    {
+        TerminalColor.FromRgb(0x00, 0xf5, 0xb7), // teal
+        TerminalColor.FromRgb(0xff, 0x9f, 0x1c), // amber
+        TerminalColor.FromRgb(0x9d, 0x7c, 0xff), // violet
+        TerminalColor.FromRgb(0x5f, 0xaf, 0xff), // sky
+    };
+
     private WorldSession? _active;
     private WorldDefinition? _pendingWorld;
+    private string? _demoActiveKey;
 
     public MuGlyphApp(AppConfiguration config, TerminalCapabilities capabilities, IConsoleDriver? driver = null)
     {
@@ -76,6 +89,16 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _tabs.TabPages[0].Tag = MainWindowId;
         _tabs.TabChanged += (_, e) => OnTabChanged(e.NewTab);
 
+        // The connection rail (worlds → characters → windows) sits left of the pane area, joined by
+        // a splitter. RailModel/RailRenderer keep the projection + markup tested; this just hosts it.
+        _rail = new MarkupControl(new List<string>());
+        var workspaceRow = Controls.HorizontalGrid()
+            .WithVerticalAlignment(VerticalAlignment.Fill)
+            .Column(c => c.Width(30).Add(_rail))
+            .Column(c => c.Flex(1).Add(_tabs))
+            .WithSplitterAfter(0)
+            .Build();
+
         _input = Controls.Prompt("›").WithHistory(true).StickyBottom().Build();
         _input.Entered += (_, text) => OnCommandEntered(text);
         _input.InputChanged += (_, text) => OnInputChanged(text);
@@ -90,7 +113,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             .Maximized()
             .WithColors(fg, bg)
             .AddControl(_header)
-            .AddControl(_tabs)
+            .AddControl(workspaceRow)
             .AddControl(_input)
             .AddControl(_statusBar)
             .Build();
@@ -148,6 +171,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     /// <summary>Populates the windows with representative MU* content for snapshots/demos.</summary>
     private void LoadDemoScene()
     {
+        SeedDemoWorlds();
+
         if (_workspace.FindWindow(MainWindowId) is { } mainWindow)
         {
             mainWindow.Title = "Aardwolf";
@@ -200,6 +225,45 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _header.SetContent(new List<string> { HeaderMarkup() });
         _input.Input = "say hello there";
         RefreshTabTitles();
+    }
+
+    /// <summary>
+    /// Seeds a couple of demo worlds/characters (with accents) so the rail, command surface, and
+    /// status bar have representative content in headless snapshots. Only runs when no worlds are
+    /// configured, so it never masks a real config.
+    /// </summary>
+    private void SeedDemoWorlds()
+    {
+        if (_config.Worlds.Count > 0)
+        {
+            _demoActiveKey = $"{_config.Worlds[0].Name}.{_config.Worlds[0].Characters.FirstOrDefault()?.Name}";
+            return;
+        }
+
+        _config.Worlds.Add(new WorldDefinition
+        {
+            Name = "Aetherfall",
+            Host = "aetherfall.mux",
+            Port = 4201,
+            Accent = AccentPalette[0],
+            Characters =
+            {
+                new CharacterDefinition { Name = "Corvid" },
+                new CharacterDefinition { Name = "Rookery" },
+            },
+        });
+
+        _config.Worlds.Add(new WorldDefinition
+        {
+            Name = "Grapevine",
+            Host = "grapevine.haus",
+            Port = 4000,
+            Accent = AccentPalette[1],
+            Characters = { new CharacterDefinition { Name = "Thistle" } },
+        });
+
+        _demoActiveKey = "Aetherfall.Corvid";
+        _connectedKeys.Add("Aetherfall.Corvid");
     }
 
     private static StyledSpan Link(string command) => new(
@@ -322,6 +386,73 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
     /// <summary>The window id of the visible tab (the input line belongs to it).</summary>
     private string ActiveWindowId() => _workspace.Layout.FocusedPane.ActiveTab ?? MainWindowId;
+
+    /// <summary>The <c>world.character</c> key of the character whose windows the rail expands.</summary>
+    private string? ActiveCharacterKey() => _active?.SessionKey ?? _demoActiveKey;
+
+    /// <summary>
+    /// Projects live config + workspace state into rail rows: each world (with an accent), its
+    /// characters (connected dot, active marker), and — under the active character — the workspace's
+    /// windows with their unread/unsent/pane detail. Ranking/markup stays in the tested Core/renderer.
+    /// </summary>
+    private IReadOnlyList<RailRow> BuildRail()
+    {
+        var activeKey = ActiveCharacterKey();
+
+        // Friendly pane labels for the window rows: the first pane is "main", later panes number up.
+        var panes = _workspace.Layout.Panes;
+        var paneLabels = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (var i = 0; i < panes.Count; i++)
+        {
+            paneLabels[panes[i].Id] = i == 0 ? "main" : $"pane {i + 1}";
+        }
+
+        var worlds = new List<RailWorld>();
+        var index = 0;
+        foreach (var world in _config.Worlds)
+        {
+            var accent = world.Accent.Kind == TerminalColorKind.Default
+                ? AccentPalette[index % AccentPalette.Length]
+                : world.Accent;
+
+            var characters = new List<RailCharacter>();
+            foreach (var character in world.Characters)
+            {
+                var key = $"{world.Name}.{character.Name}";
+                var active = key == activeKey;
+                var windows = active ? BuildRailWindows(paneLabels) : Array.Empty<RailWindow>();
+                characters.Add(new RailCharacter(
+                    character.Name,
+                    key,
+                    Connected: _connectedKeys.Contains(key),
+                    Active: active,
+                    Unread: windows.Sum(w => w.Unread),
+                    windows));
+            }
+
+            worlds.Add(new RailWorld(world.Name, world.Host, world.Port, accent, characters));
+            index++;
+        }
+
+        return RailModel.Build(worlds);
+    }
+
+    /// <summary>The active character's windows, in registration order, as rail window rows.</summary>
+    private IReadOnlyList<RailWindow> BuildRailWindows(IReadOnlyDictionary<string, string> paneLabels)
+    {
+        var windows = new List<RailWindow>();
+        foreach (var window in _workspace.Windows)
+        {
+            var pane = _workspace.Layout.FindWindow(window.Id);
+            var label = pane is not null ? paneLabels.GetValueOrDefault(pane.Id) : null;
+            windows.Add(new RailWindow(window.Title, label, window.Unread, window.HasUnsentInput, Closed: pane is null));
+        }
+
+        return windows;
+    }
+
+    /// <summary>Repaints the rail from current state.</summary>
+    private void RefreshRail() => _rail.SetContent(RailRenderer.Render(BuildRail()));
 
     /// <summary>Builds the ⌃P command catalog from live config + workspace state.</summary>
     private IReadOnlyList<CommandItem> BuildCatalog()
@@ -537,6 +668,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
                 page.Title = TabTitles.For(window);
             }
         }
+
+        RefreshRail();
     }
 
     private void ReportWindowSize()
@@ -563,8 +696,22 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             return;
         }
 
+        // Keep the rail's connected dot in sync with the live session state.
+        if (session.SessionKey is { } key)
+        {
+            if (session.IsConnected)
+            {
+                _connectedKeys.Add(key);
+            }
+            else
+            {
+                _connectedKeys.Remove(key);
+            }
+        }
+
         var character = session.Character?.Name ?? session.World.Name;
         SetStatus(StatusBarMarkup(character, session.World.Host, session.World.Port, session.State.ToString().ToLowerInvariant()));
+        RefreshRail();
     }
 
     /// <summary>The design header row: the menu affordance on the left, hints on the right.</summary>
