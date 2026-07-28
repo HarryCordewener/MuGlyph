@@ -62,12 +62,25 @@ internal sealed class CommandPalette
 
         _results = new MarkupControl(new List<string>());
 
+        // Size the surface to fit the full (unfiltered) catalog so nothing scrolls — search row + all
+        // rendered command lines + the 1-cell top/bottom border — capped to the usable desktop.
+        var catalog = _catalog();
+        var initial = CommandSurfaceRenderer.Render(
+            CommandMatcher.Rank(string.Empty, catalog), 0, catalog.Count, _context());
+        var desktop = _system.DesktopDimensions;
+        var height = Math.Clamp(initial.Count + 3, 6, Math.Max(6, desktop.Height - 2));
+        var width = Math.Min(66, Math.Max(40, desktop.Width - 4));
+
+        // A clean overlay: single border, but no window chrome — no minimize/maximize/close buttons
+        // (HideTitleButtons) and no resize grip (Resizable(false)); Esc closes it.
         _window = new WindowBuilder(_system)
             .WithTitle("Command surface")
             .AsModal()
             .Centered()
             .WithBorderStyle(BorderStyle.Single)
-            .WithSize(66, 18)
+            .HideTitleButtons()
+            .Resizable(false)
+            .WithSize(width, height)
             .AddControl(_search)
             .AddControl(_results)
             .OnClosed((_, _) => Reset())
