@@ -48,6 +48,31 @@ public class TabTitlesTests
     }
 
     [Test]
+    public async Task ChildWindow_WithOwner_PrefixesTheConnectionOwner()
+    {
+        var window = new WorkspaceWindow("w1", "Chat", WindowKind.Spawn) { OwnerLabel = "Corvid" };
+        await Assert.That(TabTitles.For(window)).IsEqualTo("Corvid - Chat");
+    }
+
+    [Test]
+    public async Task ChildWindow_OwnerPrefixPrecedesBadges()
+    {
+        var ws = new Workspace();
+        var chat = ws.RouteSpawn("Chat"); // unread 1, background
+        chat.OwnerLabel = "Corvid";
+        ws.SetUnsentInput(chat.Id, true);
+        await Assert.That(TabTitles.For(chat)).IsEqualTo($"Corvid - Chat (1) {Glyphs.Draft}");
+    }
+
+    [Test]
+    public async Task MainWindow_IsNeverPrefixed()
+    {
+        var main = new Workspace(mainWindowId: "main", mainTitle: "main").FindWindow("main")!;
+        main.OwnerLabel = "Corvid"; // even if set, a main window shows no prefix
+        await Assert.That(TabTitles.For(main)).IsEqualTo("main");
+    }
+
+    [Test]
     public async Task DifferentCharacter_AppendsACrossMarker()
     {
         var window = new WorkspaceWindow("w1", "pages", WindowKind.Spawn, sessionKey: "Aetherfall.Rookery");

@@ -19,6 +19,9 @@ CELL_W = 8.4
 CELL_H = 18.0
 FONT_SIZE = 15
 PAD = 12
+# A little extra headroom above the first row so a focused header highlight or a tall Nerd glyph
+# isn't clipped against the top edge.
+PAD_TOP = 20
 DEFAULT_BG = (24, 24, 28)
 DEFAULT_FG = (238, 238, 238)
 
@@ -131,13 +134,14 @@ def hexc(rgb):
 
 def to_svg(grid, maxr, maxc):
     width = PAD * 2 + maxc * CELL_W
-    height = PAD * 2 + maxr * CELL_H
+    height = PAD_TOP + PAD + maxr * CELL_H
     out = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width:.0f}" height="{height:.0f}" '
         f'viewBox="0 0 {width:.0f} {height:.0f}" font-family="{FONT_FAMILY}" '
         f'font-size="{FONT_SIZE}">',
         font_face_style(),
-        f'<rect width="{width:.0f}" height="{height:.0f}" rx="8" fill="{hexc(DEFAULT_BG)}"/>',
+        # Square corners — a terminal frame, no rounding.
+        f'<rect width="{width:.0f}" height="{height:.0f}" fill="{hexc(DEFAULT_BG)}"/>',
     ]
     # Background rects: merge horizontal runs of equal bg per row.
     for r in range(1, maxr + 1):
@@ -153,14 +157,14 @@ def to_svg(grid, maxr, maxc):
                 c += 1
             if bg != DEFAULT_BG:
                 x = PAD + (start - 1) * CELL_W
-                y = PAD + (r - 1) * CELL_H
+                y = PAD_TOP + (r - 1) * CELL_H
                 out.append(
                     f'<rect x="{x:.1f}" y="{y:.1f}" width="{(c - start) * CELL_W:.1f}" '
                     f'height="{CELL_H:.1f}" fill="{hexc(bg)}"/>'
                 )
     # Text: merge horizontal runs of equal fg/bold per row.
     for r in range(1, maxr + 1):
-        y = PAD + (r - 1) * CELL_H + FONT_SIZE - 1
+        y = PAD_TOP + (r - 1) * CELL_H + FONT_SIZE - 1
         c = 1
         while c <= maxc:
             cell = grid.get((r, c))

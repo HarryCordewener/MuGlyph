@@ -19,6 +19,14 @@ internal static class TabTitles
     public static string For(WorkspaceWindow window, string? focusedCharacterKey = null, bool isActive = false)
     {
         ArgumentNullException.ThrowIfNull(window);
+
+        // A child window (spawn/aux) carries its owning connection as an "Owner - " prefix so it stays
+        // traceable to its character once dragged into another pane. A character's own main window
+        // needs no prefix — the focused-character context already identifies it.
+        var owner = window.Kind != WindowKind.Main && !string.IsNullOrEmpty(window.OwnerLabel)
+            ? window.OwnerLabel + " - "
+            : string.Empty;
+
         var unread = window.Unread > 0 ? $" ({window.Unread})" : string.Empty;
         var pen = window.HasUnsentInput ? $" {Glyphs.Draft}" : string.Empty;
 
@@ -31,6 +39,6 @@ internal static class TabTitles
             : string.Empty;
 
         var close = isActive ? $" {Glyphs.Close}" : string.Empty;
-        return window.Title + unread + pen + cross + close;
+        return owner + window.Title + unread + pen + cross + close;
     }
 }

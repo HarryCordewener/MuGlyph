@@ -205,6 +205,14 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             RebuildPaneArea();
         }
 
+        // Split the workspace: Aardwolf (main) stays in the left pane, the Chat window moves to the
+        // new right pane (split moves the focused pane's non-active tabs across, per the design).
+        if (string.Equals(view, "split", StringComparison.OrdinalIgnoreCase))
+        {
+            PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitRight);
+            RebuildPaneArea();
+        }
+
         // Freeze the focused pane so the pinned-scrollback / live-tail split + FROZEN bar render, then
         // feed a couple of lines that land in the live tail below the bar.
         if (string.Equals(view, "freeze", StringComparison.OrdinalIgnoreCase))
@@ -278,7 +286,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         if (_workspace.FindWindow(MainWindowId) is { } mainWindow)
         {
-            mainWindow.Title = "Aardwolf";
+            mainWindow.Title = "main"; // the character's primary window (design labels it "main")
         }
 
         var parser = new AnsiParser();
@@ -314,6 +322,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         // A spawn window fed by a "Chat" trigger target, left in the background with unread.
         var chat = _workspace.RouteSpawn("Chat");
         chat.CapturePattern = @"^\[Chat\]";
+        chat.OwnerLabel = ActiveWorld()?.Character; // the connection owner (Corvid) → "Corvid - Chat"
         PaneContentFor(chat.Id, chat.Title);
         var chatParser = new AnsiParser();
         foreach (var line in chatParser.Feed("\x1b[1;35m[Chat]\x1b[0m Rivane: anyone up for the crypt run?\n"))
@@ -551,6 +560,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         var existed = _workspace.FindWindow(Workspace.SpawnWindowId(target)) is not null;
         var window = _workspace.RouteSpawn(target, _active?.SessionKey);
         window.CapturePattern ??= CaptureFor(target); // label the pane with the trigger that feeds it
+        window.OwnerLabel ??= _active?.Character?.Name ?? _workspace.FindWindow(MainWindowId)?.Title;
         PaneContentFor(window.Id, window.Title); // ensure the live control exists before buffering
         AppendWindowLine(window.Id, _formatter.ToMarkup(line, Stamp()));
 
