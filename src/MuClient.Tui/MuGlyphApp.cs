@@ -1,3 +1,4 @@
+using MuClient.Core.Commands;
 using MuClient.Core.Configuration;
 using MuClient.Core.Session;
 using MuClient.Core.Text;
@@ -42,6 +43,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private readonly PromptControl _input;
     private readonly GmcpStats _stats = new();
     private readonly MuClient.Web.WebPageFetcher _fetcher = new();
+
+    private readonly CommandPalette _palette;
 
     private WorldSession? _active;
     private WorldDefinition? _pendingWorld;
@@ -88,12 +91,15 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             .AddControl(_input)
             .Build();
 
+        _palette = new CommandPalette(_system, BuildCatalog, () => _active?.SessionKey, DispatchCommand);
+
         _window.OnResize += (_, _) => ReportWindowSize();
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.Q, () => _system.RequestExit(0));
         // Next window (Ctrl+N, plus Ctrl+Tab where the terminal reports it) and close window (Ctrl+W).
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.N, NextWindow);
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.Tab, NextWindow);
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.W, CloseActiveWindow);
+        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.P, () => _palette.Toggle());
         _system.AddWindow(_window);
     }
 
@@ -335,6 +341,81 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
     /// <summary>The window id of the visible tab (the input line belongs to it).</summary>
     private string ActiveWindowId() => _workspace.Layout.FocusedPane.ActiveTab ?? MainWindowId;
+
+    /// <summary>Builds the ⌃P command catalog from live config + workspace state.</summary>
+    private IReadOnlyList<CommandItem> BuildCatalog()
+    {
+        var context = new CommandContext(
+            LoggingOn: false,
+            Zoomed: _workspace.Layout.ZoomedPaneId is not null,
+            Frozen: _workspace.Layout.FocusedPane.Frozen);
+        return CommandCatalog.Build(_workspace, BuildCharacterRefs(), _active?.SessionKey, context);
+    }
+
+    private IReadOnlyList<CharacterRef> BuildCharacterRefs()
+    {
+        var refs = new List<CharacterRef>();
+        foreach (var world in _config.Worlds)
+        {
+            foreach (var character in world.Characters)
+            {
+                var key = $"{world.Name}.{character.Name}";
+                refs.Add(new CharacterRef(world.Name, character.Name, key, _active?.SessionKey == key));
+            }
+        }
+
+        return refs;
+    }
+
+    /// <summary>Runs a command-surface entry by its id, doing what the current shell supports.</summary>
+    private void DispatchCommand(string id)
+    {
+        if (id.StartsWith("win:", StringComparison.Ordinal))
+        {
+            Activate(id["win:".Length..]);
+            RefreshTabTitles();
+            return;
+        }
+
+        switch (id)
+        {
+            case "layout:zoom":
+            case "layout:unzoom":
+                _workspace.Layout.ToggleZoom();
+                break;
+            case "layout:close":
+                CloseActiveWindow();
+                break;
+            case "layout:split-right":
+                PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitRight);
+                break;
+            case "layout:split-down":
+                PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitDown);
+                break;
+            case "term:freeze":
+            case "term:unfreeze":
+                _workspace.Layout.ToggleFreezeFocused();
+                break;
+            case "term:clear":
+                if (_panes.TryGetValue(ActiveWindowId(), out var pane))
+                {
+                    pane.SetContent(new List<string>());
+                }
+
+                break;
+            case "world:reconnect":
+                _ = _active?.ConnectAsync();
+                break;
+            case "world:disconnect":
+                _ = _active?.DisconnectAsync();
+                break;
+            default:
+                _active?.PrintSystem($"*** '{id}' isn't wired in this build yet.");
+                break;
+        }
+
+        RefreshTabTitles();
+    }
 
     private void OnLinkClicked(string url)
     {
