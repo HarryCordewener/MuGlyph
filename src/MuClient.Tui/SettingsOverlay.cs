@@ -1,6 +1,7 @@
 using SharpConsoleUI;
 using SharpConsoleUI.Builders;
 using SharpConsoleUI.Controls;
+using SharpConsoleUI.Layout;
 
 namespace MuClient.Tui;
 
@@ -52,13 +53,19 @@ internal sealed class SettingsOverlay
     private void Open(ConsoleKey key, Func<IReadOnlyList<string>> content)
     {
         _openKey = key;
-        _panel = new MarkupControl(content().ToList());
+
+        // A full-screen surface with a deep panel background, no window chrome (frameless: no title
+        // bar, buttons, or resize grip), and the panel stretched so its background fills the console.
+        _panel = new MarkupControl(content().ToList())
+        {
+            BackgroundColor = new Color("#171b24"),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
 
         _window = new WindowBuilder(_system)
-            .WithTitle("Settings")
             .AsModal()
             .Maximized()
-            .WithBorderStyle(BorderStyle.Single)
+            .Frameless()
             .AddControl(_panel)
             .OnClosed((_, _) => Reset())
             .Build();

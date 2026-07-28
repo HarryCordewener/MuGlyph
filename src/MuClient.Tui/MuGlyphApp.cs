@@ -724,7 +724,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         Bind(ConsoleKey.F2, () => TriggersScreenRenderer.Render(_config.TriggerSets, 0, SpawnTargets()));
         Bind(ConsoleKey.F3, () => AliasesScreenRenderer.Render(_config.TriggerSets, 0));
         Bind(ConsoleKey.F4, () => KeypadScreenRenderer.Render(Macros()));
-        Bind(ConsoleKey.F5, () => WorldsScreenRenderer.Render(_config.Worlds, _config.TriggerSets, ActiveWorldIndex(), ActiveCharacterIndex()));
+        Bind(ConsoleKey.F5, () => WorldsScreenRenderer.Render(_config.Worlds, _config.TriggerSets, ActiveWorldIndex(), ActiveCharacterIndex(), _system.DesktopDimensions.Width, _system.DesktopDimensions.Height));
         Bind(ConsoleKey.F6, () => TimersScreenRenderer.Render(_config.TriggerSets, 0));
         Bind(ConsoleKey.F7, OptionsScreenRenderer.TextAnsi);
         Bind(ConsoleKey.F8, OptionsScreenRenderer.InputSpellcheck);
@@ -791,7 +791,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         "triggers" => (ConsoleKey.F2, () => TriggersScreenRenderer.Render(_config.TriggerSets, 0, SpawnTargets())),
         "aliases" => (ConsoleKey.F3, () => AliasesScreenRenderer.Render(_config.TriggerSets, 0)),
         "keypad" => (ConsoleKey.F4, () => KeypadScreenRenderer.Render(Macros())),
-        "worlds" or "settings" => (ConsoleKey.F5, () => WorldsScreenRenderer.Render(_config.Worlds, _config.TriggerSets, ActiveWorldIndex(), ActiveCharacterIndex())),
+        "worlds" or "settings" => (ConsoleKey.F5, () => WorldsScreenRenderer.Render(_config.Worlds, _config.TriggerSets, ActiveWorldIndex(), ActiveCharacterIndex(), _system.DesktopDimensions.Width, _system.DesktopDimensions.Height)),
         "timers" => (ConsoleKey.F6, () => TimersScreenRenderer.Render(_config.TriggerSets, 0)),
         "textansi" => (ConsoleKey.F7, OptionsScreenRenderer.TextAnsi),
         "input" => (ConsoleKey.F8, OptionsScreenRenderer.InputSpellcheck),
