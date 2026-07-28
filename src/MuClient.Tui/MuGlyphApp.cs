@@ -1348,15 +1348,13 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         var live = PaneContentFor(windowId, title);
         live.SetContent(buffer.Skip(split).ToList());
 
-        // Pinned scrollback gets the lion's share; the live tail is a few rows under the bar. A full-width
-        // row splitter above the bar draws a clear line delineating the frozen area from the live tail.
+        // Pinned scrollback gets the lion's share; a single "❄ FROZEN ⌃F ───" line is both label and
+        // border, with the live tail a few rows below it.
         var grid = Controls.Grid().WithVerticalAlignment(VerticalAlignment.Fill);
         grid.Rows(GridLength.Star(3), GridLength.Cells(1), GridLength.Star(1)).Columns(GridLength.Star(1));
         grid.Place(frozen, 0, 0, 1, 1);
         grid.Place(bar, 1, 0, 1, 1);
         grid.Place(live, 2, 0, 1, 1);
-        grid.RowSplitterAfter(0);
-        grid.RowSplitterAfter(1);
         return grid.Build();
     }
 

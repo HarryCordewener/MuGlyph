@@ -12,6 +12,9 @@ internal static class FreezeBarRenderer
     public static string Bar(string accentHex)
     {
         ArgumentException.ThrowIfNullOrEmpty(accentHex);
-        return $"[{accentHex}]{Glyphs.Freeze} FROZEN[/] [{accentHex}]⌃F[/][dim]  scrollback pinned — ⌃F to resume[/]";
+
+        // A single line that is both the label and the divider border between pinned scrollback and the
+        // live tail: the accented "❄ FROZEN ⌃F" label followed by a dim rule.
+        return $"[{accentHex}]{Glyphs.Freeze} FROZEN ⌃F[/] [dim]{new string('─', 48)}[/]";
     }
 }
