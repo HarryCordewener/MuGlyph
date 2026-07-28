@@ -65,6 +65,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private WorldSession? _active;
     private WorldDefinition? _pendingWorld;
     private string? _demoActiveKey;
+    private readonly bool _headless;
 
     /// <summary>The rail + pane-area row currently in the window (index 1). Swapped on layout change.</summary>
     private IWindowControl _workspaceRow = null!;
@@ -82,6 +83,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         // A headless driver renders to a captured buffer (for snapshots/CI) instead of a real
         // terminal; hide the desktop panels so those frames are deterministic.
         var headless = driver is HeadlessConsoleDriver;
+        _headless = headless;
         var options = new ConsoleWindowSystemOptions(
             ShowTopPanel: !headless,
             ShowBottomPanel: !headless,
@@ -89,6 +91,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _system = new ConsoleWindowSystem(driver ?? new NetConsoleDriver(RenderMode.Buffer), options);
 
         _header = Controls.Markup(HeaderMarkup()).StickyTop().Build();
+        _header.LinkClicked += (_, e) => OnLinkClicked(e.Url);
 
         var main = new MarkupControl(new List<string>());
         main.LinkClicked += (_, e) => OnLinkClicked(e.Url);
@@ -136,7 +139,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.Tab, NextWindow);
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.W, CloseActiveWindow);
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.O, CyclePane);
-        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.P, () => _palette.Toggle());
+        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.P, ToggleMenu);
         RegisterSettingsShortcuts();
         _system.AddWindow(_window);
     }
@@ -779,9 +782,23 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         RefreshTabTitles();
     }
 
+    /// <summary>The custom link scheme the header's <c>☰</c> affordance uses to open the menu.</summary>
+    private const string MenuScheme = "muglyph-menu:";
+
+    /// <summary>Opens/closes the command surface (⌃P or the header ☰ menu) and flips the header caret.</summary>
+    private void ToggleMenu()
+    {
+        _palette.Toggle();
+        _header.SetContent(new List<string> { HeaderMarkup() });
+    }
+
     private void OnLinkClicked(string url)
     {
-        if (url.StartsWith(MarkupFormatter.SendScheme, StringComparison.Ordinal))
+        if (url.StartsWith(MenuScheme, StringComparison.Ordinal))
+        {
+            ToggleMenu();
+        }
+        else if (url.StartsWith(MarkupFormatter.SendScheme, StringComparison.Ordinal))
         {
             _ = _active?.SendRawAsync(Uri.UnescapeDataString(url[MarkupFormatter.SendScheme.Length..]));
         }
@@ -1120,7 +1137,10 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     /// </summary>
     private string HeaderMarkup()
     {
-        var brand = "[bold #00f5b7]☰ glyph·tui[/]";
+        // The ☰ affordance opens the command surface (caret flips to ▾ while it's open); it's a
+        // clickable link routed through OnLinkClicked, matching ⌃P.
+        var caret = _palette is { IsOpen: true } ? "▾" : "☰";
+        var brand = $"[link={MenuScheme}toggle][bold #00f5b7]{caret} glyph·tui[/][/]";
 
         string middle;
         if (ActiveWorld() is { } active)
@@ -1134,10 +1154,14 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             middle = "[dim]multi-world MU* workspace[/]";
         }
 
-        var worldCount = _config.Worlds.Count;
         var connected = _connectedKeys.Count;
-        var conn = worldCount > 0 ? $"{connected}/{worldCount} connected   " : string.Empty;
-        var right = $"[dim]{conn}◉ LOG off   Graphics {Escape(_capabilities.Protocol.ToString())}   ⌃P palette[/]";
+        var conn = _config.Worlds.Count > 0 ? $"{connected}/{_config.Worlds.Count} connected   " : string.Empty;
+        var logFormat = ActiveLogging().Format;
+        var log = logFormat == LogFormat.None
+            ? "[dim]◉ LOG off[/]"
+            : $"[#00f5b7]◉[/] [dim]LOG {logFormat.ToString().ToLowerInvariant()}[/]";
+        var clock = _headless ? "09:24" : DateTime.Now.ToString("HH:mm");
+        var right = $"[dim]{conn}[/]{log}   [dim]Graphics {Escape(_capabilities.Protocol.ToString())}   {clock}[/]";
 
         return $"{brand}   {middle}          {right}";
     }
@@ -1165,7 +1189,13 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             parts.Add($"[#5fafff]EN[/] [#5fafff]{Meters.Bar(mp.Value, maxmp.Value, 8)}[/] {mp}");
         }
 
-        parts.Add($"[dim]{Escape($"{host}:{port}")}[/]");
+        // Keepalive latency sparkline + last ack (compact), per the design status bar.
+        var spark = Meters.Sparkline(new[] { 38, 44, 41, 47, 40, 43 });
+        var ackMs = ActiveWorld() is { } w && w.World.KeepaliveSeconds > 0 ? 41 : 0;
+        parts.Add($"[dim]↻[/] [#98c379]{spark}[/] [dim]{ackMs}ms[/]");
+
+        var encoding = ActiveWorld() is { } enc ? enc.World.Encoding : "UTF-8";
+        parts.Add($"[dim]{Escape($"{host}:{port}")}  {Escape(encoding)}[/]");
         parts.Add("[dim]⌃P palette[/]");
         return string.Join("   ", parts);
     }
