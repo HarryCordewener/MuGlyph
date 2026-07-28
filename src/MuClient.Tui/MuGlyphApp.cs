@@ -113,13 +113,41 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     public string RenderSnapshot()
     {
         LoadDemoScene();
+
+        // Render through the framework's own loop on a worker thread — calling the render primitives
+        // directly outside Run() races the compositor. Capture stdout, wait for the first frame, then
+        // ask the loop to exit.
         var real = Console.Out;
         var writer = new StringWriter();
         Console.SetOut(writer);
+        var loop = new Thread(() =>
+        {
+            try
+            {
+                _system.Run();
+            }
+            catch
+            {
+                // The loop is torn down by RequestExit; ignore the resulting cancellation noise.
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "muglyph-snapshot",
+        };
+
         try
         {
-            _system.ProcessOnce();
-            _system.ForceRender();
+            loop.Start();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (writer.GetStringBuilder().Length == 0 && clock.ElapsedMilliseconds < 5000)
+            {
+                Thread.Sleep(25);
+            }
+
+            Thread.Sleep(250); // let the first full frame settle
+            _system.RequestExit(0);
+            loop.Join(3000);
         }
         finally
         {
