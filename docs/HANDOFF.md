@@ -4,8 +4,10 @@ Context for whoever (human or agent) picks up this work next.
 
 - **Repository:** `SharpMUSH/SharpMUTerm`
 - **Start from:** a fresh branch off `main`
-- **Tests:** 574 across the solution (313 Core / 57 Graphics / 42 Scripting /
-  15 Web / 147 Tui), all green; `dotnet build SharpMUTerm.slnx` clean (0 warnings)
+- **Tests:** 649 across the solution (325 Core / 57 Graphics / 42 Scripting /
+  15 Web / 210 Tui), all green; `dotnet build SharpMUTerm.slnx` clean (0 warnings
+  from this repo; building against a local SharpConsoleUI clone surfaces 2 upstream
+  NuGet advisory warnings for AngleSharp, which are the framework's, not ours)
 
 ---
 
@@ -87,11 +89,59 @@ prompt painted with the same background via `PromptMarkup`, width pinned via
 `SyncInputWidth`). Verified in headless snapshots; **confirm it holds on a real
 terminal** across resizes, since the width is pinned imperatively.
 
-### 5. Mouse drag-to-split panes
+### 5. Mouse drag-to-split panes — wired; needs a real mouse to confirm
 
-The pane split tree supports keyboard "move mode" (the keyboard equivalent of
-drag-to-split). True mouse drag-and-drop between panes (`DropZones.Resolve` exists
-in Core and is tested) is not wired into the TUI and is unverifiable headlessly.
+**Status:** implemented and covered headlessly end to end, but **nobody has done it
+with an actual mouse yet.** Drag a pane's tab strip onto another pane: the middle
+adds it as a tab, within 25% of an edge splits there. The drag paints a preview —
+every pane dims to its name and the hovered one lights the zone the drop would
+claim — and the status line reads `DRAG <window> → split pane 2 left`.
+
+How it fits together:
+
+- **`PaneDragTracker`** (Tui, pure) — the gesture state machine. SharpConsoleUI
+  tracks no drag state for controls beyond mouse capture, so press/motion/release
+  are stitched together here. Also decodes `MouseFlags`: SGR reports a drag as
+  `Button1Pressed + ReportMousePosition` *without* `Button1Dragged`, so treating a
+  pressed bit as a fresh press would restart the gesture on every frame.
+- **`PaneDragSurface`** (Tui, pure) — pane rectangles + each pane's active window,
+  **frozen at press**. It has to be frozen: painting the preview tears the pane
+  area down, so live controls are a moving target mid-drag.
+- **`PaneDropRenderer`** (Tui, pure) — the preview markup. Its band previews *where
+  the new pane lands*; near a corner that is deliberately not the same set of cells
+  `DropZones` would resolve to that edge (it picks whichever edge is nearest).
+- **`PaneDrop`** (Core, pure) — the one commit path, shared with move mode: null
+  edge → `MoveWindowToPane`, an edge → `SplitWithWindow`, and no-ops rejected.
+- **`SharpMUTermApp.OnDriverMouseEvent`** — the only untested part, deliberately
+  thin. It subscribes to `_system.ConsoleDriver.MouseEvent`, **not** to a control:
+  the framework captures the pressed control and routes every later frame to it, so
+  a control-level handler would only ever see the *source* pane. `PaneSnapshot()`
+  reads pane rectangles back out of `Window.GetLayoutNode(...).AbsoluteBounds`
+  (window-content space) and adds the window origin + inset.
+
+Gotchas found doing it:
+
+- **Only the tab strip is a drag handle** (a pane's top row). Body presses belong
+  to the content — text selection, link clicks.
+- **Esc cancels a drag.** If a terminal loses the button-up, the preview would
+  otherwise sit over the panes forever.
+- `_paneTabs` is read from the driver's **input thread** and written on the UI
+  thread, so it is under `_paneTabsLock`. Enumerating it during a rebuild throws.
+- The `drag` snapshot view drives a **real** press+drag through
+  `HeadlessConsoleDriver.SimulateMouseEvent`; nothing about that frame is faked.
+  It renders a frame first (layout is only arranged by a render, so control bounds
+  don't exist before one) and then re-initialises the driver, because the headless
+  driver ignores `InvalidateFrontBuffer` and the closing render would otherwise
+  emit only the changed cells.
+
+**Not verified:** that a real terminal's mouse escape sequences arrive as these
+frames. That path is SharpConsoleUI's `NetConsoleDriver` (it enables modes
+1000/1006/1002/1003 unconditionally at startup) plus `AnsiInputParser`; it was read,
+not run. Everything downstream of `IConsoleDriver.MouseEvent` is tested.
+
+Also completed here: move mode's **arrow keys** now pick an edge. The prompt has
+always advertised `←↑↓→ edge`, but nothing handled them — only the tab-drop half
+was reachable. Both routes now commit through `PaneDrop`.
 
 ### 6. CodeRabbit nitpicks intentionally **not** done (don't "fix" these)
 
@@ -139,8 +189,8 @@ Things that will waste your time if you don't know them.
   ```
 - **Snapshot view names:** `worlds`/`settings`, `triggers`, `aliases`, `timers`,
   `keypad`, `textansi`, `input`, `logging`, `freeze`, `spawn`, `split`, `move`,
-  `history`, `menu`, `menu-split`, plus the default (no `--view`) workspace. Extra
-  state toggles: `collapsed`, `prefix`, `timestamps`.
+  `drag`, `history`, `menu`, `menu-split`, plus the default (no `--view`) workspace.
+  Extra state toggles: `collapsed`, `prefix`, `timestamps`.
 - **Send the user the `.svg`** — they view it fine. Do **not** rely on your own
   SVG→PNG for pixel checks near the bottom (see next point).
 - **SVG→PNG clipping trap:** Chromium clips the bottom of a bare `.svg` file

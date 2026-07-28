@@ -56,6 +56,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private readonly MarkupControl _rail;
     private readonly MarkupControl _railSpacer = new(new List<string>());
     private readonly Dictionary<string, TabControl> _paneTabs = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Guards <see cref="_paneTabs"/>. Everything else touches it on the UI thread, but a mouse frame
+    /// arrives on the driver's input thread and has to read it to locate the panes — enumerating it
+    /// while a rebuild clears and refills it would throw.
+    /// </summary>
+    private readonly object _paneTabsLock = new();
     private readonly PromptControl _input;
     private readonly GmcpStats _stats = new();
     private readonly SharpMUTerm.Web.WebPageFetcher _fetcher = new();
@@ -82,7 +89,16 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private bool _moveMode;
     private string? _moveWindowId;
     private string? _moveTargetPaneId;
+    private Edge? _moveEdge;
     private readonly Dictionary<string, char> _moveLetters = new(StringComparer.Ordinal);
+
+    /// <summary>Assembles pane drag-and-drop out of the driver's raw mouse frames (see PaneDragTracker).</summary>
+    private readonly PaneDragTracker _paneDrag = new();
+
+    /// <summary>The pane the live mouse drag is hovering, and the edge it would split — null when idle.</summary>
+    private string? _dragTargetPaneId;
+    private Edge? _dragEdge;
+    private bool _dragActive;
 
     /// <summary>The rail + pane-area row currently in the window (index 1). Swapped on layout change.</summary>
     private IWindowControl _workspaceRow = null!;
@@ -186,6 +202,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.B, ArmPrefix);
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.F, ToggleFreeze);
         _window.PreviewKeyPressed += OnWindowKey;
+        // Pane drag-and-drop listens at the driver, not at a control: SharpConsoleUI delivers mouse
+        // frames to the control that was pressed (it captures on Button1Pressed), so a control-level
+        // handler would only ever see the *source* pane. The driver stream carries every frame in
+        // desktop cells, which is exactly what a drag between panes needs.
+        _system.ConsoleDriver.MouseEvent += OnDriverMouseEvent;
         RegisterSettingsShortcuts();
         _system.AddWindow(_window);
     }
@@ -264,6 +285,33 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitRight);
             RebuildPaneArea();
             EnterMoveMode();
+
+            // Drive the real key handler so the frame shows move mode as a user would leave it after
+            // picking a target pane and an edge: "b", then ←.
+            HandleMoveKey(new KeyPressedEventArgs(new ConsoleKeyInfo('b', ConsoleKey.B, false, false, false), false));
+            HandleMoveKey(new KeyPressedEventArgs(new ConsoleKeyInfo('\0', ConsoleKey.LeftArrow, false, false, false), false));
+        }
+
+        // Mouse drag: split, lay the frame out so the panes have real bounds, then drive an actual
+        // press + drag through the headless driver's mouse event. Nothing here fakes the preview —
+        // it is whatever the pointer path produces, which is what makes this frame worth looking at.
+        if (string.Equals(view, "drag", StringComparison.OrdinalIgnoreCase))
+        {
+            PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitRight);
+            RebuildPaneArea();
+            RenderFrame();
+            SimulateSnapshotDrag();
+
+            // The frame above left the driver's front buffer populated, so the closing render would
+            // emit only the cells that changed. The headless driver ignores InvalidateFrontBuffer
+            // (the interface default is an empty body), but re-initialising it builds a fresh buffer,
+            // which together with a full repaint makes the closing render a whole frame again.
+            if (_system.ConsoleDriver is HeadlessConsoleDriver headlessDriver)
+            {
+                headlessDriver.Initialize(_system);
+            }
+
+            _system.ForceFullRepaint();
         }
 
         // History-recall state: seed a couple of sent commands, then recall the newest so the input
@@ -299,13 +347,21 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _settings.OpenForSnapshot(screen.Key, screen.Open());
         }
 
-        // Render exactly one frame, synchronously, inline on this thread. ForceRender() performs a
-        // single render cycle (bypassing the frame-rate limiter) with no Run() loop, no driver
-        // Initialize/Start, and no OnShown pass — a freshly-added window is dirty and paints on the
-        // first call. The HeadlessConsoleDriver writes the composited frame straight to the console,
-        // so we redirect Console.Out for the duration of that one call and keep what it wrote. (An
-        // earlier Run()-on-a-worker-thread approach raced the input+render pump and hung/OOM'd.)
         SyncInputWidth(); // the window now carries the snapshot size, so the band fills its full width
+        return RenderFrame();
+    }
+
+    /// <summary>
+    /// Renders exactly one frame, synchronously, inline on this thread, and returns it as ANSI.
+    /// ForceRender() performs a single render cycle (bypassing the frame-rate limiter) with no Run()
+    /// loop, no driver Initialize/Start, and no OnShown pass — a freshly-added window is dirty and
+    /// paints on the first call. The HeadlessConsoleDriver writes the composited frame straight to the
+    /// console, so Console.Out is redirected for the duration of that one call and what it wrote is
+    /// kept. (An earlier Run()-on-a-worker-thread approach raced the input+render pump and hung/OOM'd.)
+    /// A frame also arranges the layout, so control bounds are only real after one has been rendered.
+    /// </summary>
+    private string RenderFrame()
+    {
         var real = Console.Out;
         var writer = new StringWriter();
         try
@@ -319,6 +375,37 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         return writer.ToString();
+    }
+
+    /// <summary>
+    /// Drives a genuine pane drag through the headless driver for the <c>drag</c> snapshot: primary
+    /// button down on the first pane's tab strip, then a drag frame over the second pane's left edge.
+    /// The button is deliberately left down so the frame captures the live drop preview. Requires a
+    /// frame to have been rendered already, so the panes have real bounds to hit.
+    /// </summary>
+    private void SimulateSnapshotDrag()
+    {
+        if (_system.ConsoleDriver is not HeadlessConsoleDriver driver)
+        {
+            return;
+        }
+
+        var panes = _workspace.Layout.Panes;
+        var surface = PaneSnapshot();
+        if (panes.Count < 2 ||
+            surface.RectOf(panes[0].Id) is not { } source ||
+            surface.RectOf(panes[1].Id) is not { } target)
+        {
+            return;
+        }
+
+        driver.SimulateMouseEvent(
+            new List<MouseFlags> { MouseFlags.Button1Pressed },
+            new System.Drawing.Point(source.X + 2, source.Y));
+
+        driver.SimulateMouseEvent(
+            new List<MouseFlags> { MouseFlags.Button1Pressed, MouseFlags.Button1Dragged, MouseFlags.ReportMousePosition },
+            new System.Drawing.Point(target.X + 1, target.Y + (target.Height / 2)));
     }
 
     /// <summary>
@@ -1276,7 +1363,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private IWindowControl BuildWorkspaceRow()
     {
-        _paneTabs.Clear();
+        lock (_paneTabsLock)
+        {
+            _paneTabs.Clear();
+        }
+
 
         // When a pane is zoomed, render just that pane full-area; otherwise render the whole tree.
         var zoomed = _workspace.Layout.ZoomedPaneId is { } zid ? _workspace.Layout.FindPane(zid) : null;
@@ -1378,6 +1469,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     {
         if (node is PaneNode pane)
         {
+            if (_dragActive)
+            {
+                return BuildDragPane(pane);
+            }
+
             return _moveMode && _moveLetters.TryGetValue(pane.Id, out var letter)
                 ? BuildMovePane(pane, letter)
                 : BuildPaneTabs(pane);
@@ -1462,7 +1558,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
         var paneId = pane.Id;
         tabs.TabChanged += (_, e) => OnTabChanged(paneId, e.NewTab);
-        _paneTabs[paneId] = tabs;
+        lock (_paneTabsLock)
+        {
+            _paneTabs[paneId] = tabs;
+        }
+
         return tabs;
     }
 
@@ -1584,6 +1684,16 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return;
         }
 
+        // Escape abandons a mouse drag. A terminal that loses the button-up (the pointer left the
+        // window, the terminal dropped a frame) would otherwise strand the preview over the panes.
+        if (_dragActive && e.KeyInfo.Key == ConsoleKey.Escape)
+        {
+            e.Handled = true;
+            _paneDrag.Reset(); // no mouse frame ends this one, so the gesture has to be dropped here
+            EndDrag();
+            return;
+        }
+
         if (!_prefixArmed)
         {
             // Draft-safe history recall on ↑/↓ — our own, so a half-typed draft survives (see InputHistory).
@@ -1659,6 +1769,16 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return;
         }
 
+        // Arrows pick the edge to split the target toward — the keyboard stand-in for dropping on a
+        // pane's edge rather than its middle. Pressing the same arrow again returns to a tab drop.
+        if (MoveEdgeFor(key) is { } edge)
+        {
+            _moveEdge = _moveEdge == edge ? null : edge;
+            RebuildPaneArea();
+            SetStatus(MovePromptMarkup());
+            return;
+        }
+
         if (ch is >= 'a' and <= 'j')
         {
             // Only retarget on a real match — an unmapped letter must not clear the current target.
@@ -1672,17 +1792,29 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
     }
 
+    /// <summary>The split edge an arrow key selects in move mode, or null for any other key.</summary>
+    private static Edge? MoveEdgeFor(ConsoleKey key) => key switch
+    {
+        ConsoleKey.LeftArrow => Edge.Left,
+        ConsoleKey.RightArrow => Edge.Right,
+        ConsoleKey.UpArrow => Edge.Top,
+        ConsoleKey.DownArrow => Edge.Bottom,
+        _ => null,
+    };
+
     /// <summary>Applies (or cancels) the move and leaves move mode.</summary>
     private void ExitMoveMode(bool commit)
     {
-        if (commit && _moveWindowId is { } win && _moveTargetPaneId is { } pane && pane != _workspace.Layout.FindWindow(win)?.Id)
+        if (commit && _moveWindowId is { } win && _moveTargetPaneId is { } pane)
         {
-            _workspace.Layout.MoveWindowToPane(win, pane);
+            // The same commit the mouse drop uses, so both routes land identically.
+            PaneDrop.Apply(_workspace.Layout, win, pane, _moveEdge);
         }
 
         _moveMode = false;
         _moveWindowId = null;
         _moveTargetPaneId = null;
+        _moveEdge = null;
         _moveLetters.Clear();
         RebuildPaneArea();
         UpdateStatus();
@@ -1692,7 +1824,204 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private string MovePromptMarkup()
     {
         var name = _moveWindowId is { } id && _workspace.FindWindow(id) is { } w ? Escape(w.Title) : "window";
-        return $"[#e5c07b]MOVE[/] [bold]{name}[/]   [dim]a–j pane · ←↑↓→ edge · ⏎ commit · Esc cancel[/]";
+        return $"[#e5c07b]MOVE[/] [bold]{name}[/] [dim]→[/] [#00f5b7]{DropLabel(_moveTargetPaneId, _moveEdge)}[/]"
+            + "   [dim]a–j pane · ←↑↓→ edge · ⏎ commit · Esc cancel[/]";
+    }
+
+    /// <summary>Human-readable description of a pending drop, for the move prompt and drag preview.</summary>
+    private string DropLabel(string? paneId, Edge? edge)
+    {
+        if (paneId is null)
+        {
+            return "no target";
+        }
+
+        var name = PaneLabel(paneId);
+        return edge switch
+        {
+            Edge.Left => $"split {name} left",
+            Edge.Right => $"split {name} right",
+            Edge.Top => $"split {name} top",
+            Edge.Bottom => $"split {name} bottom",
+            _ => $"tab in {name}",
+        };
+    }
+
+    /// <summary>The rail's friendly name for a pane ("main" for the first, "pane N" after it).</summary>
+    private string PaneLabel(string paneId)
+    {
+        var index = 0;
+        foreach (var pane in _workspace.Layout.Panes)
+        {
+            if (pane.Id == paneId)
+            {
+                return index == 0 ? "main" : $"pane {index + 1}";
+            }
+
+            index++;
+        }
+
+        return paneId;
+    }
+
+    /// <summary>
+    /// The adapter between the console driver's raw mouse frames and the tested
+    /// <see cref="PaneDragTracker"/>. Deliberately thin: it decides nothing, it only hands the frame
+    /// over (with a geometry snapshot the tracker asks for at most once per gesture) and marshals the
+    /// tracker's verdict onto the UI thread. Driver events arrive on the input thread.
+    /// </summary>
+    private void OnDriverMouseEvent(object sender, List<MouseFlags> flags, System.Drawing.Point point)
+    {
+        // Overlays own the whole screen while they're up; a drag underneath them would target panes
+        // the user can't even see.
+        if (_palette.IsOpen || _settings.IsOpen || _moveMode)
+        {
+            return;
+        }
+
+        var result = _paneDrag.Handle(flags, point.X, point.Y, PaneSnapshot);
+        if (result.Action == PaneDragAction.None)
+        {
+            return;
+        }
+
+        OnUiThread(() => ApplyDragResult(result));
+    }
+
+    /// <summary>
+    /// Reads the pane area's live geometry back out of the framework's arranged layout, in desktop
+    /// cells. A control's <see cref="SharpConsoleUI.Layout.LayoutNode.AbsoluteBounds"/> is in
+    /// window-content space, so the window's own origin and inset are added back on.
+    /// Internal so a headless test can check the mapping against the framework's own hit testing —
+    /// it is the one part of the drag that no pure unit test can pin down.
+    /// </summary>
+    internal PaneDragSurface PaneSnapshot()
+    {
+        var origin = ContentOrigin();
+        var rects = new Dictionary<string, PaneRect>(StringComparer.Ordinal);
+        var windows = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        KeyValuePair<string, TabControl>[] realised;
+        lock (_paneTabsLock)
+        {
+            realised = _paneTabs.ToArray();
+        }
+
+        foreach (var (paneId, tabs) in realised)
+        {
+            if (_window.GetLayoutNode(tabs) is not { } node)
+            {
+                continue;
+            }
+
+            var bounds = node.AbsoluteBounds;
+            rects[paneId] = new PaneRect(origin.X + bounds.X, origin.Y + bounds.Y, bounds.Width, bounds.Height);
+
+            if (_workspace.Layout.FindPane(paneId)?.ActiveTab is { } windowId)
+            {
+                windows[paneId] = windowId;
+            }
+        }
+
+        return new PaneDragSurface(rects, windows);
+    }
+
+    /// <summary>
+    /// The desktop cell that window-content coordinate (0,0) paints at: the window's position, offset
+    /// past any top desktop panel and the window's own frame + padding. Mirrors the framework's own
+    /// <c>InsetLeft</c>/<c>InsetTop</c> (frame thickness plus padding), which are internal to it.
+    /// </summary>
+    private System.Drawing.Point ContentOrigin()
+    {
+        var frame = _window.BorderStyle == BorderStyle.Frameless ? 0 : 1;
+        return new System.Drawing.Point(
+            _window.Left + frame + _window.Padding.Left,
+            _window.Top + _system.DesktopUpperLeft.Y + frame + _window.Padding.Top);
+    }
+
+    /// <summary>Applies a tracker verdict: paint, tear down, or commit the drop and rebuild.</summary>
+    private void ApplyDragResult(PaneDragResult result)
+    {
+        switch (result.Action)
+        {
+            case PaneDragAction.Begin:
+            case PaneDragAction.Update:
+                _dragActive = true;
+                _dragTargetPaneId = result.TargetPaneId;
+                _dragEdge = result.Edge;
+                RebuildPaneArea();
+                SetStatus(DragPromptMarkup(result.WindowId, result.TargetPaneId, result.Edge));
+                break;
+
+            case PaneDragAction.Commit:
+                if (result.WindowId is { } windowId && result.TargetPaneId is { } paneId)
+                {
+                    if (PaneDrop.Apply(_workspace.Layout, windowId, paneId, result.Edge))
+                    {
+                        _workspace.ActivateWindow(windowId);
+                    }
+                }
+
+                EndDrag();
+                break;
+
+            default:
+                EndDrag();
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Leaves the drag preview and restores the real pane area and status line. It deliberately does
+    /// not reset the tracker: the tracker ends its own gesture, and a press that lands mid-preview
+    /// both cancels the stale drag and arms the next one in the same frame.
+    /// </summary>
+    private void EndDrag()
+    {
+        _dragActive = false;
+        _dragTargetPaneId = null;
+        _dragEdge = null;
+        RebuildPaneArea();
+        UpdateStatus();
+    }
+
+    /// <summary>The status line shown while a pane drag is in flight.</summary>
+    private string DragPromptMarkup(string? windowId, string? targetPaneId, Edge? edge)
+    {
+        var name = windowId is { } id && _workspace.FindWindow(id) is { } window ? Escape(window.Title) : "window";
+        return $"[#e5c07b]DRAG[/] [bold]{name}[/] [dim]→[/] [{PaneDropRenderer.ZoneColor}]{DropLabel(targetPaneId, edge)}[/]"
+            + "   [dim]release to drop · Esc cancel[/]";
+    }
+
+    /// <summary>A pane rendered as a live drop target, sized from the drag's frozen geometry.</summary>
+    private IWindowControl BuildDragPane(PaneNode pane)
+    {
+        var rect = _paneDrag.Surface?.RectOf(pane.Id) ?? default;
+        var hovered = pane.Id == _dragTargetPaneId;
+        var lines = PaneDropRenderer.Render(
+            PaneLabel(pane.Id),
+            DropLabel(pane.Id, _dragEdge),
+            rect.Width,
+            rect.Height,
+            hovered,
+            _dragEdge);
+
+        return new MarkupControl(lines) { HorizontalAlignment = HorizontalAlignment.Stretch };
+    }
+
+    /// <summary>
+    /// Runs UI work on the UI thread. Headless (snapshot and test) runs have no main loop to drain the
+    /// queue, and are single-threaded anyway, so they run it inline.
+    /// </summary>
+    private void OnUiThread(Action action)
+    {
+        if (_headless || _system.IsOnUIThread)
+        {
+            action();
+            return;
+        }
+
+        _system.EnqueueOnUIThread(action);
     }
 
     /// <summary>A pane rendered as a move-mode target: a big letter over the dimmed window list.</summary>
@@ -1705,6 +2034,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         lines.Add($"     [bold {color}]▌ {char.ToUpperInvariant(letter)} ▐[/]");
         lines.Add($"     [bold {color}]▙▄▄▟[/]");
         lines.Add(string.Empty);
+        if (selected)
+        {
+            lines.Add($"     [{PaneDropRenderer.ZoneColor}]{DropLabel(pane.Id, _moveEdge)}[/]");
+            lines.Add(string.Empty);
+        }
+
         foreach (var windowId in pane.Tabs)
         {
             if (_workspace.FindWindow(windowId) is { } window)
@@ -1968,6 +2303,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _system.ConsoleDriver.MouseEvent -= OnDriverMouseEvent;
         _fetcher.Dispose();
         await _sessions.DisposeAsync().ConfigureAwait(false);
     }
