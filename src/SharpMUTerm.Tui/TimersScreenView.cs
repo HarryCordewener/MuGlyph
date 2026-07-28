@@ -15,18 +15,20 @@ namespace SharpMUTerm.Tui;
 /// </summary>
 internal static class TimersScreenView
 {
-    private const int ListColumnWidth = 56;
+    private const int ListColumnWidth = TimersScreenRenderer.ColumnWidth;
 
-    public static IWindowControl Build(IReadOnlyList<TriggerSet> sets, int selected, int width)
+    public static IWindowControl Build(
+        IReadOnlyList<TriggerSet> sets, int selected, int width, ScreenFocus? focus = null)
     {
         var header = ScreenChrome.Band(TimersScreenRenderer.HeaderLine(width), ScreenPalette.HeaderBg);
         var footer = ScreenChrome.Band(
             TimersScreenRenderer.FooterLine(sets, selected, width), ScreenPalette.FooterBg);
 
         // Body: timer list │ editor, as two real columns.
-        var listCol = ScreenChrome.Stretch(new MarkupControl(TimersScreenRenderer.ListColumn(sets, selected)));
+        var listCol = ScreenChrome.Stretch(
+            new MarkupControl(TimersScreenRenderer.ListColumn(sets, selected, focus)));
         var editorCol = ScreenChrome.Stretch(
-            new MarkupControl(ScreenChrome.Indent(TimersScreenRenderer.EditorColumn(sets, selected))));
+            new MarkupControl(ScreenChrome.Indent(TimersScreenRenderer.EditorColumn(sets, selected, focus))));
         var body = Controls.HorizontalGrid()
             .WithAlignment(HorizontalAlignment.Stretch)
             .WithVerticalAlignment(VerticalAlignment.Fill)

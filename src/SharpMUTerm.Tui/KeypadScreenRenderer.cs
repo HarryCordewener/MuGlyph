@@ -65,8 +65,19 @@ internal static class KeypadScreenRenderer
     internal static string HeaderLine(int width)
     {
         var title = $"[bold {Value}] Keypad & hotkeys[/]";
-        var hints = ScreenChrome.Hints("↑↓ select · ⇥ switch pane · ⏎ rebind", "F4");
+        var hints = ScreenChrome.Hints(ScreenChrome.SingleListHints, "F4");
         return SpreadLR(" " + title, hints, width);
+    }
+
+    /// <summary>
+    /// The screen's one navigable pane: the binding list, where Space enables or disables a macro.
+    /// The numpad grid is a projection of the same macros, so it has no cursor of its own — it
+    /// updates as the list is toggled.
+    /// </summary>
+    internal static ScreenModel Model(IReadOnlyList<Macro> macros)
+    {
+        ArgumentNullException.ThrowIfNull(macros);
+        return new ScreenModel(ScreenModel.Toggles(macros, m => m.Enabled, (m, v) => m.Enabled = v));
     }
 
     /// <summary>The action bar: how much of the keypad is bound on the left, cancel/save on the right.</summary>
@@ -109,10 +120,11 @@ internal static class KeypadScreenRenderer
     }
 
     /// <summary>The binding list — every macro with its enabled state, key, and command.</summary>
-    internal static List<string> HotkeysColumn(IReadOnlyList<Macro> macros)
+    internal static List<string> HotkeysColumn(IReadOnlyList<Macro> macros, ScreenFocus? focus = null)
     {
         ArgumentNullException.ThrowIfNull(macros);
 
+        var cursor = focus ?? ScreenFocus.None;
         var lines = new List<string> { "[dim]HOTKEYS[/]" };
         if (macros.Count == 0)
         {
@@ -120,9 +132,9 @@ internal static class KeypadScreenRenderer
             return lines;
         }
 
-        foreach (var macro in macros)
+        for (var i = 0; i < macros.Count; i++)
         {
-            lines.Add(Hotkey(macro));
+            lines.Add(ScreenChrome.Cursor(Hotkey(macros[i]), cursor.IsOn(0, i), ColumnWidth));
         }
 
         return lines;

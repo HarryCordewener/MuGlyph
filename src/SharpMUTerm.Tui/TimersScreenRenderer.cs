@@ -17,7 +17,12 @@ namespace SharpMUTerm.Tui;
 /// </summary>
 internal static class TimersScreenRenderer
 {
-    private const int ColumnWidth = 54;
+    /// <summary>
+    /// Visible width of the left column. The view lays its column out at exactly this width, so
+    /// the two must agree -- a cursor bar padded narrower than its column leaves a gap before the
+    /// rule. Shared rather than duplicated so they cannot drift apart.
+    /// </summary>
+    internal const int ColumnWidth = 56;
 
     /// <summary>
     /// Merges every sub-block into one line list (header, timer list | editor, footer). Used by the
@@ -51,8 +56,34 @@ internal static class TimersScreenRenderer
     internal static string HeaderLine(int width)
     {
         var title = $"[bold {Value}] Timers[/]";
-        var hints = ScreenChrome.Hints("↑↓ select · ⇥ switch pane · ⏎ edit", "F6");
+        var hints = ScreenChrome.Hints(ScreenChrome.ListHints, "F6");
         return SpreadLR(" " + title, hints, width);
+    }
+
+    /// <summary>
+    /// The screen's navigable panes: the timer list (Space enables/disables one) and the selected
+    /// timer's checkbox rows, in the order <see cref="EditorColumn"/> draws them.
+    /// </summary>
+    internal static ScreenModel Model(IReadOnlyList<TriggerSet> sets, int selected)
+    {
+        ArgumentNullException.ThrowIfNull(sets);
+
+        var entries = Flatten(sets);
+        var list = ScreenModel.Toggles(entries, e => e.Timer.Enabled, (e, v) => e.Timer.Enabled = v);
+
+        if (selected < 0 || selected >= entries.Count)
+        {
+            return new ScreenModel(list, Array.Empty<ScreenToggle?>());
+        }
+
+        var timer = entries[selected].Timer;
+        var editor = new ScreenToggle?[]
+        {
+            ScreenToggle.Bind(() => timer.OneShot, v => timer.OneShot = v),
+            ScreenToggle.Bind(() => timer.Enabled, v => timer.Enabled = v),
+        };
+
+        return new ScreenModel(list, editor);
     }
 
     /// <summary>The action bar: which timer is selected on the left, cancel/save on the right.</summary>
@@ -72,10 +103,12 @@ internal static class TimersScreenRenderer
     }
 
     /// <summary>The timer list — every timer of every set, with its enabled state and schedule.</summary>
-    internal static List<string> ListColumn(IReadOnlyList<TriggerSet> sets, int selected)
+    internal static List<string> ListColumn(
+        IReadOnlyList<TriggerSet> sets, int selected, ScreenFocus? focus = null)
     {
         ArgumentNullException.ThrowIfNull(sets);
 
+        var cursor = focus ?? ScreenFocus.None;
         var entries = Flatten(sets);
         var lines = new List<string> { "[dim]on  name  every  → command[/]" };
 
@@ -87,7 +120,8 @@ internal static class TimersScreenRenderer
 
         for (var i = 0; i < entries.Count; i++)
         {
-            lines.Add(Row(entries[i].Timer, entries[i].SetName, i == selected));
+            var row = Row(entries[i].Timer, entries[i].SetName, i == selected);
+            lines.Add(ScreenChrome.Cursor(row, cursor.IsOn(0, i), ColumnWidth));
         }
 
         return lines;
@@ -97,13 +131,14 @@ internal static class TimersScreenRenderer
     /// The editor for the selected timer — interval, command, and the one-shot/enabled toggles.
     /// Empty when nothing is selected.
     /// </summary>
-    internal static List<string> EditorColumn(IReadOnlyList<TriggerSet> sets, int selected)
+    internal static List<string> EditorColumn(
+        IReadOnlyList<TriggerSet> sets, int selected, ScreenFocus? focus = null)
     {
         ArgumentNullException.ThrowIfNull(sets);
 
         var entries = Flatten(sets);
         return selected >= 0 && selected < entries.Count
-            ? BuildEditor(entries[selected].Timer)
+            ? BuildEditor(entries[selected].Timer, focus ?? ScreenFocus.None)
             : new List<string>();
     }
 
@@ -132,7 +167,7 @@ internal static class TimersScreenRenderer
         return $"{check} {marker} [bold]{name}[/] {schedule} [dim]▪ {Escape(setName)}[/] → {command}";
     }
 
-    private static List<string> BuildEditor(TimerDefinition timer) => new()
+    private static List<string> BuildEditor(TimerDefinition timer, ScreenFocus cursor) => new()
     {
         "[dim]interval (seconds)[/]",
         $"  {Seconds(timer)}",
@@ -140,9 +175,13 @@ internal static class TimersScreenRenderer
         "[dim]command[/]",
         $"  {Escape(timer.Command)}",
         string.Empty,
-        timer.OneShot ? $"[{Accent}][[x]][/] one-shot" : "[dim][[ ]] one-shot[/]",
-        timer.Enabled ? $"[{Accent}][[x]][/] enabled" : "[dim][[ ]] enabled[/]",
+        ScreenChrome.Cursor(Checkbox("one-shot", timer.OneShot), cursor.IsOn(1, 0), ColumnWidth),
+        ScreenChrome.Cursor(Checkbox("enabled", timer.Enabled), cursor.IsOn(1, 1), ColumnWidth),
     };
+
+    /// <summary>A checkbox row in the editor pane, checked in the accent and unchecked dim.</summary>
+    private static string Checkbox(string label, bool value) =>
+        value ? $"[{Accent}][[x]][/] {Escape(label)}" : $"[dim][[ ]] {Escape(label)}[/]";
 
     /// <summary>The row-level schedule summary: <c>every 30s</c>, or <c>once after 5.5s</c>.</summary>
     private static string Schedule(TimerDefinition timer) =>

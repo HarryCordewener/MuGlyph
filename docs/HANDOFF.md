@@ -4,8 +4,8 @@ Context for whoever (human or agent) picks up this work next.
 
 - **Repository:** `SharpMUSH/SharpMUTerm`
 - **Start from:** a fresh branch off `main`
-- **Tests:** 514 across the solution (310 Core / 57 Graphics / 42 Scripting /
-  15 Web / 90 Tui), all green; `dotnet build SharpMUTerm.slnx` clean (0 warnings)
+- **Tests:** 574 across the solution (313 Core / 57 Graphics / 42 Scripting /
+  15 Web / 147 Tui), all green; `dotnet build SharpMUTerm.slnx` clean (0 warnings)
 
 ---
 
@@ -44,14 +44,41 @@ clean degradation when no graphics protocol is available (the sandbox is exactly
 that case). Real verification must happen on a GPU terminal (Kitty/WezTerm/
 Ghostty) on the maintainer's machine.
 
-### 3. Live keyboard interaction for the config screens
+### 3. Live keyboard interaction for the config screens — navigation + toggles done
 
-The screens are currently **display-only** projections of config state — the
-keyboard hints ("↑↓ select · ⇥ switch pane · ⏎ edit") describe intended behavior
-that isn't wired yet. Selection indices (`ActiveWorldIndex()`,
-`ActiveCharacterIndex()`) drive what's highlighted, but there's no in-screen
-navigation/edit loop. Wiring real editing (move selection, toggle checkboxes,
-edit fields, persist on Save) is a substantial follow-up.
+**Status:** ↑↓ selection, ⇥ pane switching, Space toggling, and Esc/⏎
+cancel-save are wired on all eight screens. **Field editing is not** — nothing
+lets you type a new host, interval, or pattern yet, and no header claims it does
+(a test asserts no screen advertises "⏎ edit"/"⏎ rebind"/"⏎ change").
+
+How it fits together:
+
+- `ScreenSelection` — pure cursor state (which pane, where each pane's cursor
+  sits). Pane sizes are passed in per move rather than cached, because a
+  keystroke can change them.
+- `ScreenModel` / `ScreenToggle` — a screen's navigable panes and the config each
+  checkbox writes to. Built fresh from live config on every key by the renderer's
+  own `Model(...)`, so the renderer stays the single source of truth for a
+  screen's shape.
+- `ScreenEdits` — the undo log behind Cancel/Save. Screens edit config **in
+  place** (cloning `AppConfiguration` would drop `[JsonIgnore]` fields like a
+  character's in-memory password), so Esc is a replayed undo. A toggle's snapshot
+  captures the *value*, not the boolean — F9's "auto-start" is really a
+  `LogFormat`, and cancelling must put `Html` back, not `Plain`.
+- `SettingsSession` — key → action (`Redraw`/`Save`/`Cancel`/…). All the
+  interaction rules live here so they're testable without a terminal.
+- `SettingsOverlay` — the only UI-aware piece: on `Redraw` it does
+  `ClearControls()` + `AddControl(factory())` + `Invalidate(true)`.
+
+What Space toggles, per screen: F2 trigger `Enabled` / `Gag` / `StopProcessing`,
+F3 alias `Enabled` / `CaseSensitive`, F4 macro `Enabled`, F5 character
+`AutoLogin` + trigger-set assignment, F6 timer `Enabled` / `OneShot`, F7/F8 the
+new `AppConfiguration.Text` / `.Input` preference objects, F9 the log format.
+F4/F7/F8/F9 are single-pane (no ⇥); F5 has three panes.
+
+**Still open:** field editing (text/number/enum rows), add/remove rows
+(`[+ world]`, `[- del]`, `[+ add character]` are still painted but inert), and
+the F2 route-to radio list + highlight colour picker.
 
 ### 4. Full-width solid input band — verify on a real terminal
 
@@ -212,7 +239,11 @@ Things that will waste your time if you don't know them.
 | `src/SharpMUTerm.Tui/SharpMUTermApp.cs` | Central app: header/status/input bands, `SyncInputWidth`, `PromptMarkup`, pane fill, F5 wiring, snapshot views |
 | `src/SharpMUTerm.Tui/WorldsScreenRenderer.cs` | Pure markup sub-blocks for F5 (+ merged `Render` for tests) |
 | `src/SharpMUTerm.Tui/WorldsScreenView.cs` | Composes F5 sub-blocks into real control panels |
-| `src/SharpMUTerm.Tui/SettingsOverlay.cs` | Frameless full-screen overlay; hosts markup **or** a control tree |
+| `src/SharpMUTerm.Tui/SettingsOverlay.cs` | Frameless full-screen overlay; routes keys to the screen's session and rebuilds its content |
+| `src/SharpMUTerm.Tui/SettingsSession.cs` | Key → action for an open settings screen (the whole interaction contract, testable) |
+| `src/SharpMUTerm.Tui/ScreenSelection.cs` | Pure pane/cursor state machine for the settings screens |
+| `src/SharpMUTerm.Tui/ScreenModel.cs` | A screen's navigable panes + the config each checkbox binds to |
+| `src/SharpMUTerm.Tui/ScreenEdits.cs` | The undo log behind Cancel/Save |
 | `src/SharpMUTerm.Tui/CommandPalette.cs` | ⌃P surface: content-hug sizing, clean chrome |
 | `src/SharpMUTerm.Tui/CommandSurfaceRenderer.cs` | Palette rows + full-width selection bar |
 | `tools/fonts/OFL.txt`, `LICENSE-NerdFonts.txt` | Full bundled license texts |

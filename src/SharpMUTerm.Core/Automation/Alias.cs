@@ -11,6 +11,7 @@ namespace SharpMUTerm.Core.Automation;
 public sealed class Alias
 {
     private Regex? _compiled;
+    private bool _caseSensitive;
 
     public string Name { get; init; } = string.Empty;
 
@@ -18,7 +19,25 @@ public sealed class Alias
 
     public bool Enabled { get; set; } = true;
 
-    public bool CaseSensitive { get; init; }
+    /// <summary>
+    /// Match case exactly. Settable so the F3 settings screen can flip it live; writing it drops the
+    /// cached <see cref="Regex"/> so the next match recompiles with the new casing rather than
+    /// silently keeping the old options.
+    /// </summary>
+    public bool CaseSensitive
+    {
+        get => _caseSensitive;
+        set
+        {
+            if (_caseSensitive == value)
+            {
+                return;
+            }
+
+            _caseSensitive = value;
+            _compiled = null;
+        }
+    }
 
     /// <summary>The expansion template. May contain multiple newline-separated commands.</summary>
     public string Substitution { get; init; } = string.Empty;

@@ -15,7 +15,24 @@
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
-  <ItemGroup>
+  <!--
+    SharpConsoleUI comes from NuGet by default. Clone the framework beside this repo
+    (`git clone https://github.com/nickprotop/ConsoleEx.git ../../SharpConsoleUI`, checked out at the
+    tag matching Directory.Packages.props) and it is referenced from source instead — so you can read
+    and step into the framework rather than decompiling it. CI and anyone without the clone are
+    unaffected: the condition simply doesn't match and the package is used.
+    Set UseSharpConsoleUIPackage=true to force the package even with the clone present.
+  -->
+  <PropertyGroup>
+    <SharpConsoleUISource>$(MSBuildThisFileDirectory)..\..\..\SharpConsoleUI\SharpConsoleUI\SharpConsoleUI.csproj</SharpConsoleUISource>
+    <UseSharpConsoleUISource Condition="'$(UseSharpConsoleUIPackage)' != 'true' AND Exists('$(SharpConsoleUISource)')">true</UseSharpConsoleUISource>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(UseSharpConsoleUISource)' == 'true'">
+    <ProjectReference Include="$(SharpConsoleUISource)" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UseSharpConsoleUISource)' != 'true'">
     <PackageReference Include="SharpConsoleUI" />
   </ItemGroup>
 

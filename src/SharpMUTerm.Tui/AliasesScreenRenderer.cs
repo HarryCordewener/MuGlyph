@@ -17,7 +17,12 @@ namespace SharpMUTerm.Tui;
 /// </summary>
 internal static class AliasesScreenRenderer
 {
-    private const int ColumnWidth = 54;
+    /// <summary>
+    /// Visible width of the left column. The view lays its column out at exactly this width, so
+    /// the two must agree -- a cursor bar padded narrower than its column leaves a gap before the
+    /// rule. Shared rather than duplicated so they cannot drift apart.
+    /// </summary>
+    internal const int ColumnWidth = 56;
 
     /// <summary>
     /// Merges every sub-block into one line list (header, alias list | editor, footer). Used by the
@@ -51,8 +56,33 @@ internal static class AliasesScreenRenderer
     internal static string HeaderLine(int width)
     {
         var title = $"[bold {Value}] Aliases[/]";
-        var hints = ScreenChrome.Hints("↑↓ select · ⇥ switch pane · ⏎ edit", "F3");
+        var hints = ScreenChrome.Hints(ScreenChrome.ListHints, "F3");
         return SpreadLR(" " + title, hints, width);
+    }
+
+    /// <summary>
+    /// The screen's navigable panes: the alias list (Space enables/disables one) and the selected
+    /// alias's checkbox rows, in the order <see cref="EditorColumn"/> draws them.
+    /// </summary>
+    internal static ScreenModel Model(IReadOnlyList<TriggerSet> sets, int selected)
+    {
+        ArgumentNullException.ThrowIfNull(sets);
+
+        var entries = Flatten(sets);
+        var list = ScreenModel.Toggles(entries, e => e.Alias.Enabled, (e, v) => e.Alias.Enabled = v);
+
+        if (selected < 0 || selected >= entries.Count)
+        {
+            return new ScreenModel(list, Array.Empty<ScreenToggle?>());
+        }
+
+        var alias = entries[selected].Alias;
+        var editor = new ScreenToggle?[]
+        {
+            ScreenToggle.Bind(() => alias.CaseSensitive, v => alias.CaseSensitive = v),
+        };
+
+        return new ScreenModel(list, editor);
     }
 
     /// <summary>The action bar: which alias is selected on the left, cancel/save on the right.</summary>
@@ -72,10 +102,12 @@ internal static class AliasesScreenRenderer
     }
 
     /// <summary>The alias list — every alias of every set, with its enabled state and expansion.</summary>
-    internal static List<string> ListColumn(IReadOnlyList<TriggerSet> sets, int selected)
+    internal static List<string> ListColumn(
+        IReadOnlyList<TriggerSet> sets, int selected, ScreenFocus? focus = null)
     {
         ArgumentNullException.ThrowIfNull(sets);
 
+        var cursor = focus ?? ScreenFocus.None;
         var entries = Flatten(sets);
         var lines = new List<string> { "[dim]on  name / pattern → expansion[/]" };
 
@@ -87,7 +119,8 @@ internal static class AliasesScreenRenderer
 
         for (var i = 0; i < entries.Count; i++)
         {
-            lines.Add(Row(entries[i].Alias, entries[i].SetName, i == selected));
+            var row = Row(entries[i].Alias, entries[i].SetName, i == selected);
+            lines.Add(ScreenChrome.Cursor(row, cursor.IsOn(0, i), ColumnWidth));
         }
 
         return lines;
@@ -97,13 +130,14 @@ internal static class AliasesScreenRenderer
     /// The editor for the selected alias — pattern, expansion lines, and the case-sensitivity
     /// toggle. Empty when nothing is selected.
     /// </summary>
-    internal static List<string> EditorColumn(IReadOnlyList<TriggerSet> sets, int selected)
+    internal static List<string> EditorColumn(
+        IReadOnlyList<TriggerSet> sets, int selected, ScreenFocus? focus = null)
     {
         ArgumentNullException.ThrowIfNull(sets);
 
         var entries = Flatten(sets);
         return selected >= 0 && selected < entries.Count
-            ? BuildEditor(entries[selected].Alias)
+            ? BuildEditor(entries[selected].Alias, focus ?? ScreenFocus.None)
             : new List<string>();
     }
 
@@ -132,7 +166,7 @@ internal static class AliasesScreenRenderer
         return $"{check} {marker} [bold]{name}[/] [dim]{pattern}[/] [dim]▪ {Escape(setName)}[/] → {expansion}";
     }
 
-    private static List<string> BuildEditor(Alias alias)
+    private static List<string> BuildEditor(Alias alias, ScreenFocus cursor)
     {
         var lines = new List<string>
         {
@@ -148,9 +182,10 @@ internal static class AliasesScreenRenderer
         }
 
         lines.Add(string.Empty);
-        lines.Add(alias.CaseSensitive
+        var caseRow = alias.CaseSensitive
             ? $"[{Accent}][[x]][/] case sensitive"
-            : "[dim][[ ]] case sensitive[/]");
+            : "[dim][[ ]] case sensitive[/]";
+        lines.Add(ScreenChrome.Cursor(caseRow, cursor.IsOn(1, 0), ColumnWidth));
 
         return lines;
     }

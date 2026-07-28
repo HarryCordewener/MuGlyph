@@ -21,7 +21,8 @@ internal static class WorldsScreenView
         IReadOnlyList<TriggerSet> triggerSets,
         int selectedWorld,
         int selectedCharacter,
-        int width)
+        int width,
+        ScreenFocus? focus = null)
     {
         var accent = WorldsScreenRenderer.AccentFor(worlds, selectedWorld);
 
@@ -32,9 +33,11 @@ internal static class WorldsScreenView
 
         // Body: WORLDS list │ detail, as two real columns.
         var worldsCol = ScreenChrome.Stretch(
-            new MarkupControl(WorldsScreenRenderer.WorldsColumn(worlds, selectedWorld).ToList()));
+            new MarkupControl(WorldsScreenRenderer.WorldsColumn(worlds, selectedWorld, focus).ToList()));
         var detailCol = ScreenChrome.Stretch(new MarkupControl(
-            WorldsScreenRenderer.DetailColumn(worlds, triggerSets, selectedWorld, selectedCharacter, accent).ToList()));
+            WorldsScreenRenderer
+                .DetailColumn(worlds, triggerSets, selectedWorld, selectedCharacter, accent, focus)
+                .ToList()));
         var body = Controls.HorizontalGrid()
             .WithAlignment(HorizontalAlignment.Stretch)
             .WithVerticalAlignment(VerticalAlignment.Fill)
@@ -52,7 +55,7 @@ internal static class WorldsScreenView
         {
             var character = worlds[selectedWorld].Characters[selectedCharacter];
             var form = WorldsScreenRenderer.FormColumn(character, accent).ToList();
-            var triggers = WorldsScreenRenderer.TriggersColumn(character, triggerSets, accent).ToList();
+            var triggers = WorldsScreenRenderer.TriggersColumn(character, triggerSets, accent, focus).ToList();
             var editHeight = Math.Max(form.Count, triggers.Count);
 
             // Form panel on the left; the trigger checklist pushed to the right by a flex spacer so its

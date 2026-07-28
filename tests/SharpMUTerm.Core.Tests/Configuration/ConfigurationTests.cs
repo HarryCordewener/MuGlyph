@@ -261,6 +261,51 @@ public class ConfigurationTests
     }
 
     [Test]
+    public async Task TextAndInputPreferences_RoundTripThroughTheStore()
+    {
+        var config = new AppConfiguration();
+        config.Text.StripIncomingColour = true;
+        config.Text.UnderlineHyperlinks = false;
+        config.Text.AmbiguousWidth = "wide";
+        config.Input.LocalEcho = false;
+        config.Input.Dictionary = "en_GB";
+
+        var restored = ConfigurationStore.Deserialize(ConfigurationStore.Serialize(config));
+
+        await Assert.That(restored.Text.StripIncomingColour).IsTrue();
+        await Assert.That(restored.Text.AllowBlink).IsFalse();
+        await Assert.That(restored.Text.UnderlineHyperlinks).IsFalse();
+        await Assert.That(restored.Text.AmbiguousWidth).IsEqualTo("wide");
+        await Assert.That(restored.Input.LocalEcho).IsFalse();
+        await Assert.That(restored.Input.KeepDrafts).IsTrue();
+        await Assert.That(restored.Input.Dictionary).IsEqualTo("en_GB");
+    }
+
+    [Test]
+    public async Task TextAndInputPreferences_DefaultWhenAConfigPredatesThem()
+    {
+        // Purely additive schema: an older file simply has no "text"/"input" object.
+        var restored = ConfigurationStore.Deserialize("""{"version":2,"worlds":[],"triggerSets":[]}""");
+
+        await Assert.That(restored.Text.UnderlineHyperlinks).IsTrue();
+        await Assert.That(restored.Text.AmbiguousWidth).IsEqualTo("narrow");
+        await Assert.That(restored.Input.NewlineKey).IsEqualTo("Shift+Enter");
+        await Assert.That(restored.Input.CheckSpelling).IsTrue();
+    }
+
+    [Test]
+    public async Task AliasCaseSensitivity_IsSettableAndDropsTheCachedRegex()
+    {
+        var alias = new Alias { Name = "k", Pattern = "^k$", Substitution = "kill" };
+        await Assert.That(alias.Regex.IsMatch("K")).IsTrue();
+
+        alias.CaseSensitive = true;
+
+        await Assert.That(alias.Regex.IsMatch("K")).IsFalse();
+        await Assert.That(alias.Regex.IsMatch("k")).IsTrue();
+    }
+
+    [Test]
     public async Task ColorConverter_RoundTripsAllKinds()
     {
         await Assert.That(TerminalColorJsonConverter.ToString(TerminalColor.Default)).IsEqualTo("default");

@@ -18,7 +18,12 @@ namespace SharpMUTerm.Tui;
 /// </summary>
 internal static class TriggersScreenRenderer
 {
-    private const int ColumnWidth = 54;
+    /// <summary>
+    /// Visible width of the left column. The view lays its column out at exactly this width, so
+    /// the two must agree -- a cursor bar padded narrower than its column leaves a gap before the
+    /// rule. Shared rather than duplicated so they cannot drift apart.
+    /// </summary>
+    internal const int ColumnWidth = 56;
 
     /// <summary>
     /// Merges every sub-block into one line list (header, rule list | editor, footer). Used by the
@@ -56,8 +61,35 @@ internal static class TriggersScreenRenderer
     internal static string HeaderLine(int width)
     {
         var title = $"[bold {Value}] Triggers & spawn routing[/]";
-        var hints = ScreenChrome.Hints("↑↓ select · ⇥ switch pane · ⏎ edit", "F2");
+        var hints = ScreenChrome.Hints(ScreenChrome.ListHints, "F2");
         return SpreadLR(" " + title, hints, width);
+    }
+
+    /// <summary>
+    /// The screen's navigable panes: the rule list (Space enables/disables a trigger) and the
+    /// selected rule's checkbox rows, in the order <see cref="EditorColumn"/> draws them.
+    /// </summary>
+    internal static ScreenModel Model(IReadOnlyList<TriggerSet> sets, int selectedTrigger)
+    {
+        ArgumentNullException.ThrowIfNull(sets);
+
+        var flattened = Flatten(sets);
+        var rules = ScreenModel.Toggles(
+            flattened, e => e.Trigger.Enabled, (e, v) => e.Trigger.Enabled = v);
+
+        if (selectedTrigger < 0 || selectedTrigger >= flattened.Count)
+        {
+            return new ScreenModel(rules, Array.Empty<ScreenToggle?>());
+        }
+
+        var trigger = flattened[selectedTrigger].Trigger;
+        var editor = new ScreenToggle?[]
+        {
+            ScreenToggle.Bind(() => trigger.Actions.Gag, v => trigger.Actions.Gag = v),
+            ScreenToggle.Bind(() => trigger.StopProcessing, v => trigger.StopProcessing = v),
+        };
+
+        return new ScreenModel(rules, editor);
     }
 
     /// <summary>The action bar: which rule is selected on the left, cancel/save on the right.</summary>
@@ -77,10 +109,12 @@ internal static class TriggersScreenRenderer
     }
 
     /// <summary>The rule list — every trigger of every set, each over a set/flags sub-row.</summary>
-    internal static List<string> RulesColumn(IReadOnlyList<TriggerSet> sets, int selectedTrigger)
+    internal static List<string> RulesColumn(
+        IReadOnlyList<TriggerSet> sets, int selectedTrigger, ScreenFocus? focus = null)
     {
         ArgumentNullException.ThrowIfNull(sets);
 
+        var cursor = focus ?? ScreenFocus.None;
         var flattened = Flatten(sets);
         var left = new List<string> { "[dim]on  name / pattern → window[/]" };
 
@@ -93,7 +127,7 @@ internal static class TriggersScreenRenderer
         for (var i = 0; i < flattened.Count; i++)
         {
             var (trigger, setName) = flattened[i];
-            left.Add(RuleRow(i, selectedTrigger, trigger));
+            left.Add(ScreenChrome.Cursor(RuleRow(i, selectedTrigger, trigger), cursor.IsOn(0, i), ColumnWidth));
             left.Add(RuleSub(setName, trigger.Actions));
         }
 
@@ -107,14 +141,15 @@ internal static class TriggersScreenRenderer
     internal static List<string> EditorColumn(
         IReadOnlyList<TriggerSet> sets,
         int selectedTrigger,
-        IReadOnlyList<string> spawnTargets)
+        IReadOnlyList<string> spawnTargets,
+        ScreenFocus? focus = null)
     {
         ArgumentNullException.ThrowIfNull(sets);
         ArgumentNullException.ThrowIfNull(spawnTargets);
 
         var flattened = Flatten(sets);
         return selectedTrigger >= 0 && selectedTrigger < flattened.Count
-            ? BuildEditor(flattened[selectedTrigger].Trigger, spawnTargets)
+            ? BuildEditor(flattened[selectedTrigger].Trigger, spawnTargets, focus ?? ScreenFocus.None)
             : new List<string>();
     }
 
@@ -175,7 +210,7 @@ internal static class TriggersScreenRenderer
         return flags.Count == 0 ? "—" : string.Join(" ", flags);
     }
 
-    private static List<string> BuildEditor(Trigger trigger, IReadOnlyList<string> spawnTargets)
+    private static List<string> BuildEditor(Trigger trigger, IReadOnlyList<string> spawnTargets, ScreenFocus cursor)
     {
         var currentRoute = trigger.Actions.SpawnTarget ?? "main";
 
@@ -214,12 +249,20 @@ internal static class TriggersScreenRenderer
             lines.Add(string.Empty);
         }
 
+        // The highlight row is a read-only indicator: it reports whether a colour is set, and there is
+        // no colour picker yet to turn one on with, so it never takes the cursor. The two rows below it
+        // are real booleans on the trigger, and are the editor pane's navigable rows in this order.
         lines.Add(hasHighlight ? $"[{Accent}][[x]][/] highlight line" : "[dim][[ ]] highlight line[/]");
-        lines.Add("[dim][[ ]] play sound[/]");
-        lines.Add(trigger.Actions.Gag ? $"[{Accent}][[x]][/] gag line" : "[dim][[ ]] gag line[/]");
+        lines.Add(ScreenChrome.Cursor(Checkbox("gag line", trigger.Actions.Gag), cursor.IsOn(1, 0), ColumnWidth));
+        lines.Add(ScreenChrome.Cursor(
+            Checkbox("stop processing", trigger.StopProcessing), cursor.IsOn(1, 1), ColumnWidth));
 
         return lines;
     }
+
+    /// <summary>A checkbox row in the editor pane, checked in the accent and unchecked dim.</summary>
+    private static string Checkbox(string label, bool value) =>
+        value ? $"[{Accent}][[x]][/] {Escape(label)}" : $"[dim][[ ]] {Escape(label)}[/]";
 
     private static string RouteRow(string label, string currentRoute)
     {

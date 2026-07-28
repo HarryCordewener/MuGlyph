@@ -39,7 +39,7 @@ public class KeypadScreenRendererTests
         // Skip(1): the first entry is the "NUMPAD" caption, not a key row.
         var offsets = KeypadScreenRenderer.NumpadColumn(macros).Skip(1).Select(CellOffsets).ToList();
 
-        await Assert.That(offsets).HasCount().EqualTo(3);
+        await Assert.That(offsets).Count().IsEqualTo(3);
         await Assert.That(offsets[1]).IsEqualTo(offsets[0]);
         await Assert.That(offsets[2]).IsEqualTo(offsets[0]);
     }

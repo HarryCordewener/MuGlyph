@@ -15,13 +15,14 @@ namespace SharpMUTerm.Tui;
 /// </summary>
 internal static class TriggersScreenView
 {
-    private const int RulesColumnWidth = 56;
+    private const int RulesColumnWidth = TriggersScreenRenderer.ColumnWidth;
 
     public static IWindowControl Build(
         IReadOnlyList<TriggerSet> sets,
         int selectedTrigger,
         IReadOnlyList<string> spawnTargets,
-        int width)
+        int width,
+        ScreenFocus? focus = null)
     {
         var header = ScreenChrome.Band(TriggersScreenRenderer.HeaderLine(width), ScreenPalette.HeaderBg);
         var footer = ScreenChrome.Band(
@@ -29,9 +30,10 @@ internal static class TriggersScreenView
 
         // Body: rule list │ editor, as two real columns.
         var rulesCol = ScreenChrome.Stretch(
-            new MarkupControl(TriggersScreenRenderer.RulesColumn(sets, selectedTrigger)));
+            new MarkupControl(TriggersScreenRenderer.RulesColumn(sets, selectedTrigger, focus)));
         var editorCol = ScreenChrome.Stretch(new MarkupControl(
-            ScreenChrome.Indent(TriggersScreenRenderer.EditorColumn(sets, selectedTrigger, spawnTargets))));
+            ScreenChrome.Indent(
+                TriggersScreenRenderer.EditorColumn(sets, selectedTrigger, spawnTargets, focus))));
         var body = Controls.HorizontalGrid()
             .WithAlignment(HorizontalAlignment.Stretch)
             .WithVerticalAlignment(VerticalAlignment.Fill)

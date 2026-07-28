@@ -19,14 +19,18 @@ internal static class OptionsScreenView
     /// <summary>Blank pad rows above and below the list inside the card.</summary>
     private const int CardPadding = 2;
 
-    public static IWindowControl Build(OptionsScreenRenderer.OptionsScreen screen, int width)
+    /// <summary>Columns the list is inset by: two of padding on each side of the card.</summary>
+    private const int CardInset = 4;
+
+    public static IWindowControl Build(
+        OptionsScreenRenderer.OptionsScreen screen, int width, ScreenFocus? focus = null)
     {
         var header = ScreenChrome.Band(
             OptionsScreenRenderer.HeaderLine(screen.Title, screen.FKey, width), ScreenPalette.HeaderBg);
         var footer = ScreenChrome.Band(
             OptionsScreenRenderer.FooterLine(screen.Rows, width), ScreenPalette.FooterBg);
 
-        var rows = OptionsScreenRenderer.BodyColumn(screen.Rows);
+        var rows = OptionsScreenRenderer.BodyColumn(screen.Rows, focus, Math.Max(0, width - CardInset));
         var card = Card(rows);
 
         // Header on the first row, footer on the last, the card hugging its content directly beneath the

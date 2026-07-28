@@ -36,6 +36,13 @@ internal static class ScreenPalette
     /// <summary>Hairlines — column rules and separators.</summary>
     internal const string Rule = "#3a4257";
 
+    /// <summary>
+    /// The bar under the keyboard cursor. Lighter than <see cref="EditBg"/> so it reads as a cursor on
+    /// both the backdrop and an elevated card, without competing with the accent the way a filled
+    /// accent bar would when it lands on every screen.
+    /// </summary>
+    internal const string CursorBg = "#2e3950";
+
     /// <summary>Near-black, for text printed *on* the accent (the Save chip).</summary>
     internal const string Ink = "#0f1620";
 }

@@ -16,8 +16,11 @@ public sealed class TimerDefinition
     /// <summary>The command sent on each firing (blank when a script callback is used instead).</summary>
     public string Command { get; init; } = string.Empty;
 
-    /// <summary>Fire only once after the interval rather than repeating.</summary>
-    public bool OneShot { get; init; }
+    /// <summary>
+    /// Fire only once after the interval rather than repeating. Settable so the F6 screen can flip it
+    /// live; the scheduler reads it when the timer is realised, so a change applies on the next run.
+    /// </summary>
+    public bool OneShot { get; set; }
 
     public bool Enabled { get; set; } = true;
 

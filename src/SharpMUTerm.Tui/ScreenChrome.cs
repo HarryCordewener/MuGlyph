@@ -22,12 +22,29 @@ internal static class ScreenChrome
         + $"[{ScreenPalette.Accent}]Esc[/][{ScreenPalette.Label}] close [/]";
 
     /// <summary>
+    /// The keyboard hints every screen with a list and a checkbox pane shares. Kept in one place so a
+    /// screen can't advertise a key its <see cref="ScreenModel"/> doesn't actually offer.
+    /// </summary>
+    internal const string ListHints = "↑↓ select · ⇥ pane · Space toggle";
+
+    /// <summary>The hints for a screen that is a single list with no second pane to ⇥ into.</summary>
+    internal const string SingleListHints = "↑↓ select · Space toggle";
+
+    /// <summary>
     /// The right-hand actions of a footer bar. <paramref name="accent"/> lets a screen with a
     /// context colour (F5's per-world accent) tint the Save chip; it defaults to the app accent.
     /// </summary>
     internal static string Actions(string? accent = null) =>
         $"[{ScreenPalette.Label}] [[Esc]] Cancel [/]  "
         + $"[{ScreenPalette.Ink} on {accent ?? ScreenPalette.Accent}] [[⏎]] Save [/] ";
+
+    /// <summary>
+    /// Draws a row as the keyboard cursor: the row's own markup on a cursor band padded out to
+    /// <paramref name="width"/>, so the bar spans its pane instead of hugging the text. A row that
+    /// isn't under the cursor comes back untouched.
+    /// </summary>
+    internal static string Cursor(string row, bool focused, int width) =>
+        focused ? $"[on {ScreenPalette.CursorBg}]{MarkupText.PadVisible(row, width)}[/]" : row;
 
     /// <summary>A full-width one-row band — the header or the footer.</summary>
     internal static MarkupControl Band(string line, string bg) => new(new List<string> { line })

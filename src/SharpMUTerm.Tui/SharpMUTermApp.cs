@@ -164,7 +164,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             .Build();
 
         _palette = new CommandPalette(_system, BuildCatalog, () => _active?.SessionKey, DispatchCommand);
-        _settings = new SettingsOverlay(_system);
+        _settings = new SettingsOverlay(_system, SaveConfiguration);
 
         _window.OnResize += (_, _) =>
         {
@@ -296,7 +296,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // either way) open over the workspace for their --view name.
         if (view is not null && SettingsView(view) is { } screen)
         {
-            _settings.OpenForSnapshot(screen.Key, screen.Control);
+            _settings.OpenForSnapshot(screen.Key, screen.Open());
         }
 
         // Render exactly one frame, synchronously, inline on this thread. ForceRender() performs a
@@ -716,9 +716,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
     /// <summary>
     /// One settings screen: the F-key that toggles it, the <c>--view</c> names that select it for a
-    /// snapshot, and the factory that builds its control.
+    /// snapshot, and the factory that opens it — a fresh <see cref="SettingsSession"/> (its own cursor
+    /// and undo log) plus the control factory that renders that session.
     /// </summary>
-    private readonly record struct SettingsScreen(ConsoleKey Key, string[] Views, Func<IWindowControl> Control);
+    private readonly record struct SettingsScreen(ConsoleKey Key, string[] Views, Func<ScreenBinding> Open);
 
     /// <summary>
     /// The F2–F9 settings screens, in F-key order. Both the global shortcuts and the <c>--view</c>
@@ -729,14 +730,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private IReadOnlyList<SettingsScreen> SettingsScreens() => new SettingsScreen[]
     {
-        new(ConsoleKey.F2, new[] { "triggers" }, TriggersControl),
-        new(ConsoleKey.F3, new[] { "aliases" }, AliasesControl),
-        new(ConsoleKey.F4, new[] { "keypad" }, KeypadControl),
-        new(ConsoleKey.F5, new[] { "worlds", "settings" }, WorldsControl),
-        new(ConsoleKey.F6, new[] { "timers" }, TimersControl),
-        new(ConsoleKey.F7, new[] { "textansi" }, TextAnsiControl),
-        new(ConsoleKey.F8, new[] { "input" }, InputSpellcheckControl),
-        new(ConsoleKey.F9, new[] { "logging" }, LoggingControl),
+        new(ConsoleKey.F2, new[] { "triggers" }, TriggersScreen),
+        new(ConsoleKey.F3, new[] { "aliases" }, AliasesScreen),
+        new(ConsoleKey.F4, new[] { "keypad" }, KeypadScreen),
+        new(ConsoleKey.F5, new[] { "worlds", "settings" }, WorldsScreen),
+        new(ConsoleKey.F6, new[] { "timers" }, TimersScreen),
+        new(ConsoleKey.F7, new[] { "textansi" }, TextAnsiScreen),
+        new(ConsoleKey.F8, new[] { "input" }, InputSpellcheckScreen),
+        new(ConsoleKey.F9, new[] { "logging" }, LoggingScreen),
     };
 
     /// <summary>
@@ -746,8 +747,26 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     {
         foreach (var screen in SettingsScreens())
         {
-            var (key, control) = (screen.Key, screen.Control);
-            _system.RegisterGlobalShortcut((ConsoleModifiers)0, key, () => _settings.Toggle(key, control));
+            var (key, open) = (screen.Key, screen.Open);
+            _system.RegisterGlobalShortcut((ConsoleModifiers)0, key, () => _settings.Toggle(key, open));
+        }
+    }
+
+    /// <summary>
+    /// Persists the configuration the settings screens edit — the ⏎ Save action. The workspace layout
+    /// is captured alongside it so a save never rolls back the resumed session; a failed write is
+    /// swallowed for the same reason startup's is (the config is a convenience, not the session).
+    /// </summary>
+    private void SaveConfiguration()
+    {
+        try
+        {
+            _config.LastSession = CaptureSession();
+            ConfigurationStore.Save(ConfigurationStore.DefaultPath, _config);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            SetStatus($"[red]could not save settings:[/] {Escape(ex.Message)}");
         }
     }
 
@@ -798,52 +817,122 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         return 0;
     }
 
-    /// <summary>The active character's logging settings, for the F9 logging screen.</summary>
+    /// <summary>
+    /// The logging settings the F9 screen edits: the active character's, falling back to the first
+    /// configured character so a disconnected screen still edits something that can be saved. Only a
+    /// config with no characters at all yields a detached default — without a character there is no
+    /// session to log.
+    /// </summary>
     private LoggingSettings ActiveLogging()
     {
         var world = _config.Worlds.ElementAtOrDefault(ActiveWorldIndex());
-        return world?.Characters.ElementAtOrDefault(ActiveCharacterIndex())?.Logging ?? new LoggingSettings();
+        var character = world?.Characters.ElementAtOrDefault(ActiveCharacterIndex())
+            ?? _config.Worlds.SelectMany(w => w.Characters).FirstOrDefault();
+        return character?.Logging ?? new LoggingSettings();
     }
 
-    /// <summary>Builds the F5 Worlds &amp; Characters screen as a composed control tree (real panels).</summary>
-    private IWindowControl WorldsControl() => WorldsScreenView.Build(
-        _config.Worlds, _config.TriggerSets, ActiveWorldIndex(), ActiveCharacterIndex(), _system.DesktopDimensions.Width);
+    /// <summary>
+    /// Opens the F5 Worlds &amp; Characters screen: three panes (worlds → characters → the selected
+    /// character's trigger sets), seeded on whatever is connected so the screen opens where the user
+    /// already is.
+    /// </summary>
+    private ScreenBinding WorldsScreen()
+    {
+        var session = new SettingsSession(selection => WorldsScreenRenderer.Model(
+            _config.Worlds, _config.TriggerSets, selection.CursorIn(0), selection.CursorIn(1)));
+        session.Selection.Seed(0, ActiveWorldIndex());
+        session.Selection.Seed(1, ActiveCharacterIndex());
 
-    /// <summary>Builds the F2 Triggers &amp; spawn routing screen as a composed control tree (real panels).</summary>
-    private IWindowControl TriggersControl() => TriggersScreenView.Build(
-        _config.TriggerSets, 0, SpawnTargets(), _system.DesktopDimensions.Width);
+        return new ScreenBinding(session, () => WorldsScreenView.Build(
+            _config.Worlds,
+            _config.TriggerSets,
+            session.Selection.CursorIn(0),
+            session.Selection.CursorIn(1),
+            _system.DesktopDimensions.Width,
+            session.Focus()));
+    }
 
-    /// <summary>Builds the F3 Aliases screen as a composed control tree (real panels).</summary>
-    private IWindowControl AliasesControl() => AliasesScreenView.Build(
-        _config.TriggerSets, 0, _system.DesktopDimensions.Width);
+    /// <summary>Opens the F2 Triggers &amp; spawn routing screen: the rule list, then the rule's toggles.</summary>
+    private ScreenBinding TriggersScreen()
+    {
+        var session = new SettingsSession(selection =>
+            TriggersScreenRenderer.Model(_config.TriggerSets, selection.CursorIn(0)));
 
-    /// <summary>Builds the F4 Keypad &amp; hotkeys screen as a composed control tree (real panels).</summary>
-    private IWindowControl KeypadControl() => KeypadScreenView.Build(Macros(), _system.DesktopDimensions.Width);
+        return new ScreenBinding(session, () => TriggersScreenView.Build(
+            _config.TriggerSets,
+            session.Selection.CursorIn(0),
+            SpawnTargets(),
+            _system.DesktopDimensions.Width,
+            session.Focus()));
+    }
 
-    /// <summary>Builds the F6 Timers screen as a composed control tree (real panels).</summary>
-    private IWindowControl TimersControl() => TimersScreenView.Build(
-        _config.TriggerSets, 0, _system.DesktopDimensions.Width);
+    /// <summary>Opens the F3 Aliases screen: the alias list, then the alias's toggles.</summary>
+    private ScreenBinding AliasesScreen()
+    {
+        var session = new SettingsSession(selection =>
+            AliasesScreenRenderer.Model(_config.TriggerSets, selection.CursorIn(0)));
 
-    /// <summary>Builds the F7 Text &amp; ANSI screen as a composed control tree (real panels).</summary>
-    private IWindowControl TextAnsiControl() => OptionsScreenView.Build(
-        OptionsScreenRenderer.TextAnsiScreen(), _system.DesktopDimensions.Width);
+        return new ScreenBinding(session, () => AliasesScreenView.Build(
+            _config.TriggerSets, session.Selection.CursorIn(0), _system.DesktopDimensions.Width, session.Focus()));
+    }
 
-    /// <summary>Builds the F8 Input &amp; spellcheck screen as a composed control tree (real panels).</summary>
-    private IWindowControl InputSpellcheckControl() => OptionsScreenView.Build(
-        OptionsScreenRenderer.InputSpellcheckScreen(), _system.DesktopDimensions.Width);
+    /// <summary>Opens the F4 Keypad &amp; hotkeys screen: one pane, the binding list.</summary>
+    private ScreenBinding KeypadScreen()
+    {
+        var session = new SettingsSession(_ => KeypadScreenRenderer.Model(Macros()));
+        return new ScreenBinding(session, () => KeypadScreenView.Build(
+            Macros(), _system.DesktopDimensions.Width, session.Focus()));
+    }
 
-    /// <summary>Builds the F9 Logging screen as a composed control tree (real panels).</summary>
-    private IWindowControl LoggingControl() => OptionsScreenView.Build(
-        OptionsScreenRenderer.LoggingScreen(ActiveLogging()), _system.DesktopDimensions.Width);
+    /// <summary>Opens the F6 Timers screen: the timer list, then the timer's toggles.</summary>
+    private ScreenBinding TimersScreen()
+    {
+        var session = new SettingsSession(selection =>
+            TimersScreenRenderer.Model(_config.TriggerSets, selection.CursorIn(0)));
 
-    /// <summary>Maps a <c>--view</c> name to a settings screen (F-key + control factory) for snapshots.</summary>
-    private (ConsoleKey Key, Func<IWindowControl> Control)? SettingsView(string view)
+        return new ScreenBinding(session, () => TimersScreenView.Build(
+            _config.TriggerSets, session.Selection.CursorIn(0), _system.DesktopDimensions.Width, session.Focus()));
+    }
+
+    /// <summary>Opens the F7 Text &amp; ANSI screen, bound to the app's text preferences.</summary>
+    private ScreenBinding TextAnsiScreen() =>
+        OptionsScreen(() => OptionsScreenRenderer.TextAnsiScreen(_config.Text));
+
+    /// <summary>Opens the F8 Input &amp; spellcheck screen, bound to the app's input preferences.</summary>
+    private ScreenBinding InputSpellcheckScreen() =>
+        OptionsScreen(() => OptionsScreenRenderer.InputSpellcheckScreen(_config.Input));
+
+    /// <summary>
+    /// Opens the F9 Logging screen, bound to the active character's logging settings. The settings
+    /// object is resolved once, when the screen opens: re-resolving it per keystroke would let the
+    /// screen edit one character's log and then save another's if the active session changed underneath.
+    /// </summary>
+    private ScreenBinding LoggingScreen()
+    {
+        var logging = ActiveLogging();
+        return OptionsScreen(() => OptionsScreenRenderer.LoggingScreen(logging));
+    }
+
+    /// <summary>
+    /// The shared open path for the single-list option screens (F7/F8/F9). <paramref name="screen"/> is
+    /// re-projected from config on every key, so a flipped checkbox shows up in both the row it lives
+    /// on and the model the next keystroke navigates.
+    /// </summary>
+    private ScreenBinding OptionsScreen(Func<OptionsScreenRenderer.OptionsScreen> screen)
+    {
+        var session = new SettingsSession(_ => OptionsScreenRenderer.Model(screen()));
+        return new ScreenBinding(session, () => OptionsScreenView.Build(
+            screen(), _system.DesktopDimensions.Width, session.Focus()));
+    }
+
+    /// <summary>Maps a <c>--view</c> name to a settings screen (F-key + open factory) for snapshots.</summary>
+    private (ConsoleKey Key, Func<ScreenBinding> Open)? SettingsView(string view)
     {
         foreach (var screen in SettingsScreens())
         {
             if (screen.Views.Contains(view, StringComparer.OrdinalIgnoreCase))
             {
-                return (screen.Key, screen.Control);
+                return (screen.Key, screen.Open);
             }
         }
 

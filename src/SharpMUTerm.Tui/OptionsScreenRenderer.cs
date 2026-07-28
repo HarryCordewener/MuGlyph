@@ -18,8 +18,13 @@ internal static class OptionsScreenRenderer
 {
     private const int LabelWidth = 28;
 
-    /// <summary>A single options-list row: a toggle, a value row, a section header, or a spacer.</summary>
-    public readonly record struct OptionRow(string Label, string? Value, bool? Toggle, string? Hint = null);
+    /// <summary>
+    /// A single options-list row: a toggle, a value row, a section header, or a spacer.
+    /// <paramref name="Bind"/> is the config the checkbox writes to; a row without one still takes the
+    /// cursor but Space does nothing there (the value rows, until field editing exists).
+    /// </summary>
+    public readonly record struct OptionRow(
+        string Label, string? Value, bool? Toggle, string? Hint = null, ScreenToggle? Bind = null);
 
     /// <summary>One options screen: the title and F-key its chrome shows, plus the rows it lists.</summary>
     internal readonly record struct OptionsScreen(string Title, string FKey, IReadOnlyList<OptionRow> Rows);
@@ -49,7 +54,7 @@ internal static class OptionsScreenRenderer
     internal static string HeaderLine(string title, string fkey, int width)
     {
         var heading = $"[{Label}]‹ back[/]   [bold {Value}]{Escape(title)}[/]";
-        return SpreadLR(" " + heading, ScreenChrome.Hints("↑↓ select · ⏎ change", Escape(fkey)), width);
+        return SpreadLR(" " + heading, ScreenChrome.Hints(ScreenChrome.SingleListHints, Escape(fkey)), width);
     }
 
     /// <summary>The action bar: how much the screen holds on the left, cancel/save on the right.</summary>
@@ -68,12 +73,46 @@ internal static class OptionsScreenRenderer
         return SpreadLR(" " + context, ScreenChrome.Actions(), width);
     }
 
-    /// <summary>The options list itself — one line per row, in order.</summary>
-    internal static List<string> BodyColumn(IReadOnlyList<OptionRow> rows)
+    /// <summary>
+    /// The options list itself — one line per row, in order. The row under the keyboard cursor is
+    /// drawn on a cursor bar padded to <paramref name="width"/>; spacers and section headers are
+    /// skipped when counting, so the cursor index matches <see cref="Model"/>'s row order.
+    /// </summary>
+    internal static List<string> BodyColumn(
+        IReadOnlyList<OptionRow> rows, ScreenFocus? focus = null, int width = 0)
     {
         ArgumentNullException.ThrowIfNull(rows);
 
-        return rows.Select(RenderRow).ToList();
+        var cursor = focus ?? ScreenFocus.None;
+        var lines = new List<string>(rows.Count);
+        var navigable = 0;
+        foreach (var row in rows)
+        {
+            var line = RenderRow(row);
+            if (IsSpacer(row) || IsSection(row))
+            {
+                lines.Add(line);
+                continue;
+            }
+
+            lines.Add(ScreenChrome.Cursor(line, cursor.IsOn(0, navigable), width));
+            navigable++;
+        }
+
+        return lines;
+    }
+
+    /// <summary>
+    /// The screen's one navigable pane: every row that isn't a spacer or a section header, in display
+    /// order, each carrying whatever config binding it was built with.
+    /// </summary>
+    internal static ScreenModel Model(OptionsScreen screen)
+    {
+        var rows = screen.Rows
+            .Where(r => !IsSpacer(r) && !IsSection(r))
+            .Select(r => r.Bind)
+            .ToArray();
+        return new ScreenModel(rows);
     }
 
     private static string RenderRow(OptionRow row)
@@ -107,43 +146,80 @@ internal static class OptionsScreenRenderer
     /// <summary>A dim group heading, marked by the branch glyph the screens prefix them with.</summary>
     private static bool IsSection(OptionRow row) => row.Label.StartsWith("├ ", StringComparison.Ordinal);
 
-    /// <summary>The F7 "Text &amp; ANSI" screen.</summary>
-    internal static OptionsScreen TextAnsiScreen() => new("Text & ANSI", "F7", new List<OptionRow>
+    /// <summary>
+    /// The F7 "Text &amp; ANSI" screen, reflecting — and writing back to — the app's
+    /// <see cref="TextSettings"/>. Called without arguments it projects the defaults, which is what
+    /// the unit tests and the width-agnostic fallback want.
+    /// </summary>
+    internal static OptionsScreen TextAnsiScreen(TextSettings? text = null)
     {
-        new("├ COLOUR", null, null),
-        new("strip incoming ANSI colour", null, false),
-        new("allow blink", null, false),
-        new("underline hyperlinks", null, true),
-        new(string.Empty, null, null),
-        new("├ UNICODE", null, null),
-        new("emoji substitution", null, true),
-        new("ambiguous width", "narrow", null),
-    });
+        var settings = text ?? new TextSettings();
 
-    /// <summary>The F8 "Input &amp; spellcheck" screen.</summary>
-    internal static OptionsScreen InputSpellcheckScreen() => new("Input & spellcheck", "F8", new List<OptionRow>
+        return new OptionsScreen("Text & ANSI", "F7", new List<OptionRow>
+        {
+            new("├ COLOUR", null, null),
+            new("strip incoming ANSI colour", null, settings.StripIncomingColour, null,
+                ScreenToggle.Bind(() => settings.StripIncomingColour, v => settings.StripIncomingColour = v)),
+            new("allow blink", null, settings.AllowBlink, null,
+                ScreenToggle.Bind(() => settings.AllowBlink, v => settings.AllowBlink = v)),
+            new("underline hyperlinks", null, settings.UnderlineHyperlinks, null,
+                ScreenToggle.Bind(() => settings.UnderlineHyperlinks, v => settings.UnderlineHyperlinks = v)),
+            new(string.Empty, null, null),
+            new("├ UNICODE", null, null),
+            new("emoji substitution", null, settings.EmojiSubstitution, null,
+                ScreenToggle.Bind(() => settings.EmojiSubstitution, v => settings.EmojiSubstitution = v)),
+            new("ambiguous width", settings.AmbiguousWidth, null),
+        });
+    }
+
+    /// <summary>
+    /// The F8 "Input &amp; spellcheck" screen, reflecting — and writing back to — the app's
+    /// <see cref="InputSettings"/>.
+    /// </summary>
+    internal static OptionsScreen InputSpellcheckScreen(InputSettings? input = null)
     {
-        new("├ INPUT", null, null),
-        new("local echo", null, true),
-        new("keep per-tab drafts", null, true),
-        new("newline key", "Shift+Enter", null),
-        new(string.Empty, null, null),
-        new("├ SPELLCHECK", null, null),
-        new("check spelling", null, true),
-        new("dictionary", "en_US", null),
-    });
+        var settings = input ?? new InputSettings();
+
+        return new OptionsScreen("Input & spellcheck", "F8", new List<OptionRow>
+        {
+            new("├ INPUT", null, null),
+            new("local echo", null, settings.LocalEcho, null,
+                ScreenToggle.Bind(() => settings.LocalEcho, v => settings.LocalEcho = v)),
+            new("keep per-tab drafts", null, settings.KeepDrafts, null,
+                ScreenToggle.Bind(() => settings.KeepDrafts, v => settings.KeepDrafts = v)),
+            new("newline key", settings.NewlineKey, null),
+            new(string.Empty, null, null),
+            new("├ SPELLCHECK", null, null),
+            new("check spelling", null, settings.CheckSpelling, null,
+                ScreenToggle.Bind(() => settings.CheckSpelling, v => settings.CheckSpelling = v)),
+            new("dictionary", settings.Dictionary, null),
+        });
+    }
 
     /// <summary>The F9 "Logging" screen, reflecting a character's <see cref="LoggingSettings"/>.</summary>
     internal static OptionsScreen LoggingScreen(LoggingSettings logging)
     {
         ArgumentNullException.ThrowIfNull(logging);
 
+        // "Auto-start" is really the log format: off means None, on means whatever format was last
+        // chosen (Plain when there isn't one). The binding's snapshot restores the *format*, not the
+        // boolean, so cancelling a toggle-off puts Html back rather than downgrading it to Plain.
+        var chosen = logging.Format == LogFormat.None ? LogFormat.Plain : logging.Format;
+        var autoStart = new ScreenToggle(
+            () => logging.Format != LogFormat.None,
+            () => logging.Format = logging.Format == LogFormat.None ? chosen : LogFormat.None,
+            () =>
+            {
+                var previous = logging.Format;
+                return () => logging.Format = previous;
+            });
+
         return new OptionsScreen("Logging", "F9", new List<OptionRow>
         {
             new("├ SESSION LOG", null, null),
             new("format", logging.Format.ToString(), null),
             new("directory", logging.Directory ?? "(default)", null),
-            new("auto-start on connect", null, logging.Format != LogFormat.None),
+            new("auto-start on connect", null, logging.Format != LogFormat.None, null, autoStart),
         });
     }
 

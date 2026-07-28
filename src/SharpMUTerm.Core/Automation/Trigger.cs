@@ -7,8 +7,8 @@ namespace SharpMUTerm.Core.Automation;
 /// <summary>The typed actions a matched <see cref="Trigger"/> performs.</summary>
 public sealed class TriggerActions
 {
-    /// <summary>Suppress the line from output entirely.</summary>
-    public bool Gag { get; init; }
+    /// <summary>Suppress the line from output entirely. Settable so the F2 screen can flip it live.</summary>
+    public bool Gag { get; set; }
 
     /// <summary>Recolour the matched region's foreground.</summary>
     public TerminalColor? HighlightForeground { get; init; }
@@ -52,8 +52,11 @@ public sealed class Trigger
 
     public bool CaseSensitive { get; init; }
 
-    /// <summary>When true, later triggers are not evaluated once this one matches.</summary>
-    public bool StopProcessing { get; init; }
+    /// <summary>
+    /// When true, later triggers are not evaluated once this one matches. Settable so the F2 screen
+    /// can flip it live; the engine reads it per match, so a change applies to the next line.
+    /// </summary>
+    public bool StopProcessing { get; set; }
 
     public TriggerActions Actions { get; init; } = new();
 

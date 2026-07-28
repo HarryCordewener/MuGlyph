@@ -19,6 +19,9 @@ internal static class WorldsScreenRenderer
     private const int WorldLabelWidth = 9;
     private const int CharLabelWidth = 10;
     private const int CharDetailColumnWidth = 40;
+
+    /// <summary>How wide the cursor bar runs across a character row — the row's own column header.</summary>
+    private const int CharacterRowWidth = 62;
     private const string DividerGlyph = " │ ";
 
     /// <summary>The accent hex for the selected world (its own, or the default teal).</summary>
@@ -78,8 +81,67 @@ internal static class WorldsScreenRenderer
     internal static string HeaderLine(int width)
     {
         var title = $"[bold {Value}] Worlds & Characters[/]";
-        var hints = ScreenChrome.Hints("↑↓ select · ⇥ switch pane · ⏎ edit", "F5");
+        var hints = ScreenChrome.Hints(ScreenChrome.ListHints, "F5");
         return SpreadLR(" " + title, hints, width);
+    }
+
+    /// <summary>
+    /// The screen's three navigable panes, in ⇥ order: the WORLDS list (selection only — a world has
+    /// no checkbox on its row), the selected world's characters (Space flips auto-login, which the row
+    /// itself reports), and the selected character's assigned trigger sets (Space assigns/unassigns).
+    /// The last two collapse to empty when there is nothing selected above them, and ⇥ skips empty
+    /// panes, so the cursor never lands somewhere with no rows.
+    /// </summary>
+    internal static ScreenModel Model(
+        IReadOnlyList<WorldDefinition> worlds,
+        IReadOnlyList<TriggerSet> triggerSets,
+        int selectedWorld,
+        int selectedCharacter)
+    {
+        ArgumentNullException.ThrowIfNull(worlds);
+        ArgumentNullException.ThrowIfNull(triggerSets);
+
+        var worldRows = ScreenModel.Stops(worlds.Count);
+        var world = selectedWorld >= 0 && selectedWorld < worlds.Count ? worlds[selectedWorld] : null;
+        var characterRows = world is null
+            ? Array.Empty<ScreenToggle?>()
+            : ScreenModel.Toggles(world.Characters, c => c.AutoLogin, (c, v) => c.AutoLogin = v);
+
+        if (!HasCharacter(worlds, selectedWorld, selectedCharacter))
+        {
+            return new ScreenModel(worldRows, characterRows, Array.Empty<ScreenToggle?>());
+        }
+
+        var character = worlds[selectedWorld].Characters[selectedCharacter];
+        var setRows = new ScreenToggle?[triggerSets.Count];
+        for (var i = 0; i < triggerSets.Count; i++)
+        {
+            var name = triggerSets[i].Name;
+
+            // Assignment is list membership, and the character's own order decides which set wins a
+            // conflict (see AppConfiguration.ResolveTriggerSets) — so the snapshot restores the whole
+            // list rather than re-adding the name at the end, which would silently reorder priority.
+            setRows[i] = new ScreenToggle(
+                () => character.TriggerSets.Contains(name),
+                () =>
+                {
+                    if (!character.TriggerSets.Remove(name))
+                    {
+                        character.TriggerSets.Add(name);
+                    }
+                },
+                () =>
+                {
+                    var previous = character.TriggerSets.ToList();
+                    return () =>
+                    {
+                        character.TriggerSets.Clear();
+                        character.TriggerSets.AddRange(previous);
+                    };
+                });
+        }
+
+        return new ScreenModel(worldRows, characterRows, setRows);
     }
 
     internal static string FooterLine(
@@ -100,8 +162,10 @@ internal static class WorldsScreenRenderer
         return SpreadLR(" " + context, actions, width);
     }
 
-    internal static List<string> WorldsColumn(IReadOnlyList<WorldDefinition> worlds, int selectedWorld)
+    internal static List<string> WorldsColumn(
+        IReadOnlyList<WorldDefinition> worlds, int selectedWorld, ScreenFocus? focus = null)
     {
+        var cursor = focus ?? ScreenFocus.None;
         var left = new List<string> { $"[{Label}]WORLDS[/]", string.Empty };
 
         for (var i = 0; i < worlds.Count; i++)
@@ -116,7 +180,8 @@ internal static class WorldsScreenRenderer
             var marker = selected ? $"[bold {Accent}]▸[/]" : " ";
             var accentHex = Hex(world.Accent);
             var name = selected ? $"[bold {Value}]{Escape(world.Name)}[/]" : $"[{Value}]{Escape(world.Name)}[/]";
-            left.Add($"{marker} [{accentHex}]▚[/] {name}");
+            left.Add(ScreenChrome.Cursor(
+                $"{marker} [{accentHex}]▚[/] {name}", cursor.IsOn(0, i), LeftColumnWidth));
             left.Add($"    [{Label}]{Escape(world.Host)}:{world.Port.ToString(CultureInfo.InvariantCulture)}[/]");
             left.Add($"    [{Label}]{world.Characters.Count.ToString(CultureInfo.InvariantCulture)} chars[/]");
         }
@@ -136,8 +201,10 @@ internal static class WorldsScreenRenderer
         IReadOnlyList<TriggerSet> triggerSets,
         int selectedWorld,
         int selectedCharacter,
-        string accent)
+        string accent,
+        ScreenFocus? focus = null)
     {
+        var cursor = focus ?? ScreenFocus.None;
         if (selectedWorld < 0 || selectedWorld >= worlds.Count)
         {
             return new List<string>();
@@ -171,7 +238,10 @@ internal static class WorldsScreenRenderer
         {
             for (var i = 0; i < world.Characters.Count; i++)
             {
-                right.Add(CharacterRow(world.Characters[i], i == selectedCharacter));
+                right.Add(ScreenChrome.Cursor(
+                    CharacterRow(world.Characters[i], i == selectedCharacter),
+                    cursor.IsOn(1, i),
+                    CharacterRowWidth));
             }
         }
 
@@ -194,17 +264,32 @@ internal static class WorldsScreenRenderer
 
     /// <summary>The assigned-trigger-sets checklist for a character.</summary>
     internal static List<string> TriggersColumn(
-        CharacterDefinition character, IReadOnlyList<TriggerSet> triggerSets, string accent)
+        CharacterDefinition character,
+        IReadOnlyList<TriggerSet> triggerSets,
+        string accent,
+        ScreenFocus? focus = null)
     {
-        var list = new List<string> { $"[{Label}]assigned trigger sets[/]", string.Empty };
+        var cursor = focus ?? ScreenFocus.None;
+        var rows = new List<string>(triggerSets.Count);
         foreach (var set in triggerSets)
         {
             var assigned = character.TriggerSets.Contains(set.Name);
             var box = assigned ? $"[{accent}][[x]][/]" : $"[{Label}][[ ]][/]";
             var nameColor = assigned ? Value : Label;
             var description = Escape(set.Description ?? string.Empty);
-            list.Add(
+            rows.Add(
                 $"{box} [{nameColor}]▪ {Escape(set.Name)}[/] [{Label}]— {description}   {set.Triggers.Count.ToString(CultureInfo.InvariantCulture)} rules[/]");
+        }
+
+        // The checklist sits in an auto-width column (see WorldsScreenView), so a cursor bar sized to
+        // one row would widen the block and shunt it sideways as the cursor moved. Sizing every bar to
+        // the widest row keeps the column's measured width constant whatever is focused.
+        var barWidth = rows.Count == 0 ? 0 : rows.Max(VisibleLength);
+
+        var list = new List<string> { $"[{Label}]assigned trigger sets[/]", string.Empty };
+        for (var i = 0; i < rows.Count; i++)
+        {
+            list.Add(ScreenChrome.Cursor(rows[i], cursor.IsOn(2, i), barWidth));
         }
 
         return list;
