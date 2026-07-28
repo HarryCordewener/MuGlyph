@@ -2,6 +2,7 @@ using MuClient.Core.Configuration;
 using MuClient.Core.Session;
 using MuClient.Core.Text;
 using MuClient.Core.Theming;
+using MuClient.Core.Workspaces;
 using MuClient.Graphics;
 using SharpConsoleUI;
 using SharpConsoleUI.Builders;
@@ -14,32 +15,35 @@ using SColor = SharpConsoleUI.Color;
 namespace MuClient.Tui;
 
 /// <summary>
-/// The top-level MuGlyph application on SharpConsoleUI: a status line, a truecolor markup output
-/// pane (with clickable MXP/Pueblo/web links), and a command prompt. Binds a single active
-/// <see cref="WorldSession"/> and marshals its background events onto the UI thread. The multi-pane
-/// workspace (splits/tabs, driven by <c>MuClient.Core.Workspaces</c>) layers on top of this shell.
+/// The top-level MuGlyph application on SharpConsoleUI: a status line, a tabbed set of output
+/// windows (main + trigger-routed spawn windows + the web view), and a command prompt. The tab set
+/// is driven by the UI-agnostic <see cref="Workspace"/> model — a single pane holding many window
+/// tabs — so spawn routing and unread badges reuse the tested Core logic. Splits (via SharpConsoleUI
+/// splitters) layer on this later. Background session events are marshalled onto the UI thread.
 /// </summary>
 internal sealed class MuGlyphApp : IAsyncDisposable
 {
+    private const string MainWindowId = "main";
+    private const string WebWindowId = "web";
+
     private readonly AppConfiguration _config;
     private readonly SessionManager _sessions = new();
     private readonly TerminalCapabilities _capabilities;
     private readonly Theme _theme;
     private readonly MarkupFormatter _formatter;
+    private readonly Workspace _workspace = new(MainWindowId, "Main");
+    private readonly Dictionary<string, MarkupControl> _panes = new(StringComparer.Ordinal);
 
     private readonly ConsoleWindowSystem _system;
     private readonly Window _window;
     private readonly MarkupControl _status;
-    private readonly MarkupControl _output;
+    private readonly TabControl _tabs;
     private readonly PromptControl _input;
     private readonly GmcpStats _stats = new();
-    private readonly HashSet<string> _spawnTargets = new(StringComparer.OrdinalIgnoreCase);
     private readonly MuClient.Web.WebPageFetcher _fetcher = new();
 
     private WorldSession? _active;
     private WorldDefinition? _pendingWorld;
-    private Window? _webWindow;
-    private MarkupControl? _webContent;
 
     public MuGlyphApp(AppConfiguration config, TerminalCapabilities capabilities)
     {
@@ -51,8 +55,14 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _system = new ConsoleWindowSystem(new NetConsoleDriver(RenderMode.Buffer), new ConsoleWindowSystemOptions());
 
         _status = Controls.Markup("Not connected.").StickyTop().Build();
-        _output = Controls.Markup(string.Empty).Build();
-        _output.LinkClicked += (_, e) => OnLinkClicked(e.Url);
+
+        var main = new MarkupControl(new List<string>());
+        main.LinkClicked += (_, e) => OnLinkClicked(e.Url);
+        _panes[MainWindowId] = main;
+
+        _tabs = Controls.TabControl().AddTab("Main", main).Fill().Build();
+        _tabs.TabPages[0].Tag = MainWindowId;
+        _tabs.TabChanged += (_, e) => OnTabChanged(e.NewTab);
 
         _input = Controls.Prompt(">").WithHistory(true).StickyBottom().Build();
         _input.Entered += (_, text) => OnCommandEntered(text);
@@ -65,7 +75,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             .Maximized()
             .WithColors(fg, bg)
             .AddControl(_status)
-            .AddControl(_output)
+            .AddControl(_tabs)
             .AddControl(_input)
             .Build();
 
@@ -82,7 +92,6 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         return _system.Run();
     }
 
-    /// <summary>Connects the given world and binds it to the UI.</summary>
     private async Task StartAsync(WorldDefinition? world)
     {
         if (world is null)
@@ -110,12 +119,18 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private void BindSession(WorldSession session)
     {
         _active = session;
-        foreach (var line in session.Scrollback.Snapshot())
+        if (_workspace.FindWindow(MainWindowId) is { } mainWindow)
         {
-            _output.AppendLine(_formatter.ToMarkup(line));
+            mainWindow.Title = session.World.Name;
         }
 
-        session.LinePrinted += (_, line) => OnUi(() => _output.AppendLine(_formatter.ToMarkup(line)));
+        var main = _panes[MainWindowId];
+        foreach (var line in session.Scrollback.Snapshot())
+        {
+            main.AppendLine(_formatter.ToMarkup(line));
+        }
+
+        session.LinePrinted += (_, line) => OnUi(() => OnLine(MainWindowId, line));
         session.PromptChanged += (_, _) => OnUi(UpdateStatus);
         session.StateChanged += (_, _) => OnUi(UpdateStatus);
         session.GmcpReceived += (_, e) => OnUi(() =>
@@ -125,17 +140,33 @@ internal sealed class MuGlyphApp : IAsyncDisposable
                 UpdateStatus();
             }
         });
-        session.SpawnLine += (_, e) => OnUi(() => OnSpawnLine(e.Target));
+        session.SpawnLine += (_, e) => OnUi(() => OnSpawnLine(e.Target, e.Line));
+        RefreshTabTitles();
         UpdateStatus();
     }
 
-    private void OnSpawnLine(string target)
+    /// <summary>Appends a line to a window's pane and badges it unread when it isn't the visible tab.</summary>
+    private void OnLine(string windowId, StyledLine line)
     {
-        // Spawn output is captured; dedicated spawn windows are wired via the workspace model next.
-        if (_spawnTargets.Add(target))
+        if (_panes.TryGetValue(windowId, out var pane))
         {
-            _active?.PrintSystem($"*** Spawn '{target}' is now receiving routed output.");
+            pane.AppendLine(_formatter.ToMarkup(line));
         }
+
+        if (!_workspace.IsVisible(windowId))
+        {
+            _workspace.NoteActivity(windowId);
+            RefreshTabTitles();
+        }
+    }
+
+    /// <summary>Routes a trigger-spawned line to its spawn window (creating the tab on first use).</summary>
+    private void OnSpawnLine(string target, StyledLine line)
+    {
+        var window = _workspace.RouteSpawn(target, _active?.SessionKey);
+        var pane = PaneFor(window.Id, window.Title);
+        pane.AppendLine(_formatter.ToMarkup(line));
+        RefreshTabTitles();
     }
 
     private void OnCommandEntered(string command)
@@ -168,6 +199,15 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         }
     }
 
+    private void OnTabChanged(TabPage? newTab)
+    {
+        if (newTab?.Tag is string id)
+        {
+            _workspace.ActivateWindow(id);
+            RefreshTabTitles();
+        }
+    }
+
     private void OpenWeb(string url)
     {
         if (string.IsNullOrWhiteSpace(url))
@@ -195,26 +235,60 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
     private void ShowWeb(MuClient.Web.WebPage page)
     {
-        var markup = page.Lines.Select(_formatter.ToMarkup).ToList();
-        if (_webWindow is null || _webContent is null)
+        var title = page.Title ?? page.Url;
+        if (_workspace.FindWindow(WebWindowId) is null)
         {
-            _webContent = new MarkupControl(markup);
-            _webContent.LinkClicked += (_, e) => OnLinkClicked(e.Url);
-            _webWindow = new WindowBuilder(_system)
-                .WithTitle(page.Title ?? page.Url)
-                .Centered()
-                .WithSize(Math.Max(40, _window.Width - 8), Math.Max(10, _window.Height - 6))
-                .Closable(true)
-                .AddControl(_webContent)
-                .OnClosed((_, _) => { _webWindow = null; _webContent = null; })
-                .Build();
-            _system.AddWindow(_webWindow);
+            _workspace.OpenWindow(WebWindowId, title, WindowKind.Auxiliary);
         }
         else
         {
-            _webContent.SetContent(markup);
-            _webWindow.Title = page.Title ?? page.Url;
-            _system.SetActiveWindow(_webWindow);
+            _workspace.FindWindow(WebWindowId)!.Title = title;
+        }
+
+        var pane = PaneFor(WebWindowId, title);
+        pane.SetContent(page.Lines.Select(_formatter.ToMarkup).ToList());
+        Activate(WebWindowId);
+        RefreshTabTitles();
+    }
+
+    /// <summary>Returns the pane control for a window, creating its tab (Tag = id) on first use.</summary>
+    private MarkupControl PaneFor(string id, string title)
+    {
+        if (_panes.TryGetValue(id, out var existing))
+        {
+            return existing;
+        }
+
+        var control = new MarkupControl(new List<string>());
+        control.LinkClicked += (_, e) => OnLinkClicked(e.Url);
+        _panes[id] = control;
+        _tabs.AddTab(title, control, false);
+        _tabs.TabPages[_tabs.TabCount - 1].Tag = id;
+        return control;
+    }
+
+    /// <summary>Makes a window's tab the active one in the view (fires <see cref="OnTabChanged"/>).</summary>
+    private void Activate(string id)
+    {
+        for (var i = 0; i < _tabs.TabCount; i++)
+        {
+            if (_tabs.TabPages[i].Tag as string == id)
+            {
+                _tabs.ActiveTabIndex = i;
+                return;
+            }
+        }
+    }
+
+    /// <summary>Repaints every tab header from its window's title + unread/unsent badges.</summary>
+    private void RefreshTabTitles()
+    {
+        foreach (var page in _tabs.TabPages)
+        {
+            if (page.Tag is string id && _workspace.FindWindow(id) is { } window)
+            {
+                page.Title = TabTitles.For(window);
+            }
         }
     }
 

@@ -32,7 +32,7 @@ fallbacks) for inline images/maps.
 ## Repository state
 
 **M1 delivered, plus substantial M2–M4 work.** `MuGlyph.slnx` builds all ten projects on
-`net10.0`; the solution has **387 passing tests**. In place:
+`net10.0`; the solution has **391 passing tests**. In place:
 
 - **Core** — `AnsiParser` (SGR 16/256/truecolor), styled-line + `ScrollbackBuffer` model,
   `TcpTransport` (TLS + IPv6), `TelnetSession` (wraps TelnetNegotiationCore **2.5.3**),
@@ -42,10 +42,11 @@ fallbacks) for inline images/maps.
 - **Graphics** — Kitty encoder + Unicode placeholders, Sixel + half-block fallbacks, capability
   probe (no UI dependency).
 - **Scripting** — sandboxed MoonSharp `ScriptHost` (world/output/trigger/alias/timer/gmcp/log).
-- **Tui** — **SharpConsoleUI** app: a `MarkupControl` output pane (StyledLine → Spectre-style markup
-  via `MarkupFormatter`, with clickable `[link=…]` MXP/Pueblo/web spans), a `PromptControl` input,
-  status line, theming, `Ctrl+Q` quit, and NAWS-on-resize. Multi-pane workspace (splits/tabs, driven
-  by `Core.Workspaces`) layers on top next.
+- **Tui** — **SharpConsoleUI** app: a `TabControl` of output windows (main + trigger-routed **spawn
+  windows** + web view, with unread badges), each a `MarkupControl` fed StyledLine → Spectre-style
+  markup via `MarkupFormatter` (clickable `[link=…]` MXP/Pueblo/web spans); a `PromptControl` input,
+  status line, `Ctrl+Q` quit, NAWS-on-resize. The tab set is driven by the tested `Core.Workspaces`
+  model (a single pane of window tabs); **splits** (SharpConsoleUI splitters) + rail layer on next.
 
 ### Notes for future agents (learned the hard way)
 - **.NET 10 SDK**: install via `apt-get install -y dotnet-sdk-10.0` (the Microsoft CDN is often
