@@ -94,7 +94,7 @@ dotnet run --project src/MuClient.Tui -- <host> <port> [--tls] [--insecure] [--n
 muglyph --help    # once published
 ```
 
-In-app: **Up/Down** input history · **Ctrl+Q** quit. (The window and its panes are mouse-resizable.)
+In-app: **Up/Down** input history · **Ctrl+N** next window · **Ctrl+W** close window · **Ctrl+Q** quit. (Windows/panes are mouse-resizable; each window keeps its own input draft.)
 
 ## Testing
 

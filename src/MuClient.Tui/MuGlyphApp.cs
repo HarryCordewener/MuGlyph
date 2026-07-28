@@ -83,6 +83,10 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         _window.OnResize += (_, _) => ReportWindowSize();
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.Q, () => _system.RequestExit(0));
+        // Next window (Ctrl+N, plus Ctrl+Tab where the terminal reports it) and close window (Ctrl+W).
+        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.N, NextWindow);
+        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.Tab, NextWindow);
+        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.W, CloseActiveWindow);
         _system.AddWindow(_window);
     }
 
@@ -294,6 +298,36 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _tabs.AddTab(title, control, false);
         _tabs.TabPages[_tabs.TabCount - 1].Tag = id;
         return control;
+    }
+
+    /// <summary>Cycles to the next window tab, wrapping (Ctrl+N / Ctrl+Tab).</summary>
+    private void NextWindow()
+    {
+        if (_tabs.TabCount > 1)
+        {
+            _tabs.ActiveTabIndex = (_tabs.ActiveTabIndex + 1) % _tabs.TabCount;
+        }
+    }
+
+    /// <summary>Closes the active window tab (Ctrl+W). The main window can't be closed.</summary>
+    private void CloseActiveWindow()
+    {
+        var index = _tabs.ActiveTabIndex;
+        if (index < 0 || index >= _tabs.TabCount)
+        {
+            return;
+        }
+
+        if (_tabs.TabPages[index].Tag is not string id || id == MainWindowId)
+        {
+            return;
+        }
+
+        _tabs.RemoveTab(index);
+        _panes.Remove(id);
+        _drafts.Remove(id);
+        _workspace.CloseWindow(id);
+        RefreshTabTitles();
     }
 
     /// <summary>Makes a window's tab the active one in the view (fires <see cref="OnTabChanged"/>).</summary>
