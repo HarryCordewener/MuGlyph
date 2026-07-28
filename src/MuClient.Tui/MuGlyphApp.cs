@@ -53,6 +53,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private readonly MarkupControl _header;
     private readonly MarkupControl _statusBar;
     private readonly MarkupControl _rail;
+    private readonly MarkupControl _railSpacer = new(new List<string>());
     private readonly MarkupControl _inputGutter;
     private readonly Dictionary<string, TabControl> _paneTabs = new(StringComparer.Ordinal);
     private readonly PromptControl _input;
@@ -897,11 +898,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     }
 
     /// <summary>Repaints the rail from current state.</summary>
-    private void RefreshRail()
-    {
-        var rows = BuildRail();
-        _rail.SetContent(_railCollapsed ? RailRenderer.RenderCollapsed(rows) : RailRenderer.Render(rows));
-    }
+    private void RefreshRail() => _rail.SetContent(RenderRailLines());
 
     /// <summary>Builds the ⌃P command catalog from live config + workspace state.</summary>
     private IReadOnlyList<CommandItem> BuildCatalog()
@@ -1142,12 +1139,76 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             ? BuildPaneTabs(zoomed)
             : BuildLayoutNode(_workspace.Layout.Root);
 
+        // Size the rail to what its rows actually need (clamped), so it never hogs width nor clips.
+        var railLines = RenderRailLines();
+        _rail.SetContent(railLines);
+        var railWidth = RailWidth(railLines);
+
+        // rail │ ║splitter │ 1-col spacer (breathing room after the divider) │ output
         return Controls.HorizontalGrid()
             .WithVerticalAlignment(VerticalAlignment.Fill)
-            .Column(c => c.Width(_railCollapsed ? 6 : 30).Add(_rail))
+            .Column(c => c.Width(railWidth).Add(_rail))
+            .Column(c => c.Width(1).Add(_railSpacer))
             .Column(c => c.Flex(1).Add(paneArea))
             .WithSplitterAfter(0)
             .Build();
+    }
+
+    /// <summary>Renders the current rail rows to markup (collapsed or expanded).</summary>
+    private List<string> RenderRailLines()
+    {
+        var rows = BuildRail();
+        return _railCollapsed ? RailRenderer.RenderCollapsed(rows) : RailRenderer.Render(rows);
+    }
+
+    /// <summary>
+    /// The rail column width: the widest row's visible width plus a small margin, clamped so a long
+    /// world or window name can't run away with the layout and a sparse rail still reads. Collapsed,
+    /// it hugs its short status strip.
+    /// </summary>
+    private int RailWidth(IReadOnlyList<string> lines)
+    {
+        var widest = lines.Count == 0 ? 0 : lines.Max(MarkupWidth);
+        return _railCollapsed
+            ? Math.Clamp(widest + 1, 4, 10)
+            : Math.Clamp(widest + 2, 16, 44);
+    }
+
+    /// <summary>Visible width of a markup string: strips <c>[…]</c> tags, unescapes <c>[[</c>/<c>]]</c>,
+    /// and counts text elements (so combining/wide runes count once).</summary>
+    private static int MarkupWidth(string markup)
+    {
+        var sb = new System.Text.StringBuilder(markup.Length);
+        var i = 0;
+        while (i < markup.Length)
+        {
+            var ch = markup[i];
+            if (ch == '[')
+            {
+                if (i + 1 < markup.Length && markup[i + 1] == '[')
+                {
+                    sb.Append('[');
+                    i += 2;
+                    continue;
+                }
+
+                var close = markup.IndexOf(']', i + 1);
+                i = close < 0 ? markup.Length : close + 1; // skip the whole tag
+                continue;
+            }
+
+            if (ch == ']' && i + 1 < markup.Length && markup[i + 1] == ']')
+            {
+                sb.Append(']');
+                i += 2;
+                continue;
+            }
+
+            sb.Append(ch);
+            i++;
+        }
+
+        return new System.Globalization.StringInfo(sb.ToString()).LengthInTextElements;
     }
 
     /// <summary>
@@ -1287,12 +1348,15 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         var live = PaneContentFor(windowId, title);
         live.SetContent(buffer.Skip(split).ToList());
 
-        // Pinned scrollback gets the lion's share; the live tail is a few rows under the bar.
+        // Pinned scrollback gets the lion's share; the live tail is a few rows under the bar. A full-width
+        // row splitter above the bar draws a clear line delineating the frozen area from the live tail.
         var grid = Controls.Grid().WithVerticalAlignment(VerticalAlignment.Fill);
         grid.Rows(GridLength.Star(3), GridLength.Cells(1), GridLength.Star(1)).Columns(GridLength.Star(1));
         grid.Place(frozen, 0, 0, 1, 1);
         grid.Place(bar, 1, 0, 1, 1);
         grid.Place(live, 2, 0, 1, 1);
+        grid.RowSplitterAfter(0);
+        grid.RowSplitterAfter(1);
         return grid.Build();
     }
 
