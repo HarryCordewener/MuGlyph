@@ -1,4 +1,5 @@
 using MuClient.Core.Theming;
+using MuClient.Core.Workspaces;
 
 namespace MuClient.Core.Configuration;
 
@@ -41,6 +42,13 @@ public sealed class AppConfiguration
     /// characters. See <see cref="ResolveTriggerSets"/>.
     /// </summary>
     public List<TriggerSet> TriggerSets { get; set; } = new();
+
+    /// <summary>
+    /// The last workspace layout (panes, windows, focus) so the app can resume where it left off.
+    /// Null on a fresh config; the shell rebuilds a live workspace from it at startup via
+    /// <see cref="WorkspaceState.Restore"/>. Scrollback is not persisted — only structure.
+    /// </summary>
+    public WorkspaceState? LastSession { get; set; }
 
     /// <summary>
     /// Resolves the <see cref="TriggerSet"/>s a character has opted into, in the character's own

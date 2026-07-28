@@ -27,6 +27,13 @@ internal static class Program
             // the snapshot is deterministic however it's launched (terminal, pipe, or CI redirect).
             Console.SetIn(TextReader.Null);
 
+            // With no real config on disk, drive the snapshot off the demo configuration — worlds,
+            // trigger sets, and a saved LastSession the app resumes exactly like a returning user's.
+            if (config.Worlds.Count == 0)
+            {
+                config = DemoScene.Build();
+            }
+
             var (width, height) = ParseSize(args);
             var app = new MuGlyphApp(config, capabilities, new HeadlessConsoleDriver(width, height));
             var frame = app.RenderSnapshot(GetOption(args, "--view"));

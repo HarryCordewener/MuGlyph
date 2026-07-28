@@ -35,7 +35,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private readonly TerminalCapabilities _capabilities;
     private readonly Theme _theme;
     private readonly MarkupFormatter _formatter;
-    private readonly Workspace _workspace = new(MainWindowId, "Main");
+    private readonly Workspace _workspace;
     private readonly Dictionary<string, MarkupControl> _panes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _drafts = new(StringComparer.Ordinal);
     private readonly InputHistory _history = new();
@@ -64,7 +64,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private readonly SettingsOverlay _settings;
 
     /// <summary>Per-world accents when a world hasn't set its own, keyed by position.</summary>
-    private static readonly TerminalColor[] AccentPalette =
+    internal static readonly TerminalColor[] AccentPalette =
     {
         TerminalColor.FromRgb(0x00, 0xf5, 0xb7), // teal
         TerminalColor.FromRgb(0xff, 0x9f, 0x1c), // amber
@@ -96,6 +96,10 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _capabilities = capabilities;
         _theme = ResolveTheme(config);
         _formatter = new MarkupFormatter(_theme);
+
+        // Resume the last session's workspace (panes/windows/focus) when the config carries one;
+        // otherwise start with a single main window. Real startup and the demo share this path.
+        _workspace = ResumeOrNew(config);
 
         // A headless driver renders to a captured buffer (for snapshots/CI) instead of a real
         // terminal; hide the desktop panels so those frames are deterministic.
@@ -279,15 +283,14 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         return writer.ToString();
     }
 
-    /// <summary>Populates the windows with representative MU* content for snapshots/demos.</summary>
+    /// <summary>
+    /// Feeds representative MU* output into the windows the resumed session already opened, for
+    /// snapshots/demos. The workspace structure (main + Chat, panes, focus) comes from the config's
+    /// resumed <c>LastSession</c> — this only supplies scrollback, which is never persisted.
+    /// </summary>
     private void LoadDemoScene()
     {
-        SeedDemoWorlds();
-
-        if (_workspace.FindWindow(MainWindowId) is { } mainWindow)
-        {
-            mainWindow.Title = "main"; // the character's primary window (design labels it "main")
-        }
+        InitDemoRuntimeState();
 
         var parser = new AnsiParser();
         void Feed(string windowId, string ansiLine)
@@ -319,23 +322,24 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             TerminalColor.FromRgb(0x00, 0xf5, 0xb7));
         AppendWindowLine(MainWindowId, _formatter.ToMarkup(highlighted, Stamp()));
 
-        // A spawn window fed by a "Chat" trigger target, left in the background with unread.
-        var chat = _workspace.RouteSpawn("Chat");
-        chat.CapturePattern = @"^\[Chat\]";
-        chat.OwnerLabel = ActiveWorld()?.Character; // the connection owner (Corvid) → "Corvid - Chat"
-        PaneContentFor(chat.Id, chat.Title);
+        // The Chat spawn window already exists (opened by the resumed session); feed its backlog and
+        // leave it in the background with unread, as if lines arrived while another tab was focused.
+        var chatId = Workspace.SpawnWindowId("Chat");
+        PaneContentFor(chatId, "Chat");
         var chatParser = new AnsiParser();
-        foreach (var line in chatParser.Feed("\x1b[1;35m[Chat]\x1b[0m Rivane: anyone up for the crypt run?\n"))
+        foreach (var text in new[]
         {
-            AppendWindowLine(chat.Id, _formatter.ToMarkup(line, Stamp()));
-        }
-
-        foreach (var line in chatParser.Feed("\x1b[1;35m[Chat]\x1b[0m Bob: aye, meet me at the gate\n"))
+            "\x1b[1;35m[Chat]\x1b[0m Rivane: anyone up for the crypt run?",
+            "\x1b[1;35m[Chat]\x1b[0m Bob: aye, meet me at the gate",
+        })
         {
-            AppendWindowLine(chat.Id, _formatter.ToMarkup(line, Stamp()));
-        }
+            foreach (var line in chatParser.Feed(text + "\n"))
+            {
+                AppendWindowLine(chatId, _formatter.ToMarkup(line, Stamp()));
+            }
 
-        _workspace.NoteActivity(chat.Id); // second unread line
+            _workspace.NoteActivity(chatId); // each line accrues unread while Chat is in the background
+        }
 
         // Sample vitals so the status-bar meters render in snapshots.
         _stats.Update("Char.Vitals", "{\"hp\":312,\"maxhp\":400,\"mp\":180,\"maxmp\":330}");
@@ -346,113 +350,35 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     }
 
     /// <summary>
-    /// Seeds a couple of demo worlds/characters (with accents) so the rail, command surface, and
-    /// status bar have representative content in headless snapshots. Only runs when no worlds are
-    /// configured, so it never masks a real config.
+    /// Rebuilds the workspace from a saved session, or a single main window when there's none. Corrupt
+    /// state falls back to a fresh workspace rather than failing to start.
     /// </summary>
-    private void SeedDemoWorlds()
+    private static Workspace ResumeOrNew(AppConfiguration config)
     {
-        if (_config.Worlds.Count > 0)
+        if (config.LastSession is { Windows.Count: > 0 } state)
         {
-            _demoActiveKey = $"{_config.Worlds[0].Name}.{_config.Worlds[0].Characters.FirstOrDefault()?.Name}";
-            return;
+            try
+            {
+                return state.Restore();
+            }
+            catch
+            {
+                // A saved session that no longer deserialises shouldn't block startup — start fresh.
+            }
         }
 
-        _config.Worlds.Add(new WorldDefinition
-        {
-            Name = "Aetherfall",
-            Host = "aetherfall.mux",
-            Port = 4201,
-            UseTls = true,
-            Encoding = "UTF-8",
-            KeepaliveSeconds = 30,
-            Accent = AccentPalette[0],
-            Characters =
-            {
-                new CharacterDefinition
-                {
-                    Name = "Corvid",
-                    AutoLogin = true,
-                    OnConnect = "@@ +who; look",
-                    TriggerSets = { "Comms", "Trade" },
-                    Logging = new LoggingSettings { Format = LogFormat.Html },
-                },
-                new CharacterDefinition { Name = "Rookery", TriggerSets = { "Comms" } },
-            },
-        });
-
-        _config.Worlds.Add(new WorldDefinition
-        {
-            Name = "Grapevine",
-            Host = "grapevine.haus",
-            Port = 4000,
-            Encoding = "ISO-8859-1",
-            Accent = AccentPalette[1],
-            Characters = { new CharacterDefinition { Name = "Thistle" } },
-        });
-
-        SeedDemoTriggerSets();
-
-        _demoActiveKey = "Aetherfall.Corvid";
-        _connectedKeys.Add("Aetherfall.Corvid");
+        return new Workspace(MainWindowId, "Main");
     }
 
-    /// <summary>Seeds representative trigger sets (triggers/aliases/macros/timers) for demo snapshots.</summary>
-    private void SeedDemoTriggerSets()
+    /// <summary>Sets the demo's focused/connected character from the resumed config (snapshot chrome).</summary>
+    private void InitDemoRuntimeState()
     {
-        var teal = TerminalColor.FromRgb(0x00, 0xf5, 0xb7);
-        var pink = TerminalColor.FromRgb(0xe5, 0x8f, 0xb0);
-
-        _config.TriggerSets.Add(new TriggerSet
+        if (_config.Worlds.FirstOrDefault() is { } world &&
+            world.Characters.FirstOrDefault() is { } character)
         {
-            Name = "Comms",
-            Description = "channel + page routing",
-            Triggers =
-            {
-                new Trigger
-                {
-                    Name = "public",
-                    Pattern = @"^\[public\]",
-                    Actions = new TriggerActions { SpawnTarget = "Chat", HighlightForeground = teal },
-                },
-                new Trigger
-                {
-                    Name = "page",
-                    Pattern = @"^\w+ pages:",
-                    Actions = new TriggerActions { SpawnTarget = "pages", HighlightForeground = pink },
-                },
-                new Trigger
-                {
-                    Name = "mute spam",
-                    Pattern = @"has connected\.$",
-                    Enabled = false,
-                    Actions = new TriggerActions { Gag = true },
-                },
-            },
-            Aliases =
-            {
-                new Alias { Name = "say", Pattern = @"^'(.*)", Substitution = "say $1" },
-                new Alias { Name = "wtf", Pattern = @"^wtf$", Substitution = "who\nfinger $1" },
-            },
-            Macros = { new Macro { Key = "Num5", Command = "look" }, new Macro { Key = "Ctrl+F1", Command = "score" } },
-            Timers = { new TimerDefinition { Name = "keepalive", IntervalSeconds = 60, Command = "@@idle" } },
-        });
-
-        _config.TriggerSets.Add(new TriggerSet
-        {
-            Name = "Trade",
-            Description = "auction + market watch",
-            Triggers =
-            {
-                new Trigger
-                {
-                    Name = "auction",
-                    Pattern = @"^\[trade\]",
-                    Actions = new TriggerActions { SpawnTarget = "trade", HighlightForeground = TerminalColor.FromRgb(0xe5, 0xc0, 0x7b) },
-                },
-            },
-            Timers = { new TimerDefinition { Name = "market", IntervalSeconds = 300, Command = "prices", OneShot = false } },
-        });
+            _demoActiveKey = $"{world.Name}.{character.Name}";
+            _connectedKeys.Add(_demoActiveKey);
+        }
     }
 
     private static StyledSpan Link(string command) => new(

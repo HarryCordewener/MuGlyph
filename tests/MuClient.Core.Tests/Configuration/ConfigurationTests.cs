@@ -1,6 +1,7 @@
 using MuClient.Core.Automation;
 using MuClient.Core.Configuration;
 using MuClient.Core.Text;
+using MuClient.Core.Workspaces;
 
 namespace MuClient.Core.Tests.Configuration;
 
@@ -242,6 +243,21 @@ public class ConfigurationTests
 
         await Assert.That(json).DoesNotContain("swordfish");
         await Assert.That(ConfigurationStore.Deserialize(json).Worlds[0].Characters[0].Password).IsNull();
+    }
+
+    [Test]
+    public async Task LastSession_RoundTripsThroughTheStore()
+    {
+        var ws = new Workspace(mainWindowId: "main", mainTitle: "main", sessionKey: "Aetherfall.Corvid");
+        var chat = ws.RouteSpawn("Chat", "Aetherfall.Corvid");
+        chat.OwnerLabel = "Corvid";
+        var config = new AppConfiguration { LastSession = WorkspaceState.Capture(ws) };
+
+        var restored = ConfigurationStore.Deserialize(ConfigurationStore.Serialize(config));
+
+        await Assert.That(restored.LastSession).IsNotNull();
+        var workspace = restored.LastSession!.Restore();
+        await Assert.That(workspace.FindWindow(Workspace.SpawnWindowId("Chat"))!.OwnerLabel).IsEqualTo("Corvid");
     }
 
     [Test]
