@@ -32,24 +32,27 @@ public sealed class ScriptException : Exception
             return null;
         }
 
-        // Syntax errors: "chunk:(fromLine,fromCol-toLine,toCol) message".
-        var open = decorated.IndexOf('(');
-        if (open >= 0 && open + 1 < decorated.Length)
+        // Syntax errors: "chunk:(fromLine,fromCol-toLine,toCol) message". Anchor on the ":("
+        // header marker so a stray '(' in the message text can't be mistaken for the range.
+        var syntax = decorated.IndexOf(":(", StringComparison.Ordinal);
+        if (syntax >= 0)
         {
-            var comma = decorated.IndexOf(',', open);
-            if (comma > open && int.TryParse(decorated.AsSpan(open + 1, comma - open - 1), out var parenLine))
+            var start = syntax + 2;
+            var comma = decorated.IndexOf(',', start);
+            if (comma > start && int.TryParse(decorated.AsSpan(start, comma - start), out var syntaxLine))
             {
-                return parenLine;
+                return syntaxLine;
             }
         }
 
-        // Runtime errors: "[string \"chunk\"]:LINE: message" (no parenthesised range).
-        var bracket = decorated.LastIndexOf(']');
-        var start = bracket >= 0 ? bracket + 1 : 0;
-        if (start < decorated.Length && decorated[start] == ':')
+        // Runtime errors: "[string \"chunk\"]:LINE: message". Anchor on the "]:" header marker
+        // (not the last ']', which may appear inside the message, e.g. table["x"]).
+        var runtime = decorated.IndexOf("]:", StringComparison.Ordinal);
+        if (runtime >= 0)
         {
-            var colon = decorated.IndexOf(':', start + 1);
-            if (colon > start && int.TryParse(decorated.AsSpan(start + 1, colon - start - 1), out var runtimeLine))
+            var start = runtime + 2;
+            var colon = decorated.IndexOf(':', start);
+            if (colon > start && int.TryParse(decorated.AsSpan(start, colon - start), out var runtimeLine))
             {
                 return runtimeLine;
             }

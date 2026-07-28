@@ -113,16 +113,17 @@ MoonSharp `ScriptHost`, scripting API, Lua-backed triggers/aliases, GMCP subscri
   in the TUI. **Emoji** substitution (`EmojiSubstitutor`), opt-in per world. GMCP-driven **stat
   line**, **spawn** capture, ReDoS-guarded regex engines, and self-contained **single-file
   packaging** (`docs/PACKAGING.md`) + a tagged release workflow.
+- **In-TUI web view** (`MuClient.Web` + `WebView`): fetch a URL or follow an MXP/Pueblo/HTML link
+  and read the page as styled, word-wrapped text with clickable in-pane navigation (AngleSharp →
+  `StyledLine`s, reusing `SpanInteraction`). `<img>` renders as a labelled link today.
 
 ### Still open (M5+)
 - Dedicated **spawn windows** and **multiple input windows** (capture + routing hooks exist),
   **puppets**, MSDP-driven stat panes, and the **map** view.
-- **In-TUI web view.** MXP/Pueblo already produce clickable links. Plan: a `WebViewPane` that
-  fetches a URL and renders HTML → `StyledLine`s via a managed parser (AngleSharp), reusing
-  `SpanInteraction` for in-pane navigation, with `<img>` shown through the existing
-  `InlineImageRenderer` (Kitty → Sixel → half-block). Optional high-fidelity mode: snapshot the
-  page with headless Chromium (Playwright) and display the image via the graphics layer. Text
-  mode works in any terminal; images need a graphics-capable one.
+- **Web view enhancements:** render `<img>` inline through the existing `InlineImageRenderer`
+  (Kitty → Sixel → half-block) in graphics-capable terminals, and an optional high-fidelity mode
+  that snapshots the page with headless Chromium (Playwright) and displays the image via the
+  graphics layer.
 
 ---
 

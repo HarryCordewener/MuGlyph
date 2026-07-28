@@ -75,7 +75,8 @@ internal sealed class WebView : View
 
     private void Scroll(int delta)
     {
-        var max = Math.Max(0, _lines.Count - 1);
+        // Clamp so the last full screen of content stays visible rather than scrolling into blank space.
+        var max = Math.Max(0, _lines.Count - Math.Max(1, Viewport.Height));
         _scroll = Math.Clamp(_scroll + delta, 0, max);
         SetNeedsDraw();
     }

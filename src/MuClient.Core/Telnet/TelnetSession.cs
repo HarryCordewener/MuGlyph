@@ -262,9 +262,16 @@ public sealed class TelnetSession : ITelnetSession
             }
         }
 
-        // Clear the interpreter so a subsequent ConnectAsync can reconnect and the "not
-        // connected" guards on the send methods observe the disconnected state.
+        // Dispose and clear the interpreter here (not in DisposeAsync, which calls this first
+        // and would then see it already null) so no interpreter leaks per disconnect/reconnect,
+        // and so the "not connected" send guards observe the disconnected state.
+        var interpreter = _interpreter;
         _interpreter = null;
+        if (interpreter is not null)
+        {
+            await interpreter.DisposeAsync().ConfigureAwait(false);
+        }
+
         RaiseDisconnected(null);
     }
 
@@ -280,15 +287,9 @@ public sealed class TelnetSession : ITelnetSession
 
     public async ValueTask DisposeAsync()
     {
+        // DisconnectAsync disposes and clears the interpreter.
         await DisconnectAsync().ConfigureAwait(false);
         _loopCts?.Dispose();
-
-        if (_interpreter is not null)
-        {
-            await _interpreter.DisposeAsync().ConfigureAwait(false);
-            _interpreter = null;
-        }
-
         await _transport.DisposeAsync().ConfigureAwait(false);
     }
 }

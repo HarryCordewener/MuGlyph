@@ -47,7 +47,14 @@ internal sealed class GmcpStats
                 continue;
             }
 
-            var value = property.Value.ToString();
+            // JsonElement.ToString() yields "True"/"False" for booleans; normalise to JSON casing
+            // so booleans read consistently with numeric/string fields.
+            var value = property.Value.ValueKind switch
+            {
+                JsonValueKind.True => "true",
+                JsonValueKind.False => "false",
+                _ => property.Value.ToString(),
+            };
             if (!_values.TryGetValue(property.Name, out var existing) || existing != value)
             {
                 _values[property.Name] = value;

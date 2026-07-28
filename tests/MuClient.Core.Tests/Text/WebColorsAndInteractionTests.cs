@@ -70,4 +70,21 @@ public class SpanInteractionTests
         await Assert.That(linked.IsInteractive).IsTrue();
         await Assert.That(plain).IsNotEqualTo(linked);
     }
+
+    [Test]
+    public async Task StyledSpan_WithIdenticalInteraction_AreEqualAndShareHash()
+    {
+        // Separately-constructed interactions with equal values (record equality).
+        var a = new StyledSpan("x", TextStyle.Default, SpanInteraction.Command("go", "hint"));
+        var b = new StyledSpan("x", TextStyle.Default, SpanInteraction.Command("go", "hint"));
+        await Assert.That(a).IsEqualTo(b);
+        await Assert.That(a.GetHashCode()).IsEqualTo(b.GetHashCode());
+    }
+
+    [Test]
+    public async Task SpanInteraction_ValueEquality()
+    {
+        await Assert.That(SpanInteraction.Command("go")).IsEqualTo(SpanInteraction.Command("go"));
+        await Assert.That(SpanInteraction.Link("u")).IsNotEqualTo(SpanInteraction.Command("u"));
+    }
 }

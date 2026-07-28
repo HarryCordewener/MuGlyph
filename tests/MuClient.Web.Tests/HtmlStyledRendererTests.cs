@@ -102,6 +102,19 @@ public class HtmlStyledRendererTests
         var lines = Render("<img src=\"pic.png\" alt=\"a cat\">");
         var span = lines.SelectMany(l => l.Spans).First(s => s.Text.Contains("image"));
         await Assert.That(span.Text).Contains("a cat");
+        await Assert.That(span.IsInteractive).IsTrue();
+        await Assert.That(span.Interaction!.Kind).IsEqualTo(InteractionKind.Hyperlink);
+        await Assert.That(span.Interaction!.Target).IsEqualTo("pic.png");
+    }
+
+    [Test]
+    public async Task ManySameStyleSegments_CoalesceCorrectly()
+    {
+        // Exercises the StringBuilder coalescing path with many adjacent same-style inline nodes.
+        var html = "<p>" + string.Concat(Enumerable.Repeat("<i>a</i>", 500)) + "</p>";
+        var lines = Render(html, width: 10_000);
+        var text = string.Concat(lines.Select(l => l.Text));
+        await Assert.That(text).IsEqualTo(new string('a', 500));
     }
 
     [Test]

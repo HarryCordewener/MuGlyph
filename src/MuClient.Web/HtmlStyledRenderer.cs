@@ -32,14 +32,16 @@ public sealed class HtmlStyledRenderer
         TextStyle.Default.WithForeground(TerminalColor.FromIndex(11)).AddAttribute(TextAttributes.Bold);
 
     private readonly string? _baseUrl;
+    private int _width = 80;
 
     public HtmlStyledRenderer(string? baseUrl = null) => _baseUrl = baseUrl;
 
     public IReadOnlyList<StyledLine> Render(string html, int width = 80)
     {
         ArgumentNullException.ThrowIfNull(html);
+        _width = Math.Max(20, width);
         var document = new HtmlParser().ParseDocument(html);
-        var writer = new LineWriter(Math.Max(20, width));
+        var writer = new LineWriter(_width);
         INode? root = document.Body ?? document.DocumentElement;
         if (root is not null)
         {
@@ -88,7 +90,7 @@ public sealed class HtmlStyledRenderer
                 return;
             case "hr":
                 writer.BlankLine();
-                writer.AddText(new string('─', 40), style, null, preformatted: true);
+                writer.AddText(new string('─', _width), style, null, preformatted: true);
                 writer.LineBreak();
                 writer.BlankLine();
                 return;

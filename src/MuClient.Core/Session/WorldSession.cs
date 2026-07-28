@@ -178,28 +178,12 @@ public sealed class WorldSession : IAsyncDisposable
         }
     }
 
-    /// <summary>Substitutes emoji in each span's text when enabled for this world; a no-op otherwise.</summary>
-    private StyledLine ApplyEmoji(StyledLine line)
-    {
-        if (_emoji is null || line.IsEmpty)
-        {
-            return line;
-        }
-
-        StyledSpan[]? rebuilt = null;
-        for (var i = 0; i < line.Spans.Count; i++)
-        {
-            var span = line.Spans[i];
-            var replaced = _emoji.Apply(span.Text);
-            if (!ReferenceEquals(replaced, span.Text) && replaced != span.Text)
-            {
-                rebuilt ??= line.Spans.ToArray();
-                rebuilt[i] = new StyledSpan(replaced, span.Style, span.Interaction);
-            }
-        }
-
-        return rebuilt is null ? line : new StyledLine(rebuilt);
-    }
+    /// <summary>
+    /// Substitutes emoji across the whole line when enabled for this world (preserving word
+    /// boundaries across span seams and each span's style/interaction); a no-op otherwise.
+    /// </summary>
+    private StyledLine ApplyEmoji(StyledLine line) =>
+        _emoji is null ? line : _emoji.ApplyToLine(line);
 
     /// <summary>Handles a line of user input: alias expansion, local echo, and send.</summary>
     public async Task SendUserInputAsync(string input, CancellationToken cancellationToken = default)

@@ -23,7 +23,7 @@ namespace MuClient.Core.Protocols;
 /// escape sequences are handled upstream, so an ESC (0x1b) byte is passed through untouched into
 /// the span text rather than being interpreted here.
 /// </summary>
-public sealed class PuebloParser : MuClient.Core.Text.ILineParser
+public sealed class PuebloParser : ILineParser
 {
     private const int MaxTagLength = 4096;
     private const int MaxEntityLength = 32;
@@ -94,6 +94,7 @@ public sealed class PuebloParser : MuClient.Core.Text.ILineParser
     public StyledLine? Flush()
     {
         FlushRun();
+        CloseInteractionsAtBoundary();
         if (_lineSpans.Count == 0)
         {
             return null;
@@ -398,9 +399,33 @@ public sealed class PuebloParser : MuClient.Core.Text.ILineParser
     private void CompleteLine(ref List<StyledLine>? lines)
     {
         FlushRun();
+        CloseInteractionsAtBoundary();
         var line = _lineSpans.Count == 0 ? StyledLine.Empty : new StyledLine(_lineSpans);
         _lineSpans.Clear();
         (lines ??= new List<StyledLine>()).Add(line);
+    }
+
+    /// <summary>
+    /// Drops open anchor/send frames at a line/prompt boundary so an unclosed <c>&lt;A&gt;</c>
+    /// never leaves subsequent output clickable (matching <c>MxpParser</c>). Formatting/colour
+    /// frames persist, but any interaction they saved is cleared so a later close can't restore it.
+    /// </summary>
+    private void CloseInteractionsAtBoundary()
+    {
+        for (var i = _stack.Count - 1; i >= 0; i--)
+        {
+            var frame = _stack[i];
+            if (frame.Name is "a" or "send")
+            {
+                _stack.RemoveAt(i);
+            }
+            else if (frame.Interaction is not null)
+            {
+                _stack[i] = new Frame(frame.Name, frame.Style, null);
+            }
+        }
+
+        _interaction = null;
     }
 
     private void FlushRun()

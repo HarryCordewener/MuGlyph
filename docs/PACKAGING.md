@@ -24,7 +24,8 @@ For a RID without a profile, pass the flags directly:
 
 ```bash
 dotnet publish src/MuClient.Tui -c Release -r osx-arm64 \
-  --self-contained -p:PublishSingleFile=true -o out/osx-arm64
+  --self-contained -p:PublishSingleFile=true \
+  -p:IncludeNativeLibrariesForSelfExtract=true -o out/osx-arm64
 ```
 
 The profiles enable single-file extraction, compression, and ReadyToRun for faster startup.

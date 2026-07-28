@@ -59,6 +59,165 @@ public sealed class EmojiSubstitutor
 
     public bool ShortcodesEnabled { get; }
 
+    /// <summary>
+    /// Substitutes emoji across a whole <see cref="StyledLine"/>, using the full line for word-boundary
+    /// detection (so a token split across span seams is judged correctly) while preserving each
+    /// character's style and interaction. Returns the same line when nothing changes.
+    /// </summary>
+    public StyledLine ApplyToLine(StyledLine line)
+    {
+        ArgumentNullException.ThrowIfNull(line);
+        if (line.IsEmpty || (!EmoticonsEnabled && !ShortcodesEnabled))
+        {
+            return line;
+        }
+
+        var cells = new List<Cell>(line.Length);
+        foreach (var span in line.Spans)
+        {
+            foreach (var ch in span.Text)
+            {
+                cells.Add(new Cell(ch.ToString(), span.Style, span.Interaction));
+            }
+        }
+
+        var changed = false;
+        if (ShortcodesEnabled)
+        {
+            changed |= ReplaceShortcodeCells(cells);
+        }
+
+        if (EmoticonsEnabled)
+        {
+            changed |= ReplaceEmoticonCells(cells);
+        }
+
+        return changed ? Coalesce(cells) : line;
+    }
+
+    private bool ReplaceShortcodeCells(List<Cell> cells)
+    {
+        var changed = false;
+        for (var i = 0; i < cells.Count; i++)
+        {
+            if (cells[i].Text != ":")
+            {
+                continue;
+            }
+
+            var end = -1;
+            for (var j = i + 1; j < cells.Count && j <= i + 33; j++)
+            {
+                if (cells[j].Text == ":")
+                {
+                    end = j;
+                    break;
+                }
+            }
+
+            if (end <= i + 1)
+            {
+                continue;
+            }
+
+            var name = string.Concat(cells.GetRange(i + 1, end - i - 1).Select(c => c.Text));
+            if (IsShortcodeName(name) && _shortcodes.TryGetValue(name, out var emoji))
+            {
+                var style = cells[i].Style;
+                cells.RemoveRange(i, end - i + 1);
+                cells.Insert(i, new Cell(emoji, style, null));
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
+    private bool ReplaceEmoticonCells(List<Cell> cells)
+    {
+        var changed = false;
+        for (var i = 0; i < cells.Count; i++)
+        {
+            var atBoundary = i == 0 || IsWhitespaceCell(cells[i - 1]);
+            if (!atBoundary)
+            {
+                continue;
+            }
+
+            foreach (var (token, emoji) in _emoticons)
+            {
+                if (i + token.Length > cells.Count)
+                {
+                    continue;
+                }
+
+                var matches = true;
+                for (var k = 0; k < token.Length; k++)
+                {
+                    if (cells[i + k].Text.Length != 1 || cells[i + k].Text[0] != token[k])
+                    {
+                        matches = false;
+                        break;
+                    }
+                }
+
+                if (!matches)
+                {
+                    continue;
+                }
+
+                var after = i + token.Length;
+                if (after != cells.Count && !IsWhitespaceCell(cells[after]))
+                {
+                    continue;
+                }
+
+                var style = cells[i].Style;
+                cells.RemoveRange(i, token.Length);
+                cells.Insert(i, new Cell(emoji, style, null));
+                changed = true;
+                break;
+            }
+        }
+
+        return changed;
+    }
+
+    private static bool IsWhitespaceCell(Cell cell) => cell.Text.Length == 1 && char.IsWhiteSpace(cell.Text[0]);
+
+    private static StyledLine Coalesce(List<Cell> cells)
+    {
+        if (cells.Count == 0)
+        {
+            return StyledLine.Empty;
+        }
+
+        var spans = new List<StyledSpan>();
+        var sb = new System.Text.StringBuilder(cells[0].Text);
+        var style = cells[0].Style;
+        var link = cells[0].Link;
+        for (var i = 1; i < cells.Count; i++)
+        {
+            if (cells[i].Style.Equals(style) && Equals(cells[i].Link, link))
+            {
+                sb.Append(cells[i].Text);
+            }
+            else
+            {
+                spans.Add(new StyledSpan(sb.ToString(), style, link));
+                sb.Clear();
+                sb.Append(cells[i].Text);
+                style = cells[i].Style;
+                link = cells[i].Link;
+            }
+        }
+
+        spans.Add(new StyledSpan(sb.ToString(), style, link));
+        return new StyledLine(spans);
+    }
+
+    private readonly record struct Cell(string Text, TextStyle Style, SpanInteraction? Link);
+
     /// <summary>Returns <paramref name="text"/> with emoticons and shortcodes replaced by emoji.</summary>
     public string Apply(string text)
     {

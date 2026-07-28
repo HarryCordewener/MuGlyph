@@ -46,14 +46,16 @@ public sealed class WebPageFetcher : IDisposable
                 .ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
 
+            // After redirects, resolve page identity and relative links against the final location.
+            var finalUri = response.RequestMessage?.RequestUri ?? uri;
             var body = await ReadCappedAsync(response, cancellationToken).ConfigureAwait(false);
             var contentType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
 
             if (contentType.Contains("html", StringComparison.OrdinalIgnoreCase) || contentType.Length == 0)
             {
-                var renderer = new HtmlStyledRenderer(uri.ToString());
+                var renderer = new HtmlStyledRenderer(finalUri.ToString());
                 var lines = renderer.Render(body, width);
-                return new WebPage(uri.ToString(), HtmlStyledRenderer.GetTitle(body), lines);
+                return new WebPage(finalUri.ToString(), HtmlStyledRenderer.GetTitle(body), lines);
             }
 
             // Non-HTML: render as plain text lines.
@@ -65,7 +67,7 @@ public sealed class WebPageFetcher : IDisposable
                 textLines.Add(tail);
             }
 
-            return new WebPage(uri.ToString(), uri.Host, textLines);
+            return new WebPage(finalUri.ToString(), finalUri.Host, textLines);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
         {

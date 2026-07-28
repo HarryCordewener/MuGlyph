@@ -1,3 +1,4 @@
+using System.Text;
 using MuClient.Core.Text;
 
 namespace MuClient.Web;
@@ -137,7 +138,7 @@ internal sealed class LineWriter(int width)
         }
 
         var spans = new List<StyledSpan>();
-        var runText = _current[0].Text;
+        var runText = new StringBuilder(_current[0].Text);
         var runStyle = _current[0].Style;
         var runLink = _current[0].Link;
 
@@ -146,18 +147,20 @@ internal sealed class LineWriter(int width)
             var seg = _current[i];
             if (seg.Style.Equals(runStyle) && Equals(seg.Link, runLink))
             {
-                runText += seg.Text;
+                // StringBuilder avoids O(n^2) copying when a page has many same-style segments.
+                runText.Append(seg.Text);
             }
             else
             {
-                spans.Add(new StyledSpan(runText, runStyle, runLink));
-                runText = seg.Text;
+                spans.Add(new StyledSpan(runText.ToString(), runStyle, runLink));
+                runText.Clear();
+                runText.Append(seg.Text);
                 runStyle = seg.Style;
                 runLink = seg.Link;
             }
         }
 
-        spans.Add(new StyledSpan(runText, runStyle, runLink));
+        spans.Add(new StyledSpan(runText.ToString(), runStyle, runLink));
         return new StyledLine(spans);
     }
 

@@ -188,12 +188,20 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private async Task LoadWebAsync(string url)
     {
         var width = Math.Max(20, _webView.Viewport.Width);
-        var page = await _fetcher.FetchAsync(url, width).ConfigureAwait(false);
-        Application.Invoke(() =>
+        try
         {
-            _webView.Show(page);
-            _webView.SetNeedsDraw();
-        });
+            var page = await _fetcher.FetchAsync(url, width).ConfigureAwait(false);
+            Application.Invoke(() =>
+            {
+                _webView.Show(page);
+                _webView.SetNeedsDraw();
+            });
+        }
+        catch (Exception ex)
+        {
+            // Fire-and-forget: surface the failure instead of dropping it silently.
+            Application.Invoke(() => _active?.PrintSystem($"*** Failed to load {url}: {ex.Message}"));
+        }
     }
 
     private void HideWeb()

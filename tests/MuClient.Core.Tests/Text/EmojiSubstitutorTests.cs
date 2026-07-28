@@ -70,4 +70,45 @@ public class EmojiSubstitutorTests
         var sub = new EmojiSubstitutor();
         await Assert.That(sub.Apply("<3 you")).IsEqualTo("❤️ you");
     }
+
+    [Test]
+    public async Task ApplyToLine_StandaloneEmoticon_AcrossSpanSeam_IsReplaced()
+    {
+        var sub = new EmojiSubstitutor();
+        // Two spans, whitespace before the ":)" — a genuine standalone emoticon.
+        var line = new StyledLine(new[]
+        {
+            new StyledSpan("hi ", TextStyle.Default),
+            new StyledSpan(":)", new TextStyle(TerminalColor.FromIndex(2), TerminalColor.Default, TextAttributes.None)),
+        });
+        var result = sub.ApplyToLine(line);
+        await Assert.That(result.Text).IsEqualTo("hi 🙂");
+    }
+
+    [Test]
+    public async Task ApplyToLine_MidWordAcrossSeam_IsNotReplaced()
+    {
+        var sub = new EmojiSubstitutor();
+        // "foo" then ":)" with no whitespace — the full line is "foo:)", not a standalone emoticon.
+        var line = new StyledLine(new[]
+        {
+            new StyledSpan("foo", TextStyle.Default),
+            new StyledSpan(":)", new TextStyle(TerminalColor.FromIndex(2), TerminalColor.Default, TextAttributes.None)),
+        });
+        var result = sub.ApplyToLine(line);
+        await Assert.That(result.Text).IsEqualTo("foo:)");
+    }
+
+    [Test]
+    public async Task ApplyToLine_Shortcode_PreservesOtherSpanStyles()
+    {
+        var sub = new EmojiSubstitutor();
+        var line = new StyledLine(new[]
+        {
+            new StyledSpan("hot ", TextStyle.Default),
+            new StyledSpan(":fire:", new TextStyle(TerminalColor.FromIndex(1), TerminalColor.Default, TextAttributes.None)),
+        });
+        var result = sub.ApplyToLine(line);
+        await Assert.That(result.Text).IsEqualTo("hot 🔥");
+    }
 }

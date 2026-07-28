@@ -27,7 +27,7 @@ fallbacks) for inline images/maps.
 
 ## Repository state
 
-**M1 delivered, plus substantial M2–M4 work.** `MuGlyph.slnx` builds all eight projects on
+**M1 delivered, plus substantial M2–M4 work.** `MuGlyph.slnx` builds all nine projects on
 `net10.0`; the solution has **313 passing tests**. In place:
 
 - **Core** — `AnsiParser` (SGR 16/256/truecolor), styled-line + `ScrollbackBuffer` model,

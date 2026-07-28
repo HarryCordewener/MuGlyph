@@ -31,7 +31,7 @@ namespace MuClient.Core.Protocols;
 /// capped to avoid runaway on malformed input.</item>
 /// </list>
 /// </summary>
-public sealed class MxpParser : MuClient.Core.Text.ILineParser
+public sealed class MxpParser : ILineParser
 {
     private const int MaxTagLength = 4096;
     private const int MaxEntityLength = 32;
@@ -551,6 +551,29 @@ public sealed class MxpParser : MuClient.Core.Text.ILineParser
             }
 
             _stack.RemoveAt(i);
+        }
+
+        // A formatting frame opened *inside* an interaction still holds it in SavedInteraction;
+        // if it closes on a later line, CloseTag would resurrect the ended interaction. Clear it
+        // (and rebase SpanStart, which pointed into the now-cleared line) on surviving frames.
+        for (var i = 0; i < _stack.Count; i++)
+        {
+            var frame = _stack[i];
+            if (frame.SavedInteraction is not null || frame.SpanStart != 0)
+            {
+                _stack[i] = new Frame
+                {
+                    Name = frame.Name,
+                    SavedStyle = frame.SavedStyle,
+                    SavedInteraction = null,
+                    IsInteraction = frame.IsInteraction,
+                    IsLink = frame.IsLink,
+                    DeferCommand = frame.DeferCommand,
+                    Hint = frame.Hint,
+                    PromptOnly = frame.PromptOnly,
+                    SpanStart = 0,
+                };
+            }
         }
 
         _interaction = null;
