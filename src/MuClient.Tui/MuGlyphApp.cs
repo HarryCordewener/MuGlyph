@@ -70,6 +70,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private string? _demoActiveKey;
     private readonly bool _headless;
     private bool _railCollapsed;
+    private bool _showTimestamps;
     private bool _prefixArmed;
     private bool _moveMode;
     private string? _moveWindowId;
@@ -182,6 +183,10 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         {
             _prefixArmed = true;
         }
+        else if (string.Equals(view, "timestamps", StringComparison.OrdinalIgnoreCase))
+        {
+            _showTimestamps = true;
+        }
 
         LoadDemoScene();
 
@@ -247,7 +252,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         {
             foreach (var line in parser.Feed(ansiLine + "\n"))
             {
-                pane.AppendLine(_formatter.ToMarkup(line));
+                pane.AppendLine(_formatter.ToMarkup(line, Stamp()));
             }
         }
 
@@ -466,11 +471,15 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     }
 
     /// <summary>Appends a line to a window's pane and badges it unread when it isn't the visible tab.</summary>
+    /// <summary>The optional output-view timestamp gutter, or null when the column is off. Headless
+    /// snapshots use a fixed clock so golden images stay stable.</summary>
+    private string? Stamp() => _showTimestamps ? (_headless ? "09:24" : DateTime.Now.ToString("HH:mm")) : null;
+
     private void OnLine(string windowId, StyledLine line)
     {
         if (_panes.TryGetValue(windowId, out var pane))
         {
-            pane.AppendLine(_formatter.ToMarkup(line));
+            pane.AppendLine(_formatter.ToMarkup(line, Stamp()));
         }
 
         if (!_workspace.IsVisible(windowId))
@@ -485,7 +494,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     {
         var existed = _workspace.FindWindow(Workspace.SpawnWindowId(target)) is not null;
         var window = _workspace.RouteSpawn(target, _active?.SessionKey);
-        PaneContentFor(window.Id, window.Title).AppendLine(_formatter.ToMarkup(line));
+        PaneContentFor(window.Id, window.Title).AppendLine(_formatter.ToMarkup(line, Stamp()));
 
         // A first-seen spawn adds a tab to its pane, so rebuild; otherwise just refresh badges.
         if (existed)
@@ -843,7 +852,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         var context = new CommandContext(
             LoggingOn: false,
             Zoomed: _workspace.Layout.ZoomedPaneId is not null,
-            Frozen: _workspace.Layout.FocusedPane.Frozen);
+            Frozen: _workspace.Layout.FocusedPane.Frozen,
+            TimestampsOn: _showTimestamps);
         return CommandCatalog.Build(_workspace, BuildCharacterRefs(), _active?.SessionKey, context);
     }
 
@@ -899,6 +909,10 @@ internal sealed class MuGlyphApp : IAsyncDisposable
                     pane.SetContent(new List<string>());
                 }
 
+                break;
+            case "term:timestamps-on":
+            case "term:timestamps-off":
+                _showTimestamps = !_showTimestamps;
                 break;
             case "world:reconnect":
                 _ = _active?.ConnectAsync();

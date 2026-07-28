@@ -19,10 +19,22 @@ internal sealed class MarkupFormatter(Theme theme)
     private readonly Theme _theme = theme;
 
     /// <summary>Renders a whole line to a single markup string.</summary>
-    public string ToMarkup(StyledLine line)
+    public string ToMarkup(StyledLine line) => ToMarkup(line, null);
+
+    /// <summary>
+    /// Renders a whole line, optionally prefixed with a dim timestamp gutter (the output view's optional
+    /// timestamp column). The timestamp precedes the trigger left-rule and the styled spans.
+    /// </summary>
+    public string ToMarkup(StyledLine line, string? timestamp)
     {
         ArgumentNullException.ThrowIfNull(line);
         var sb = new StringBuilder();
+
+        // Optional timestamp column: a dim gutter derived from the theme foreground, ahead of everything.
+        if (!string.IsNullOrEmpty(timestamp))
+        {
+            sb.Append("[dim]").Append(Escape(timestamp)).Append("[/] ");
+        }
 
         // A trigger-highlighted line gets a 2-col left rule in the trigger's colour (design output view).
         if (line.RuleColor is { } rule)

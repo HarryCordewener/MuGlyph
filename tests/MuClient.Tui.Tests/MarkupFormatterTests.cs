@@ -37,6 +37,39 @@ public class MarkupFormatterTests
     }
 
     [Test]
+    public async Task Timestamp_PrependsADimGutterAheadOfContent()
+    {
+        var line = StyledLine.FromText("hello", TextStyle.Default);
+
+        var markup = Formatter.ToMarkup(line, "09:24");
+
+        await Assert.That(markup).StartsWith("[dim]09:24[/] ");
+        await Assert.That(markup).Contains("hello");
+    }
+
+    [Test]
+    public async Task Timestamp_PrecedesTheTriggerLeftRule()
+    {
+        var line = new StyledLine(
+            new[] { new StyledSpan("channel", TextStyle.Default) },
+            TerminalColor.FromRgb(0x00, 0xf5, 0xb7));
+
+        var markup = Formatter.ToMarkup(line, "09:24");
+
+        // Timestamp gutter first, then the coloured left rule.
+        await Assert.That(markup).StartsWith("[dim]09:24[/] [#00f5b7]▌[/] ");
+    }
+
+    [Test]
+    public async Task NullOrEmptyTimestamp_AddsNoGutter()
+    {
+        var line = StyledLine.FromText("hello", TextStyle.Default);
+
+        await Assert.That(Formatter.ToMarkup(line, null)).StartsWith("[#");
+        await Assert.That(Formatter.ToMarkup(line, "")).StartsWith("[#");
+    }
+
+    [Test]
     public async Task BoldItalic_EmitsAttributeTokens()
     {
         var style = new TextStyle(

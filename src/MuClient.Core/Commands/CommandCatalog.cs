@@ -6,7 +6,7 @@ namespace MuClient.Core.Commands;
 public sealed record CharacterRef(string WorldName, string CharacterName, string SessionKey, bool Connected);
 
 /// <summary>Live flags the catalog reads so stateful commands show their current value.</summary>
-public sealed record CommandContext(bool LoggingOn = false, bool Zoomed = false, bool Frozen = false);
+public sealed record CommandContext(bool LoggingOn = false, bool Zoomed = false, bool Frozen = false, bool TimestampsOn = false);
 
 /// <summary>
 /// Generates the command-surface catalog from live state, per the design: every non-focused
@@ -74,6 +74,9 @@ public static class CommandCatalog
             ? new CommandItem(CommandGroup.Terminal, "Resume scrollback", "term:unfreeze")
             : new CommandItem(CommandGroup.Terminal, "Freeze pane", "term:freeze"));
         items.Add(new CommandItem(CommandGroup.Terminal, "Clear window", "term:clear"));
+        items.Add(context.TimestampsOn
+            ? new CommandItem(CommandGroup.Terminal, "Hide timestamps", "term:timestamps-off")
+            : new CommandItem(CommandGroup.Terminal, "Show timestamps", "term:timestamps-on"));
 
         // LAYOUT
         items.Add(new CommandItem(CommandGroup.Layout, "Split right", "layout:split-right"));
