@@ -171,6 +171,9 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _system.AddWindow(_window);
     }
 
+    /// <summary>Captures the current workspace (panes/windows/focus) so it can be persisted and resumed.</summary>
+    public WorkspaceState CaptureSession() => WorkspaceState.Capture(_workspace);
+
     /// <summary>Runs the UI loop, connecting <paramref name="world"/> once the window is shown.</summary>
     public int Run(WorldDefinition? world)
     {

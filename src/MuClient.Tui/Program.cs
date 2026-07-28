@@ -55,7 +55,20 @@ internal static class Program
 
         var world = ResolveWorld(args, config);
         var liveApp = new MuGlyphApp(config, capabilities);
-        return liveApp.Run(world); // blocks on the SharpConsoleUI main loop until exit
+        var exitCode = liveApp.Run(world); // blocks on the SharpConsoleUI main loop until exit
+
+        // Persist the workspace so the next launch resumes where this one left off.
+        try
+        {
+            config.LastSession = liveApp.CaptureSession();
+            ConfigurationStore.Save(ConfigurationStore.DefaultPath, config);
+        }
+        catch
+        {
+            // A failed save must never change the exit code — the session is a convenience, not critical.
+        }
+
+        return exitCode;
     }
 
     /// <summary>Parses <c>--size WxH</c> (default 160x48) for the snapshot frame.</summary>
