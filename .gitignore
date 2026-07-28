@@ -55,3 +55,4 @@ desktop.ini
 appsettings.*.local.json
 *.local.json
 secrets.json
+.claude/
