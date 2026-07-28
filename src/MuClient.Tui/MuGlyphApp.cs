@@ -197,6 +197,13 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         LoadDemoScene();
 
+        // Activate the Chat spawn window so its dim "⇱ capture …" header renders under the tab strip.
+        if (string.Equals(view, "spawn", StringComparison.OrdinalIgnoreCase))
+        {
+            _workspace.ActivateWindow(Workspace.SpawnWindowId("Chat"));
+            RebuildPaneArea();
+        }
+
         // Freeze the focused pane so the pinned-scrollback / live-tail split + FROZEN bar render, then
         // feed a couple of lines that land in the live tail below the bar.
         if (string.Equals(view, "freeze", StringComparison.OrdinalIgnoreCase))
@@ -305,6 +312,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         // A spawn window fed by a "Chat" trigger target, left in the background with unread.
         var chat = _workspace.RouteSpawn("Chat");
+        chat.CapturePattern = @"^\[Chat\]";
         PaneContentFor(chat.Id, chat.Title);
         var chatParser = new AnsiParser();
         foreach (var line in chatParser.Feed("\x1b[1;35m[Chat]\x1b[0m Rivane: anyone up for the crypt run?\n"))
@@ -518,6 +526,12 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         }
     }
 
+    /// <summary>The trigger pattern that routes to a spawn <paramref name="target"/>, for its capture line.</summary>
+    private string? CaptureFor(string target) =>
+        _config.TriggerSets.SelectMany(s => s.Triggers)
+            .FirstOrDefault(t => string.Equals(t.Actions.SpawnTarget, target, StringComparison.Ordinal))
+            ?.Pattern;
+
     /// <summary>Appends a line to a window's pane and badges it unread when it isn't the visible tab.</summary>
     private void OnLine(string windowId, StyledLine line)
     {
@@ -535,6 +549,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     {
         var existed = _workspace.FindWindow(Workspace.SpawnWindowId(target)) is not null;
         var window = _workspace.RouteSpawn(target, _active?.SessionKey);
+        window.CapturePattern ??= CaptureFor(target); // label the pane with the trigger that feeds it
         PaneContentFor(window.Id, window.Title); // ensure the live control exists before buffering
         AppendWindowLine(window.Id, _formatter.ToMarkup(line, Stamp()));
 
@@ -1198,12 +1213,9 @@ internal sealed class MuGlyphApp : IAsyncDisposable
                 continue;
             }
 
-            // A frozen pane splits its *active* window into pinned scrollback + live tail; other tabs
-            // (and unfrozen panes) show the plain live control.
-            var content = pane.Frozen && pane.ActiveTab == windowId
-                ? BuildFrozenContent(windowId, window.Title)
-                : (IWindowControl)PaneContentFor(windowId, window.Title);
-            builder.AddTab(TabTitles.For(window), content);
+            builder.AddTab(
+                TabTitles.For(window, ActiveCharacterKey(), isActive: pane.ActiveTab == windowId),
+                BuildTabContent(pane, windowId, window));
             ids.Add(windowId);
         }
 
@@ -1222,6 +1234,39 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         tabs.TabChanged += (_, e) => OnTabChanged(paneId, e.NewTab);
         _paneTabs[paneId] = tabs;
         return tabs;
+    }
+
+    /// <summary>
+    /// Chooses a tab's content: a frozen <em>active</em> window gets the pinned/live split; a spawn
+    /// window with a capture pattern gets a dim <c>⇱ capture …</c> header over its output; everything
+    /// else shows the plain live control.
+    /// </summary>
+    private IWindowControl BuildTabContent(PaneNode pane, string windowId, WorkspaceWindow window)
+    {
+        if (pane.Frozen && pane.ActiveTab == windowId)
+        {
+            return BuildFrozenContent(windowId, window.Title);
+        }
+
+        if (window.Kind == WindowKind.Spawn && !string.IsNullOrEmpty(window.CapturePattern))
+        {
+            return BuildSpawnContent(windowId, window);
+        }
+
+        return PaneContentFor(windowId, window.Title);
+    }
+
+    /// <summary>Wraps a spawn window's output under a dim capture line naming its trigger pattern.</summary>
+    private IWindowControl BuildSpawnContent(string windowId, WorkspaceWindow window)
+    {
+        var header = new MarkupControl(new List<string> { CaptureLineRenderer.Line(window.CapturePattern!) });
+        var output = PaneContentFor(windowId, window.Title);
+
+        var grid = Controls.Grid().WithVerticalAlignment(VerticalAlignment.Fill);
+        grid.Rows(GridLength.Cells(1), GridLength.Star(1)).Columns(GridLength.Star(1));
+        grid.Place(header, 0, 0, 1, 1);
+        grid.Place(output, 1, 0, 1, 1);
+        return grid.Build();
     }
 
     /// <summary>
@@ -1503,13 +1548,15 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     /// <summary>Repaints every pane's tab headers from window titles + unread/unsent badges.</summary>
     private void RefreshTabTitles()
     {
-        foreach (var tabs in _paneTabs.Values)
+        var focusedCharacter = ActiveCharacterKey();
+        foreach (var (paneId, tabs) in _paneTabs)
         {
+            var activeTab = _workspace.Layout.FindPane(paneId)?.ActiveTab;
             foreach (var page in tabs.TabPages)
             {
                 if (page.Tag is string id && _workspace.FindWindow(id) is { } window)
                 {
-                    page.Title = TabTitles.For(window);
+                    page.Title = TabTitles.For(window, focusedCharacter, isActive: id == activeTab);
                 }
             }
         }

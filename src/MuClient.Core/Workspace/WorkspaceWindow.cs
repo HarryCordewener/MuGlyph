@@ -45,4 +45,10 @@ public sealed class WorkspaceWindow
 
     /// <summary>Whether the window holds a typed-but-unsent input draft (the <c>✎</c> marker).</summary>
     public bool HasUnsentInput { get; internal set; }
+
+    /// <summary>
+    /// For a <see cref="WindowKind.Spawn"/> window, the trigger pattern that routes lines here — shown
+    /// as a dim <c>⇱ capture …</c> line under the tab strip. Null for windows with no capture rule.
+    /// </summary>
+    public string? CapturePattern { get; set; }
 }

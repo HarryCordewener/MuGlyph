@@ -39,4 +39,29 @@ public class TabTitlesTests
         ws.SetUnsentInput(chat.Id, true);
         await Assert.That(TabTitles.For(chat)).IsEqualTo("Chat (1) ✎");
     }
+
+    [Test]
+    public async Task ActiveTab_AppendsACloseAffordance()
+    {
+        var main = new Workspace(mainWindowId: "main", mainTitle: "Server").FindWindow("main")!;
+        await Assert.That(TabTitles.For(main, focusedCharacterKey: null, isActive: true)).IsEqualTo("Server ✕");
+    }
+
+    [Test]
+    public async Task DifferentCharacter_AppendsACrossMarker()
+    {
+        var window = new WorkspaceWindow("w1", "pages", WindowKind.Spawn, sessionKey: "Aetherfall.Rookery");
+
+        // Focused character is Corvid, but this window belongs to Rookery → ⌁.
+        var label = TabTitles.For(window, focusedCharacterKey: "Aetherfall.Corvid");
+        await Assert.That(label).IsEqualTo("pages ⌁");
+    }
+
+    [Test]
+    public async Task SameCharacter_HasNoCrossMarker()
+    {
+        var window = new WorkspaceWindow("w1", "main", WindowKind.Main, sessionKey: "Aetherfall.Corvid");
+        var label = TabTitles.For(window, focusedCharacterKey: "Aetherfall.Corvid");
+        await Assert.That(label).IsEqualTo("main");
+    }
 }
