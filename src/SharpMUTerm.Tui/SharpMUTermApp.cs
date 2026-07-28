@@ -15,6 +15,10 @@ using SharpConsoleUI.Drivers;
 using SharpConsoleUI.Events;
 using SharpConsoleUI.Layout;
 using SColor = SharpConsoleUI.Color;
+// Aliased rather than a plain using: SharpConsoleUI.Imaging also has a HalfBlockRenderer, which
+// would collide with SharpMUTerm.Graphics'.
+using PixelBuffer = SharpConsoleUI.Imaging.PixelBuffer;
+using ImageScaleMode = SharpConsoleUI.Imaging.ImageScaleMode;
 using static SharpMUTerm.Tui.MarkupText;
 
 namespace SharpMUTerm.Tui;
@@ -66,6 +70,23 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private readonly PromptControl _input;
     private readonly GmcpStats _stats = new();
     private readonly SharpMUTerm.Web.WebPageFetcher _fetcher = new();
+    private readonly WebImageLoader _imageLoader = new();
+
+    /// <summary>
+    /// The web page currently in the web tab, its markup lines, and the images that decoded — keyed
+    /// by index into <see cref="SharpMUTerm.Web.WebPage.Images"/>. Together these are everything
+    /// <see cref="BuildWebContent"/> needs; an empty image map means the tab is the plain text-mode
+    /// page it has always been.
+    /// </summary>
+    private SharpMUTerm.Web.WebPage? _webPage;
+    private IReadOnlyList<string> _webMarkup = Array.Empty<string>();
+    private readonly Dictionary<int, PixelBuffer> _webImages = new();
+
+    /// <summary>
+    /// Cancels the in-flight image fetches of a superseded page. Loading is per-page and a new
+    /// navigation invalidates the old one's images outright.
+    /// </summary>
+    private CancellationTokenSource? _webImageCts;
 
     private readonly CommandPalette _palette;
     private readonly SettingsOverlay _settings;
@@ -654,6 +675,17 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         if (command.StartsWith("/web ", StringComparison.OrdinalIgnoreCase))
         {
             OpenWeb(command[5..].Trim());
+            return;
+        }
+
+        // `/graphics` reports where the degradation chain settled and, when it degraded, why — so a
+        // missing picture is an explanation rather than a mystery.
+        if (command.Trim().Equals("/graphics", StringComparison.OrdinalIgnoreCase))
+        {
+            // Appended to the window rather than routed through the session, so it still answers
+            // when nothing is connected — which is exactly when someone is checking their terminal.
+            var report = InlineImagePolicy.Describe(_capabilities, WebGraphicsSurface());
+            AppendWindowLine(windowId, $"[dim]*** Graphics: {Escape(report)}.[/]");
             return;
         }
 
@@ -1333,13 +1365,179 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _workspace.FindWindow(WebWindowId)!.Title = title;
         }
 
-        PaneContentFor(WebWindowId, title).SetContent(page.Lines.Select(_formatter.ToMarkup).ToList());
+        // A new page invalidates the previous one's images, in flight or already decoded.
+        _webImageCts?.Cancel();
+        _webImageCts?.Dispose();
+        _webImageCts = null;
+        _webImages.Clear();
+
+        _webPage = page;
+        _webMarkup = page.Lines.Select(_formatter.ToMarkup).ToList();
+        PaneContentFor(WebWindowId, title).SetContent(_webMarkup.ToList());
         if (isNew)
         {
             RebuildPaneArea(); // realise the new tab before activating it
         }
 
         Activate(WebWindowId);
+        StartWebImageLoad(page);
+    }
+
+    /// <summary>
+    /// Kicks off the background fetch/decode of a page's inline images, but only when this view can
+    /// actually draw one. With no graphics the placeholders the HTML renderer already emitted are the
+    /// finished product, so nothing is fetched at all — a terminal without graphics does not pay for
+    /// images it cannot show.
+    /// </summary>
+    private void StartWebImageLoad(SharpMUTerm.Web.WebPage page)
+    {
+        if (page.Images.Count == 0 ||
+            ResolveInlineImagePresentation() == InlineImagePresentation.TextPlaceholder)
+        {
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _webImageCts = cts;
+        _ = LoadWebImagesAsync(page, WebImageColumns(), cts.Token);
+    }
+
+    /// <summary>
+    /// Fetches each of a page's images in turn and folds the ones that decode back into the view.
+    /// Each arrival repaints on its own rather than the page waiting on the whole set, so pictures
+    /// fill in progressively where their placeholders were. Sequential on purpose: a MU* client has
+    /// no business opening a dozen simultaneous connections to whatever host a page names.
+    /// </summary>
+    private async Task LoadWebImagesAsync(
+        SharpMUTerm.Web.WebPage page, int columns, CancellationToken cancellationToken)
+    {
+        for (var i = 0; i < page.Images.Count && i < MaxInlineWebImages; i++)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            PixelBuffer? buffer;
+            try
+            {
+                buffer = await _imageLoader
+                    .LoadAsync(page.Images[i].Source, columns, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            if (buffer is null || cancellationToken.IsCancellationRequested)
+            {
+                continue; // the placeholder line stays put — a perfectly good outcome
+            }
+
+            var index = i;
+            var decoded = buffer;
+            OnUi(() =>
+            {
+                // The page may have been replaced while this image was in flight.
+                if (cancellationToken.IsCancellationRequested || !ReferenceEquals(_webPage, page))
+                {
+                    return;
+                }
+
+                _webImages[index] = decoded;
+                RebuildPaneArea();
+            });
+        }
+    }
+
+    /// <summary>How many images one page may draw, so an image-heavy page cannot stall the client.</summary>
+    private const int MaxInlineWebImages = 12;
+
+    /// <summary>Columns an inline web image may span, leaving room for the rail and pane chrome.</summary>
+    private int WebImageColumns() => Math.Clamp(_window.Width - 8, 8, 200);
+
+    /// <summary>
+    /// What this view can actually put on screen. Asked fresh rather than cached in the constructor:
+    /// the console driver only knows whether the terminal speaks Kitty graphics <em>after</em> it has
+    /// initialised and run its capability probe.
+    /// </summary>
+    private GraphicsSurface WebGraphicsSurface() =>
+        GraphicsSurface.Compositor(_system.ConsoleDriver is IGraphicsProtocol { SupportsKittyGraphics: true });
+
+    /// <summary>The presentation the degradation chain settles on for this terminal and this view.</summary>
+    private InlineImagePresentation ResolveInlineImagePresentation() =>
+        InlineImagePolicy.Select(_capabilities, WebGraphicsSurface());
+
+    /// <summary>
+    /// Builds the web tab: the page's markup split around whichever images decoded, stacked in a
+    /// scrollable panel. With no decoded images this is a single markup control holding every line —
+    /// exactly the control the web view used before images existed.
+    /// </summary>
+    private IWindowControl BuildWebContent(string title)
+    {
+        var live = PaneContentFor(WebWindowId, title);
+        if (_webPage is null || _webImages.Count == 0)
+        {
+            return live;
+        }
+
+        var boxes = new Dictionary<int, WebImageLayout.CellBox>();
+        foreach (var (index, buffer) in _webImages)
+        {
+            boxes[index] = new WebImageLayout.CellBox(buffer.Width, Math.Max(1, buffer.Height / WebImageLayout.PixelsPerCell));
+        }
+
+        var blocks = WebViewComposer.Compose(_webMarkup, _webPage.Images, boxes);
+        var panel = Controls.ScrollablePanel()
+            .WithAlignment(HorizontalAlignment.Stretch)
+            .WithVerticalAlignment(VerticalAlignment.Fill);
+
+        var usedLiveControl = false;
+        foreach (var block in blocks)
+        {
+            switch (block)
+            {
+                case WebTextBlock text:
+                    // Reuse the window's own control for the first run so link routing and the
+                    // pane's identity survive; later runs get plain markup controls with the same
+                    // link handler.
+                    if (!usedLiveControl)
+                    {
+                        usedLiveControl = true;
+                        live.SetContent(text.Lines.ToList());
+                        panel.AddControl(live);
+                    }
+                    else
+                    {
+                        // Later runs mirror PaneContentFor's plain control, link routing included,
+                        // so a link reads the same wherever on the page it sits.
+                        var markup = new MarkupControl(text.Lines.ToList());
+                        markup.LinkClicked += (_, e) => OnLinkClicked(e.Url);
+                        panel.AddControl(markup);
+                    }
+
+                    break;
+
+                case WebImageBlock image:
+                    panel.AddControl(new ImageControl
+                    {
+                        Source = _webImages[image.Index],
+                        ScaleMode = ImageScaleMode.Fit,
+                        MinimumHeight = image.Box.Rows,
+                    });
+                    break;
+            }
+        }
+
+        if (!usedLiveControl)
+        {
+            // An all-image page: the window still needs its own control in the tree.
+            live.SetContent(new List<string>());
+            panel.AddControl(live);
+        }
+
+        return panel.Build();
     }
 
     /// <summary>The content control for a window, created (with link routing) on first use.</summary>
@@ -1581,6 +1779,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         if (window.Kind == WindowKind.Spawn && !string.IsNullOrEmpty(window.CapturePattern))
         {
             return BuildSpawnContent(windowId, window);
+        }
+
+        if (windowId == WebWindowId)
+        {
+            return BuildWebContent(window.Title);
         }
 
         return PaneContentFor(windowId, window.Title);
@@ -2304,6 +2507,9 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _system.ConsoleDriver.MouseEvent -= OnDriverMouseEvent;
+        _webImageCts?.Cancel();
+        _webImageCts?.Dispose();
+        _imageLoader.Dispose();
         _fetcher.Dispose();
         await _sessions.DisposeAsync().ConfigureAwait(false);
     }

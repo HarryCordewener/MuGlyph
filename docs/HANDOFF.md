@@ -4,8 +4,8 @@ Context for whoever (human or agent) picks up this work next.
 
 - **Repository:** `SharpMUSH/SharpMUTerm`
 - **Start from:** a fresh branch off `main`
-- **Tests:** 649 across the solution (325 Core / 57 Graphics / 42 Scripting /
-  15 Web / 210 Tui), all green; `dotnet build SharpMUTerm.slnx` clean (0 warnings
+- **Tests:** 764 across the solution (325 Core / 83 Graphics / 42 Scripting /
+  28 Web / 286 Tui), all green; `dotnet build SharpMUTerm.slnx` clean (0 warnings
   from this repo; building against a local SharpConsoleUI clone surfaces 2 upstream
   NuGet advisory warnings for AngleSharp, which are the framework's, not ours)
 
@@ -35,16 +35,57 @@ F-key shortcuts and the `--view` snapshot lookup. Shared chrome lives in
 `ScreenPalette` (colours), `ScreenChrome` (hint/action fragments, band, vertical
 rule, indent) and `MarkupText` (escape, visible width, padding, spread).
 
-### 2. Task #20 — fold inline graphics into SharpConsoleUI's Kitty support
+### 2. Task #20 — fold inline graphics into SharpConsoleUI's Kitty support — wired
 
-**Status:** pending; **cannot be verified headlessly** (no GPU terminal in the
-sandbox). `SharpMUTerm.Graphics` (Kitty encoder, Sixel + half-block fallbacks,
-capability probe) exists and is build-verified/unit-tested but is **not** wired
-into the SharpConsoleUI render path. SharpConsoleUI has native Kitty graphics
-support; the task is to route `GraphicsView`/image output through it and ensure
-clean degradation when no graphics protocol is available (the sandbox is exactly
-that case). Real verification must happen on a GPU terminal (Kitty/WezTerm/
-Ghostty) on the maintainer's machine.
+**Status:** wired and unit-tested; the **picture itself is still unverified**
+(no GPU terminal in the sandbox). `<img>` in the web view now renders inline.
+
+**What the framework actually provides** (read at v2.5.14, not assumed):
+
+- `ImageControl` (`Controls/ImageControl/ImageControl.cs`) takes a
+  `PixelBuffer` (`Imaging/PixelBuffer.cs`, `FromFile`/`FromStream`/`FromImageSharp`)
+  and picks its back-end once per control in the private `ResolveRenderer()`
+  (line 375): `KittyImageRenderer` when the driver is an `IGraphicsProtocol` with
+  `SupportsKittyGraphics`, else `HalfBlockImageRenderer`.
+- Detection is the framework's own — `Helpers/TerminalCapabilities.Probe()` sends a
+  real Kitty graphics query and falls back to `KITTY_PID`/`WEZTERM_PANE`. It runs at
+  driver init, so **do not read `SupportsKittyGraphics` in a constructor**; it is
+  still false there.
+- **There is no Sixel anywhere in the framework** (`grep -i sixel` finds only a
+  "future back-ends" comment at `ImageControl.cs:266` and a row in
+  `docs/COMPARISON.md:132` conceding the gap to XenoAtom).
+
+**Why ours could not simply be swapped in.** Our `KittyGraphicsProtocol` and
+`SixelEncoder` return escape-sequence *strings*. A compositor owns every cell and
+re-diffs the screen each frame; `Cell` (`Layout/Cell.cs`) has no raw-escape field
+and `AppendCombiner` (line 122) deliberately sanitises escapes out. The
+framework's `KittyImageRenderer` works because it writes U+10EEEE placeholder
+cells with combining diacritics — images become *real cells* that scroll and clip
+like text, which is the approach `docs/PLAN.md:78` committed to. So the framework
+renders, and `SharpMUTerm.Graphics` supplies the policy.
+
+**Consequence — a real gap, not a shortcut:** `IImageRenderer` is `internal` and
+`ResolveRenderer()` is private, so **no Sixel back-end can be injected** into
+`ImageControl` at this version. Inside the TUI the chain is therefore
+Kitty → half-block → text, and `InlineImagePolicy` degrades a Sixel-only terminal
+to half-block *explicitly* (with `Describe()` saying why) rather than silently.
+Reopening Sixel means an upstream PR making `IImageRenderer` public and
+`ResolveRenderer` overridable.
+
+**What is verified:** the selection logic and the whole fallback matrix
+(`InlineImagePolicyTests`, 26 tests), the image index into the page
+(`WebImageIndexTests`), sizing and gatekeeping (`WebImageLayoutTests`,
+`WebImageLoaderTests`), the block split (`WebViewComposerTests`), and the seam end
+to end (`WebInlineImageEndToEndTests`). Snapshots still render — the sandbox is the
+no-graphics case, so that also proves degradation does not crash.
+
+**What is NOT verified:** that a Kitty image actually appears. Nobody has seen one.
+Try `/web <url>` with images in Kitty/WezTerm/Ghostty; `/graphics` reports where the
+chain landed and why.
+
+**Still open:** MXP/Pueblo `<IMG>` are parsed but discarded
+(`MxpParser.cs:379`, `PuebloParser.cs:308`) — routing those through the same seam
+is the natural follow-up, as is an image-viewer tab for local files.
 
 ### 3. Live keyboard interaction for the config screens — navigation + toggles done
 
@@ -296,4 +337,9 @@ Things that will waste your time if you don't know them.
 | `src/SharpMUTerm.Tui/ScreenEdits.cs` | The undo log behind Cancel/Save |
 | `src/SharpMUTerm.Tui/CommandPalette.cs` | ⌃P surface: content-hug sizing, clean chrome |
 | `src/SharpMUTerm.Tui/CommandSurfaceRenderer.cs` | Palette rows + full-width selection bar |
+| `src/SharpMUTerm.Graphics/InlineImagePolicy.cs` | The degradation chain + `GraphicsSurface` (what the *host* can emit, vs what the terminal can show) |
+| `src/SharpMUTerm.Tui/WebViewComposer.cs` | Splits a page into text/image blocks; no images → one control, unchanged |
+| `src/SharpMUTerm.Tui/WebImageLayout.cs` | Cell sizing: what is worth drawing and how big it may get |
+| `src/SharpMUTerm.Tui/WebImageLoader.cs` | Fetch + decode + downsample to the target cell box |
+| `src/SharpMUTerm.Web/WebImage.cs` | An `<img>` and the line its placeholder occupies |
 | `tools/fonts/OFL.txt`, `LICENSE-NerdFonts.txt` | Full bundled license texts |
