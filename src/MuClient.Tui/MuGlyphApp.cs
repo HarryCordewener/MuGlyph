@@ -44,7 +44,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private readonly MarkupControl _statusBar;
     private readonly MarkupControl _rail;
     private readonly MarkupControl _inputGutter;
-    private readonly TabControl _tabs;
+    private readonly Dictionary<string, TabControl> _paneTabs = new(StringComparer.Ordinal);
     private readonly PromptControl _input;
     private readonly GmcpStats _stats = new();
     private readonly MuClient.Web.WebPageFetcher _fetcher = new();
@@ -63,6 +63,12 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private WorldSession? _active;
     private WorldDefinition? _pendingWorld;
     private string? _demoActiveKey;
+
+    /// <summary>The rail + pane-area row currently in the window (index 1). Swapped on layout change.</summary>
+    private IWindowControl _workspaceRow = null!;
+
+    /// <summary>The window index the workspace row sits at (after the sticky-top header).</summary>
+    private const int WorkspaceRowIndex = 1;
 
     public MuGlyphApp(AppConfiguration config, TerminalCapabilities capabilities, IConsoleDriver? driver = null)
     {
@@ -86,19 +92,13 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         main.LinkClicked += (_, e) => OnLinkClicked(e.Url);
         _panes[MainWindowId] = main;
 
-        _tabs = Controls.TabControl().AddTab("Main", main).Fill().Build();
-        _tabs.TabPages[0].Tag = MainWindowId;
-        _tabs.TabChanged += (_, e) => OnTabChanged(e.NewTab);
-
         // The connection rail (worlds → characters → windows) sits left of the pane area, joined by
         // a splitter. RailModel/RailRenderer keep the projection + markup tested; this just hosts it.
         _rail = new MarkupControl(new List<string>());
-        var workspaceRow = Controls.HorizontalGrid()
-            .WithVerticalAlignment(VerticalAlignment.Fill)
-            .Column(c => c.Width(30).Add(_rail))
-            .Column(c => c.Flex(1).Add(_tabs))
-            .WithSplitterAfter(0)
-            .Build();
+
+        // The pane area renders the workspace's split tree (one TabControl per leaf pane). It's built
+        // from the model and rebuilt whenever the layout changes; the initial row goes into the window.
+        _workspaceRow = BuildWorkspaceRow();
 
         // A thin gutter above the input: which window the line goes to, other windows holding drafts,
         // and the character count — the design's input-region affordance. StatusFormatter builds it.
@@ -118,7 +118,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             .Maximized()
             .WithColors(fg, bg)
             .AddControl(_header)
-            .AddControl(workspaceRow)
+            .AddControl(_workspaceRow)
             .AddControl(_inputGutter)
             .AddControl(_input)
             .AddControl(_statusBar)
@@ -211,7 +211,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         // A spawn window fed by a "Chat" trigger target, left in the background with unread.
         var chat = _workspace.RouteSpawn("Chat");
-        var chatPane = PaneFor(chat.Id, chat.Title);
+        var chatPane = PaneContentFor(chat.Id, chat.Title);
         var chatParser = new AnsiParser();
         foreach (var line in chatParser.Feed("\x1b[1;35m[Chat]\x1b[0m Rivane: anyone up for the crypt run?\n"))
         {
@@ -230,7 +230,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _statusBar.SetContent(new List<string> { StatusBarMarkup("Corvid", "aetherfall.mux", 4201, "connected") });
         _header.SetContent(new List<string> { HeaderMarkup() });
         _input.Input = "say hello there";
-        RefreshTabTitles();
+        RebuildPaneArea(); // realise the Chat spawn tab, then refresh badges
     }
 
     /// <summary>
@@ -348,10 +348,19 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     /// <summary>Routes a trigger-spawned line to its spawn window (creating the tab on first use).</summary>
     private void OnSpawnLine(string target, StyledLine line)
     {
+        var existed = _workspace.FindWindow(Workspace.SpawnWindowId(target)) is not null;
         var window = _workspace.RouteSpawn(target, _active?.SessionKey);
-        var pane = PaneFor(window.Id, window.Title);
-        pane.AppendLine(_formatter.ToMarkup(line));
-        RefreshTabTitles();
+        PaneContentFor(window.Id, window.Title).AppendLine(_formatter.ToMarkup(line));
+
+        // A first-seen spawn adds a tab to its pane, so rebuild; otherwise just refresh badges.
+        if (existed)
+        {
+            RefreshTabTitles();
+        }
+        else
+        {
+            RebuildPaneArea();
+        }
     }
 
     private void OnCommandEntered(string command)
@@ -555,7 +564,6 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         if (id.StartsWith("win:", StringComparison.Ordinal))
         {
             Activate(id["win:".Length..]);
-            RefreshTabTitles();
             return;
         }
 
@@ -564,16 +572,19 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             case "layout:zoom":
             case "layout:unzoom":
                 _workspace.Layout.ToggleZoom();
-                break;
+                RebuildPaneArea(); // zoom collapses the tree to one pane (or restores it)
+                return;
             case "layout:close":
-                CloseActiveWindow();
-                break;
+                CloseActiveWindow(); // rebuilds the pane area itself
+                return;
             case "layout:split-right":
                 PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitRight);
-                break;
+                RebuildPaneArea();
+                return;
             case "layout:split-down":
                 PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitDown);
-                break;
+                RebuildPaneArea();
+                return;
             case "term:freeze":
             case "term:unfreeze":
                 _workspace.Layout.ToggleFreezeFocused();
@@ -615,8 +626,9 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         }
     }
 
-    private void OnTabChanged(TabPage? newTab)
+    private void OnTabChanged(string paneId, TabPage? newTab)
     {
+        _workspace.Layout.Focus(paneId);
         if (newTab?.Tag is string id)
         {
             _workspace.ActivateWindow(id);
@@ -654,7 +666,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private void ShowWeb(MuClient.Web.WebPage page)
     {
         var title = page.Title ?? page.Url;
-        if (_workspace.FindWindow(WebWindowId) is null)
+        var isNew = _workspace.FindWindow(WebWindowId) is null;
+        if (isNew)
         {
             _workspace.OpenWindow(WebWindowId, title, WindowKind.Auxiliary);
         }
@@ -663,14 +676,17 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             _workspace.FindWindow(WebWindowId)!.Title = title;
         }
 
-        var pane = PaneFor(WebWindowId, title);
-        pane.SetContent(page.Lines.Select(_formatter.ToMarkup).ToList());
+        PaneContentFor(WebWindowId, title).SetContent(page.Lines.Select(_formatter.ToMarkup).ToList());
+        if (isNew)
+        {
+            RebuildPaneArea(); // realise the new tab before activating it
+        }
+
         Activate(WebWindowId);
-        RefreshTabTitles();
     }
 
-    /// <summary>Returns the pane control for a window, creating its tab (Tag = id) on first use.</summary>
-    private MarkupControl PaneFor(string id, string title)
+    /// <summary>The content control for a window, created (with link routing) on first use.</summary>
+    private MarkupControl PaneContentFor(string id, string title)
     {
         if (_panes.TryGetValue(id, out var existing))
         {
@@ -680,62 +696,186 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         var control = new MarkupControl(new List<string>());
         control.LinkClicked += (_, e) => OnLinkClicked(e.Url);
         _panes[id] = control;
-        _tabs.AddTab(title, control, false);
-        _tabs.TabPages[_tabs.TabCount - 1].Tag = id;
         return control;
     }
 
-    /// <summary>Cycles to the next window tab, wrapping (Ctrl+N / Ctrl+Tab).</summary>
-    private void NextWindow()
+    /// <summary>
+    /// Builds the rail + pane-area row: a fixed-width rail column, a splitter, and the pane area
+    /// projected from the workspace's split tree. Called at construction and by
+    /// <see cref="RebuildPaneArea"/> on every layout change.
+    /// </summary>
+    private IWindowControl BuildWorkspaceRow()
     {
-        if (_tabs.TabCount > 1)
-        {
-            _tabs.ActiveTabIndex = (_tabs.ActiveTabIndex + 1) % _tabs.TabCount;
-        }
+        _paneTabs.Clear();
+
+        // When a pane is zoomed, render just that pane full-area; otherwise render the whole tree.
+        var zoomed = _workspace.Layout.ZoomedPaneId is { } zid ? _workspace.Layout.FindPane(zid) : null;
+        var paneArea = zoomed is not null
+            ? BuildPaneTabs(zoomed)
+            : BuildLayoutNode(_workspace.Layout.Root);
+
+        return Controls.HorizontalGrid()
+            .WithVerticalAlignment(VerticalAlignment.Fill)
+            .Column(c => c.Width(30).Add(_rail))
+            .Column(c => c.Flex(1).Add(paneArea))
+            .WithSplitterAfter(0)
+            .Build();
     }
 
-    /// <summary>Closes the active window tab (Ctrl+W). The main window can't be closed.</summary>
-    private void CloseActiveWindow()
+    /// <summary>
+    /// Recursively realises a layout node: a leaf <see cref="PaneNode"/> becomes a tab strip, a
+    /// <see cref="SplitNode"/> becomes a proportional grid (columns for a row split, rows for a
+    /// column split) with a draggable splitter between children.
+    /// </summary>
+    private IWindowControl BuildLayoutNode(MuClient.Core.Workspaces.LayoutNode node)
     {
-        var index = _tabs.ActiveTabIndex;
-        if (index < 0 || index >= _tabs.TabCount)
+        if (node is PaneNode pane)
         {
-            return;
+            return BuildPaneTabs(pane);
         }
 
-        if (_tabs.TabPages[index].Tag is not string id || id == MainWindowId)
+        var split = (SplitNode)node;
+        var children = split.Children.Select(BuildLayoutNode).ToList();
+        var lengths = split.Sizes.Select(s => GridLength.Star(Math.Max(0.01, s))).ToArray();
+
+        var grid = Controls.Grid().WithVerticalAlignment(VerticalAlignment.Fill);
+        if (split.Direction == SplitDirection.Row)
         {
-            return;
+            // Columns divide the width; a single full-height row hosts them. Place(control, row, col…).
+            grid.Columns(lengths).Rows(GridLength.Star(1));
+            for (var i = 0; i < children.Count; i++)
+            {
+                grid.Place(children[i], 0, i, 1, 1);
+            }
+
+            for (var i = 0; i < children.Count - 1; i++)
+            {
+                grid.ColumnSplitterAfter(i);
+            }
+        }
+        else
+        {
+            // Rows divide the height; a single full-width column hosts them. Place(control, row, col…).
+            grid.Rows(lengths).Columns(GridLength.Star(1));
+            for (var i = 0; i < children.Count; i++)
+            {
+                grid.Place(children[i], i, 0, 1, 1);
+            }
+
+            for (var i = 0; i < children.Count - 1; i++)
+            {
+                grid.RowSplitterAfter(i);
+            }
         }
 
-        _tabs.RemoveTab(index);
-        _panes.Remove(id);
-        _drafts.Remove(id);
-        _workspace.CloseWindow(id);
+        return grid.Build();
+    }
+
+    /// <summary>Builds a leaf pane's tab strip from its window ids, tracking it under its pane id.</summary>
+    private IWindowControl BuildPaneTabs(PaneNode pane)
+    {
+        var builder = Controls.TabControl();
+        var ids = new List<string>();
+        foreach (var windowId in pane.Tabs)
+        {
+            if (_workspace.FindWindow(windowId) is not { } window)
+            {
+                continue;
+            }
+
+            builder.AddTab(TabTitles.For(window), PaneContentFor(windowId, window.Title));
+            ids.Add(windowId);
+        }
+
+        var tabs = builder.Fill().Build();
+        for (var i = 0; i < ids.Count; i++)
+        {
+            tabs.TabPages[i].Tag = ids[i];
+        }
+
+        if (pane.ActiveIndex >= 0 && pane.ActiveIndex < tabs.TabCount)
+        {
+            tabs.ActiveTabIndex = pane.ActiveIndex;
+        }
+
+        var paneId = pane.Id;
+        tabs.TabChanged += (_, e) => OnTabChanged(paneId, e.NewTab);
+        _paneTabs[paneId] = tabs;
+        return tabs;
+    }
+
+    /// <summary>Rebuilds the pane area from the model and swaps it into the live window.</summary>
+    private void RebuildPaneArea()
+    {
+        var row = BuildWorkspaceRow();
+        _window.RemoveContent(_workspaceRow);
+        _window.InsertControl(WorkspaceRowIndex, row);
+        _workspaceRow = row;
         RefreshTabTitles();
     }
 
-    /// <summary>Makes a window's tab the active one in the view (fires <see cref="OnTabChanged"/>).</summary>
-    private void Activate(string id)
+    /// <summary>The TabControl of the focused pane, or null if none is realised.</summary>
+    private TabControl? FocusedTabs() => _paneTabs.GetValueOrDefault(_workspace.Layout.FocusedPaneId);
+
+    /// <summary>Cycles to the next window tab in the focused pane, wrapping (Ctrl+N / Ctrl+Tab).</summary>
+    private void NextWindow()
     {
-        for (var i = 0; i < _tabs.TabCount; i++)
+        if (FocusedTabs() is { TabCount: > 1 } tabs)
         {
-            if (_tabs.TabPages[i].Tag as string == id)
-            {
-                _tabs.ActiveTabIndex = i;
-                return;
-            }
+            tabs.ActiveTabIndex = (tabs.ActiveTabIndex + 1) % tabs.TabCount;
         }
     }
 
-    /// <summary>Repaints every tab header from its window's title + unread/unsent badges.</summary>
+    /// <summary>Closes the focused pane's active window (Ctrl+W). The main window can't be closed.</summary>
+    private void CloseActiveWindow()
+    {
+        var id = ActiveWindowId();
+        if (id == MainWindowId)
+        {
+            return;
+        }
+
+        _panes.Remove(id);
+        _drafts.Remove(id);
+        _workspace.CloseWindow(id);
+        RebuildPaneArea();
+    }
+
+    /// <summary>Makes a window active in its hosting pane (model + view) and focuses that pane.</summary>
+    private void Activate(string id)
+    {
+        if (!_workspace.ActivateWindow(id))
+        {
+            return;
+        }
+
+        if (_workspace.Layout.FindWindow(id) is { } pane &&
+            _paneTabs.GetValueOrDefault(pane.Id) is { } tabs)
+        {
+            for (var i = 0; i < tabs.TabCount; i++)
+            {
+                if (tabs.TabPages[i].Tag as string == id)
+                {
+                    tabs.ActiveTabIndex = i;
+                    break;
+                }
+            }
+        }
+
+        RefreshTabTitles();
+    }
+
+    /// <summary>Repaints every pane's tab headers from window titles + unread/unsent badges.</summary>
     private void RefreshTabTitles()
     {
-        foreach (var page in _tabs.TabPages)
+        foreach (var tabs in _paneTabs.Values)
         {
-            if (page.Tag is string id && _workspace.FindWindow(id) is { } window)
+            foreach (var page in tabs.TabPages)
             {
-                page.Title = TabTitles.For(window);
+                if (page.Tag is string id && _workspace.FindWindow(id) is { } window)
+                {
+                    page.Title = TabTitles.For(window);
+                }
             }
         }
 
