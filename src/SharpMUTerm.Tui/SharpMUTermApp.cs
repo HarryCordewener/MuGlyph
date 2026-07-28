@@ -723,7 +723,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// The F2–F9 settings screens, in F-key order. Both the global shortcuts and the <c>--view</c>
     /// snapshot lookup read this one table, so a screen can't be bound to a key without also being
     /// reachable by name. Each control is built on demand from live config by its pure renderer, so
-    /// re-opening always reflects current state — converted screens (F2–F5) hand back a composed
+    /// re-opening always reflects current state — converted screens (F2–F6) hand back a composed
     /// tree of real panels, the rest a <see cref="Markup"/> panel.
     /// </summary>
     private IReadOnlyList<SettingsScreen> SettingsScreens() => new SettingsScreen[]
@@ -732,7 +732,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         new(ConsoleKey.F3, new[] { "aliases" }, AliasesControl),
         new(ConsoleKey.F4, new[] { "keypad" }, KeypadControl),
         new(ConsoleKey.F5, new[] { "worlds", "settings" }, WorldsControl),
-        new(ConsoleKey.F6, new[] { "timers" }, Markup(() => TimersScreenRenderer.Render(_config.TriggerSets, 0))),
+        new(ConsoleKey.F6, new[] { "timers" }, TimersControl),
         new(ConsoleKey.F7, new[] { "textansi" }, Markup(OptionsScreenRenderer.TextAnsi)),
         new(ConsoleKey.F8, new[] { "input" }, Markup(OptionsScreenRenderer.InputSpellcheck)),
         new(ConsoleKey.F9, new[] { "logging" }, Markup(() => OptionsScreenRenderer.Logging(ActiveLogging()))),
@@ -818,6 +818,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
     /// <summary>Builds the F4 Keypad &amp; hotkeys screen as a composed control tree (real panels).</summary>
     private IWindowControl KeypadControl() => KeypadScreenView.Build(Macros(), _system.DesktopDimensions.Width);
+
+    /// <summary>Builds the F6 Timers screen as a composed control tree (real panels).</summary>
+    private IWindowControl TimersControl() => TimersScreenView.Build(
+        _config.TriggerSets, 0, _system.DesktopDimensions.Width);
 
     /// <summary>Hosts a screen that is still one markup block in the overlay's full-screen panel.</summary>
     private static Func<IWindowControl> Markup(Func<IReadOnlyList<string>> content) =>
