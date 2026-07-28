@@ -56,7 +56,6 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private readonly MarkupControl _railSpacer = new(new List<string>());
     private readonly Dictionary<string, TabControl> _paneTabs = new(StringComparer.Ordinal);
     private readonly PromptControl _input;
-    private readonly GridControl _inputRow;
     private readonly GmcpStats _stats = new();
     private readonly MuClient.Web.WebPageFetcher _fetcher = new();
 
@@ -131,14 +130,14 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         // from the model and rebuilt whenever the layout changes; the initial row goes into the window.
         _workspaceRow = BuildWorkspaceRow();
 
-        // The input region gets its own subtly-elevated background so it's easy to tell apart from the
-        // output body above and the status bar below.
-        // The input bar gets its own clearly-elevated background so it reads as a distinct region.
+        // The input row reads as one solid full-width band: the PromptControl fills the field area to
+        // the right edge with InputBackgroundColor on its own, and we paint the prompt cells with the
+        // same colour (via PromptMarkup) so the label at the left carries the band too — no gap.
         var inputBg = ToColor(new Rgb(0x33, 0x39, 0x4c));
 
         // Draft-safe history is ours (InputHistory), not the framework's: ↑ stashes the live draft,
         // ↓ past the newest entry restores it. So the built-in recall is off.
-        _input = Controls.Prompt("›")
+        _input = Controls.Prompt(PromptMarkup("›"))
             .WithHistory(false)
             .WithInputBackgroundColor(inputBg)
             .WithInputFocusedBackgroundColor(inputBg)
@@ -159,7 +158,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             .WithColors(fg, bg)
             .AddControl(_header)
             .AddControl(_workspaceRow)
-            .AddControl(_inputRow)
+            .AddControl(_input)
             .AddControl(_statusBar)
             .Build();
 
@@ -170,7 +169,12 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         {
             ReportWindowSize();
             _header.SetContent(new List<string> { HeaderMarkup() }); // re-align the status cluster to the new width
+            SyncInputWidth(); // keep the input band spanning the full row after a resize
         };
+
+        // The PromptControl otherwise measures to its content width, leaving the band short of the right
+        // edge; pinning Width to the window makes the field fill (and its background paint) run edge-to-edge.
+        SyncInputWidth();
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.Q, () => _system.RequestExit(0));
         // Next window (Ctrl+N, plus Ctrl+Tab where the terminal reports it) and close window (Ctrl+W).
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.N, NextWindow);
@@ -285,6 +289,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         // first call. The HeadlessConsoleDriver writes the composited frame straight to the console,
         // so we redirect Console.Out for the duration of that one call and keep what it wrote. (An
         // earlier Run()-on-a-worker-thread approach raced the input+render pump and hung/OOM'd.)
+        SyncInputWidth(); // the window now carries the snapshot size, so the band fills its full width
         var real = Console.Out;
         var writer = new StringWriter();
         try
@@ -650,9 +655,30 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         var session = _active;
         var character = session?.Character?.Name ?? (ActiveWorld() is { } aw ? aw.Character : null);
         var world = session?.World.Name ?? ActiveWorld()?.World.Name;
-        _input.Prompt = StatusFormatter.CharacterPrompt(character, world);
+        _input.Prompt = PromptMarkup(StatusFormatter.CharacterPrompt(character, world));
         RefreshStatusBar();
     }
+
+    /// <summary>
+    /// The input band's background hex — shared by the field fill (<c>WithInputBackgroundColor</c>) and
+    /// the prompt cells (<see cref="PromptMarkup"/>) so the input row reads as one solid full-width band.
+    /// Keep in sync with the <c>inputBg</c> RGB in the constructor.
+    /// </summary>
+    private const string InputBandHex = "#33394c";
+
+    /// <summary>
+    /// Wraps the prompt label so its cells carry the band background. The PromptControl already fills
+    /// the field to the right edge with the same colour, so painting the label to match makes the whole
+    /// row a continuous band with no gap at the prompt. Brackets in names are escaped to block injection.
+    /// </summary>
+    private static string PromptMarkup(string prompt) =>
+        $"[on {InputBandHex}]{prompt.Replace("[", "[[").Replace("]", "]]")}[/]";
+
+    /// <summary>
+    /// Pins the input control's width to the window so the field (and its background fill) runs to the
+    /// right edge — otherwise the PromptControl measures to content width and the band stops mid-row.
+    /// </summary>
+    private void SyncInputWidth() => _input.Width = HeaderWidth();
 
     /// <summary>The active connection's status-bar identity (character/host/port/state), or null.</summary>
     private (string Character, string Host, int Port, string State)? _statusIdentity;
