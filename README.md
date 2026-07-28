@@ -11,11 +11,6 @@ client: rich truecolor text, inline graphics, powerful automation, and full MU\*
 > `MuClient.Core` is fully unit-tested (391 tests across the solution). See
 > [`docs/PLAN.md`](docs/PLAN.md) for the full architecture and roadmap.
 
-<p align="center">
-  <img src="docs/screenshots/muglyph-demo.svg" alt="MuGlyph rendered headlessly: tabbed windows with a spawn window and input draft" width="760">
-  <br><em>Rendered headlessly with <code>muglyph --snapshot</code> — no terminal required (see <a href="docs/SCREENSHOTS.md">docs/SCREENSHOTS.md</a>).</em>
-</p>
-
 ## Why a TUI
 
 "GPU acceleration" is a property of the terminal *emulator*, not the app. Any TUI running inside
