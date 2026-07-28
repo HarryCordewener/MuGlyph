@@ -1,6 +1,5 @@
 using MuClient.Core.Configuration;
 using MuClient.Graphics;
-using Terminal.Gui.App;
 
 namespace MuClient.Tui;
 
@@ -18,21 +17,8 @@ internal static class Program
         var world = ResolveWorld(args, config);
         var capabilities = DetectCapabilities(config);
 
-        Application.Init(null!);
-        try
-        {
-            var app = new MuGlyphApp(config, capabilities);
-
-            // Kick off the connection once the main loop is running so event marshaling works.
-            Application.Invoke(() => _ = app.StartAsync(world));
-
-            Application.Run(app.Window, null!);
-            return 0;
-        }
-        finally
-        {
-            Application.Shutdown();
-        }
+        var app = new MuGlyphApp(config, capabilities);
+        return app.Run(world); // blocks on the SharpConsoleUI main loop until exit
     }
 
     private static AppConfiguration LoadConfiguration()

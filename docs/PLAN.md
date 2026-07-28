@@ -7,7 +7,7 @@ BeipMU is the best-in-class **Windows-only** MU\* (MUSH/MUCK/MUD) client, but it
 Key reframing from research: **"GPU-enabled" is a property of the terminal emulator, not our app.** Any TUI running inside Kitty/WezTerm/Ghostty gets GPU-accelerated glyph rendering for free. Our job is to (a) emit rich truecolor/styled text and (b) use the **Kitty graphics protocol** (escape sequences) for inline images/maps, with graceful fallbacks. Both are fully achievable from managed C#.
 
 ### Locked decisions (from planning Q&A)
-- **Rendering base:** Terminal.Gui v2 for windows/input/layout/scrollback + a custom placeholder-based `GraphicsView` for images.
+- **Rendering base:** **SharpConsoleUI** (`nickprotop/ConsoleEx`, stable, net8/9/10) — a compositor-based framework with split layouts, tabs, resizable/mouse windows, Spectre-style markup, and a **native Kitty graphics protocol** (+ Sixel/half-block). Superseded the original Terminal.Gui v2 choice (which was prerelease with an `[Obsolete]` mid-migration API); the switch was contained to `MuClient.Tui` since `MuClient.Core` is UI-agnostic. References below that describe Terminal.Gui reflect the earlier plan.
 - **Scripting:** Lua via **MoonSharp** (pure-managed, no native deps).
 - **Inline graphics:** must-have from day one.
 - **Scope:** broad BeipMU parity (phased into milestones below).
@@ -54,7 +54,7 @@ Layered, with a strict separation between **protocol/session** (headless, unit-t
 - `MuClient.Core` — transport, telnet, ANSI/MXP parsers, GMCP/MSDP routing, scrollback model, trigger/alias/macro engines, logging. **No UI deps.**
 - `MuClient.Scripting` — MoonSharp host + the scripting API surface (world, output, triggers, timers, gmcp).
 - `MuClient.Graphics` — Kitty graphics protocol encoder, capability probe, Sixel + half-block fallbacks, `GraphicsView`.
-- `MuClient.Tui` — Terminal.Gui v2 app: windows, panes, key routing, settings UI, wiring.
+- `MuClient.Tui` — SharpConsoleUI app: windows, panes, key routing, settings UI, wiring.
 - `MuClient.Core.Tests` / `MuClient.Graphics.Tests` — xUnit.
 - Target **.NET 10** (confirm TelnetNegotiationCore + Terminal.Gui v2 support net10.0; if a dep lags, reference it via `net8.0` compat and keep our own projects on net10.0).
 
@@ -119,7 +119,7 @@ MoonSharp `ScriptHost`, scripting API, Lua-backed triggers/aliases, GMCP subscri
 
 ### M5 UI design (in progress)
 Implementing the multi-pane workspace design (tmux-style pane tree hosting BeipMU-style windows),
-in reviewable steps landing on `Core` first (pure + tested), then the Terminal.Gui shell:
+in reviewable steps landing on `Core` first (pure + tested), then the SharpConsoleUI shell:
 - **Config schema** (`Core.Configuration`): worlds (servers) hold **characters**; automation lives
   in shared, named **trigger sets** that characters opt into. Sessions key on `world.character` and
   compose engines from the union of a character's sets. Versioned with `ConfigurationMigrator`.
@@ -130,8 +130,9 @@ in reviewable steps landing on `Core` first (pure + tested), then the Terminal.G
 - **Windows & spawn routing** (`Core.Workspaces`): a `Workspace` aggregate ties the layout to a
   registry of `WorkspaceWindow`s (title, kind, owning `world.character`, unread count, unsent-input
   marker). `RouteSpawn` finds-or-creates a background spawn window per `TriggerEngine` `SpawnTarget`
-  and accrues unread while it is not the visible tab; activating a window clears it. The Terminal.Gui
-  view hosting (panes, dividers, tab strips, rail) renders from this model (next).
+  and accrues unread while it is not the visible tab; activating a window clears it. The SharpConsoleUI
+  view hosting (splits, tabs, rail) renders from this model — the base shell (markup output pane with
+  clickable links, prompt input, status, NAWS-on-resize) is in place; splits/tabs/rail layer on next.
 
 ### Still open (M5+)
 - Dedicated **spawn windows** and **multiple input windows** (capture + routing hooks exist),

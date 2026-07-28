@@ -6,8 +6,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- TUI toolkit (v2 is prerelease; API differs completely from v1). -->
-    <PackageVersion Include="Terminal.Gui" Version="2.4.18-develop.6" />
+    <!-- TUI framework: compositor, split layouts, tabs, mouse, Kitty graphics (stable, net10). -->
+    <PackageVersion Include="SharpConsoleUI" Version="2.5.14" />
 
     <!-- Telnet negotiation: TELOPT/NAWS/MTTS/EOR/CHARSET/MSSP/GMCP/MSDP/MCCP/MXP negotiation. -->
     <PackageVersion Include="TelnetNegotiationCore" Version="2.5.3" />

@@ -50,3 +50,7 @@ jobs:
       - name: Test — Web
         shell: bash
         run: dotnet run -c Release --no-build --project tests/MuClient.Web.Tests/MuClient.Web.Tests.csproj
+
+      - name: Test — Tui
+        shell: bash
+        run: dotnet run -c Release --no-build --project tests/MuClient.Tui.Tests/MuClient.Tui.Tests.csproj

@@ -8,7 +8,7 @@ client: rich truecolor text, inline graphics, powerful automation, and full MU\*
 
 > **Status:** milestone **M1 delivered** (usable text client foundation) with substantial work
 > from M2–M4 in place — automation engines, inline-graphics subsystem, Lua scripting, and theming.
-> `MuClient.Core` is fully unit-tested (379 tests across the solution). See
+> `MuClient.Core` is fully unit-tested (387 tests across the solution). See
 > [`docs/PLAN.md`](docs/PLAN.md) for the full architecture and roadmap.
 
 ## Why a TUI
@@ -21,7 +21,7 @@ fallbacks) for inline images and maps.
 ## Tech stack
 
 - **.NET 10** / C#
-- **[Terminal.Gui v2](https://github.com/gui-cs/Terminal.Gui)** — windows, tabs, panes, input, scrollback
+- **[SharpConsoleUI](https://github.com/nickprotop/ConsoleEx)** — compositor-based TUI framework: split layouts, tabs, resizable/mouse windows, Spectre-style markup, and a native Kitty graphics protocol (+ Sixel/half-block)
 - **[TelnetNegotiationCore](https://www.nuget.org/packages/TelnetNegotiationCore/)** — telnet option negotiation (NAWS, MTTS, CHARSET, EOR/GA, MSSP, GMCP)
 - **[MoonSharp](https://www.moonsharp.org/)** — embedded, sandboxed Lua scripting
 - Custom app-layer parsers for **ANSI** (256 + 24-bit), **MXP**, and **Pueblo**
@@ -39,7 +39,7 @@ HTML logging · GMCP / MSDP / MSSP / MCCP · MXP + Pueblo · Unicode/emoji.
 | `MuClient.Core` | Transport, telnet, ANSI/MXP/Pueblo parsers, GMCP/MSDP routing, scrollback, trigger/alias/macro engines, logging (UI-agnostic) |
 | `MuClient.Graphics` | Kitty graphics protocol, capability probe, Sixel + half-block fallbacks, `GraphicsView` |
 | `MuClient.Scripting` | MoonSharp host + scripting API |
-| `MuClient.Tui` | Terminal.Gui v2 application (windows, panes, settings, wiring) |
+| `MuClient.Tui` | SharpConsoleUI application (windows, panes, settings, wiring) |
 | `*.Tests` | TUnit test projects |
 
 ## What works today
@@ -67,9 +67,11 @@ HTML logging · GMCP / MSDP / MSSP / MCCP · MXP + Pueblo · Unicode/emoji.
   `timer`/`gmcp`/`log`, with hot-reload.
 - **Theming** — yazi-style named themes (Dark / Light / Solarized Dark) with a 16-colour palette
   override and semantic UI colours, serialised to the config as hex.
-- **TUI** — a Terminal.Gui v2 app: truecolor output pane with wrapping/scrollback, clickable
-  MXP/Pueblo links, command input with history and tab-completion, a GMCP-driven stat line, and
-  key routing.
+- **TUI** — a [SharpConsoleUI](https://github.com/nickprotop/ConsoleEx) app: truecolor markup output
+  pane with clickable MXP/Pueblo/web links (styled spans → Spectre-style markup), a command prompt
+  with history, a GMCP-driven status line, `Ctrl+Q` quit, and NAWS re-advertised on terminal resize.
+  The compositor gives split layouts, tabs, resizable/mouse windows, and native inline images for the
+  multi-pane workspace (layered on the `Core.Workspaces` model) as it lands.
 - **Web view** — an in-TUI text-mode browser (`MuClient.Web`, AngleSharp): fetch a URL or
   follow an MXP/Pueblo/HTML link and read the page as styled, word-wrapped text with clickable
   links you can navigate in-pane. `<img>` shows as a labelled link (graphics-terminal image
@@ -92,7 +94,7 @@ dotnet run --project src/MuClient.Tui -- <host> <port> [--tls] [--insecure] [--n
 muglyph --help    # once published
 ```
 
-In-app: **PgUp/PgDn** scroll · **Up/Down** input history · **Tab** complete · **Ctrl+Q** quit.
+In-app: **Up/Down** input history · **Ctrl+Q** quit. (The window and its panes are mouse-resizable.)
 
 ## Testing
 
@@ -104,6 +106,7 @@ dotnet run --project tests/MuClient.Core.Tests
 dotnet run --project tests/MuClient.Graphics.Tests
 dotnet run --project tests/MuClient.Scripting.Tests
 dotnet run --project tests/MuClient.Web.Tests
+dotnet run --project tests/MuClient.Tui.Tests
 ```
 
 ## License

@@ -16,8 +16,11 @@ fallbacks) for inline images/maps.
 ## Locked decisions (do not relitigate without asking)
 
 - **Target framework:** `net10.0`.
-- **TUI base:** Terminal.Gui **v2** (prerelease) for windows/input/layout/scrollback, plus a
-  custom placeholder-based `GraphicsView` for images.
+- **TUI base:** **SharpConsoleUI** (`nickprotop/ConsoleEx`, stable, net8/9/10) — a compositor-based
+  framework with split layouts, tabs, resizable/mouse-draggable windows, Spectre-style markup, and
+  a **native Kitty graphics protocol** (+ Sixel/half-block) for inline images. Replaced Terminal.Gui
+  v2 (which was prerelease with an `[Obsolete]` mid-migration API); the switch is contained to
+  `MuClient.Tui` because `MuClient.Core` is UI-agnostic.
 - **Scripting:** Lua via **MoonSharp** (pure-managed, sandboxed).
 - **Inline graphics:** in scope from day one (Kitty Unicode placeholders → Sixel → half-block).
 - **Protocols:** aim for all common MU\* protocols. GMCP/MSSP/CHARSET/NAWS/MTTS/EOR via
@@ -28,8 +31,8 @@ fallbacks) for inline images/maps.
 
 ## Repository state
 
-**M1 delivered, plus substantial M2–M4 work.** `MuGlyph.slnx` builds all nine projects on
-`net10.0`; the solution has **379 passing tests**. In place:
+**M1 delivered, plus substantial M2–M4 work.** `MuGlyph.slnx` builds all ten projects on
+`net10.0`; the solution has **387 passing tests**. In place:
 
 - **Core** — `AnsiParser` (SGR 16/256/truecolor), styled-line + `ScrollbackBuffer` model,
   `TcpTransport` (TLS + IPv6), `TelnetSession` (wraps TelnetNegotiationCore **2.5.3**),
@@ -39,7 +42,10 @@ fallbacks) for inline images/maps.
 - **Graphics** — Kitty encoder + Unicode placeholders, Sixel + half-block fallbacks, capability
   probe (no UI dependency).
 - **Scripting** — sandboxed MoonSharp `ScriptHost` (world/output/trigger/alias/timer/gmcp/log).
-- **Tui** — Terminal.Gui v2 app (truecolor `OutputView`, `CommandInput`, theming, key routing).
+- **Tui** — **SharpConsoleUI** app: a `MarkupControl` output pane (StyledLine → Spectre-style markup
+  via `MarkupFormatter`, with clickable `[link=…]` MXP/Pueblo/web spans), a `PromptControl` input,
+  status line, theming, `Ctrl+Q` quit, and NAWS-on-resize. Multi-pane workspace (splits/tabs, driven
+  by `Core.Workspaces`) layers on top next.
 
 ### Notes for future agents (learned the hard way)
 - **.NET 10 SDK**: install via `apt-get install -y dotnet-sdk-10.0` (the Microsoft CDN is often
@@ -51,15 +57,21 @@ fallbacks) for inline images/maps.
   provides MCCP/MSDP/MXP negotiation itself. `TelnetSession` sets the init-only
   `CallbackOnByteAsync` reflectively to get raw data bytes (incl. unterminated prompts) — a
   first-class `OnByte` builder hook is a good upstream PR.
-- **Terminal.Gui v2** (2.4.x-develop) dropped `Toplevel`/`TabView`; use `IRunnable`/`Window` and
-  override `OnDrawingContent(DrawContext)`. The static `Application` API is `[Obsolete]` mid-migration
-  (suppressed via `NoWarn` in the Tui project).
+- **SharpConsoleUI** (package `SharpConsoleUI`, repo `nickprotop/ConsoleEx`): app is
+  `ConsoleWindowSystem(new NetConsoleDriver(RenderMode.Buffer), new ConsoleWindowSystemOptions())`;
+  build windows/controls with the fluent `WindowBuilder`/`Controls` factories; `AddControl` is
+  builder-time (keep control refs and mutate at runtime). Marshal background work with
+  `system.EnqueueOnUIThread`; global keys via `RegisterGlobalShortcut`; `system.Run()` blocks the
+  loop, `RequestExit(code)` ends it. Text is Spectre-style markup (`[bold #rrggbb on #rrggbb]…[/]`,
+  `[[`/`]]` escaping, `[link=url]…[/]` → `MarkupControl.LinkClicked`). A **headless** sandbox can't
+  run `NetConsoleDriver` (no console) — the Tui is build-verified + unit-tested (`MarkupFormatter`);
+  visual verification is on the maintainer's machine.
 
 ## Architecture rule (non-negotiable)
 
 `MuClient.Core` stays **UI-agnostic and fully unit-testable**. All transport, telnet, parsing
 (ANSI/MXP/Pueblo), GMCP/MSDP routing, scrollback, and trigger/alias/macro engines live there.
-Terminal.Gui is referenced **only** from `MuClient.Tui`.
+SharpConsoleUI is referenced **only** from `MuClient.Tui`.
 
 Planned solution layout:
 
@@ -68,8 +80,8 @@ Planned solution layout:
 | `MuClient.Core` | Transport, telnet, ANSI/MXP/Pueblo parsers, GMCP/MSDP routing, scrollback, engines, logging (no UI deps) |
 | `MuClient.Graphics` | Kitty graphics protocol, capability probe, Sixel + half-block fallbacks, `GraphicsView` |
 | `MuClient.Scripting` | MoonSharp host + scripting API |
-| `MuClient.Tui` | Terminal.Gui v2 application |
-| `MuClient.Core.Tests`, `MuClient.Graphics.Tests` | xUnit |
+| `MuClient.Tui` | SharpConsoleUI application |
+| `*.Tests` (Core, Graphics, Scripting, Web, Tui) | TUnit |
 
 ## Milestone M1 — first task
 
@@ -83,8 +95,9 @@ Planned solution layout:
 ## Dependency notes / traps
 
 - **.NET 10 SDK** may need installing in the sandbox (currently RC, e.g. `10.0.100-rc.1`).
-- **Terminal.Gui v2 is a prerelease** — add with `dotnet add package Terminal.Gui --prerelease`.
-  v1 (stable) has a completely different API; do not use it.
+- **SharpConsoleUI** — stable release, multi-targets net8/9/10; MIT. Provides split layouts, tabs,
+  resizable/mouse windows, and native Kitty graphics, so the multi-pane workspace and inline images
+  ride on the framework rather than being hand-drawn.
 - **TelnetNegotiationCore 1.0.0** provides negotiation only (TELOPT, GA, TTYPE/MTTS, EOR, NAWS,
   CHARSET, MSSP, GMCP). It does **not** provide MCCP, MSDP, MXP, Pueblo, or ANSI parsing — those
   are our layer. Do not assume APIs for them exist. (Note: the repo owner authored this library,
