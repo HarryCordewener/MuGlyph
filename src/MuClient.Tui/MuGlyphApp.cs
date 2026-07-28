@@ -1,6 +1,7 @@
 using MuClient.Core.Commands;
 using MuClient.Core.Automation;
 using MuClient.Core.Configuration;
+using MuClient.Core.Input;
 using MuClient.Core.Session;
 using MuClient.Core.Text;
 using MuClient.Core.Theming;
@@ -37,6 +38,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private readonly Workspace _workspace = new(MainWindowId, "Main");
     private readonly Dictionary<string, MarkupControl> _panes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _drafts = new(StringComparer.Ordinal);
+    private readonly InputHistory _history = new();
+    private bool _suppressInputChanged;
     private readonly HashSet<string> _connectedKeys = new(StringComparer.Ordinal);
 
     private readonly ConsoleWindowSystem _system;
@@ -115,7 +118,9 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         // and the character count — the design's input-region affordance. StatusFormatter builds it.
         _inputGutter = Controls.Markup("[dim]→ main  0[/]").StickyBottom().Build();
 
-        _input = Controls.Prompt("›").WithHistory(true).StickyBottom().Build();
+        // Draft-safe history is ours (InputHistory), not the framework's: ↑ stashes the live draft,
+        // ↓ past the newest entry restores it. So the built-in recall is off.
+        _input = Controls.Prompt("›").WithHistory(false).StickyBottom().Build();
         _input.Entered += (_, text) => OnCommandEntered(text);
         _input.InputChanged += (_, text) => OnInputChanged(text);
 
@@ -186,6 +191,18 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitRight);
             RebuildPaneArea();
             EnterMoveMode();
+        }
+
+        // History-recall state: seed a couple of sent commands, then recall the newest so the input
+        // shows a recalled line and the gutter shows the "history · ↓ back to draft" affordance.
+        if (string.Equals(view, "history", StringComparison.OrdinalIgnoreCase))
+        {
+            _history.Add("look");
+            _history.Add("say Well met, traveller.");
+            if (_history.Recall("wh") is { } recalled)
+            {
+                ApplyRecalledText(recalled);
+            }
         }
 
         // Optionally open a settings screen over the workspace so its frame can be captured too.
@@ -483,7 +500,9 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
     private void OnCommandEntered(string command)
     {
-        // The entered command clears this window's draft and its unsent-input marker.
+        // The entered command clears this window's draft and its unsent-input marker, and joins
+        // the draft-safe history so ↑/↓ can recall it without clobbering a future draft.
+        _history.Add(command);
         var windowId = ActiveWindowId();
         _drafts.Remove(windowId);
         _workspace.SetUnsentInput(windowId, false);
@@ -503,6 +522,19 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     /// <summary>Tracks the per-window input draft and the <c>✎</c> unsent-input marker as you type.</summary>
     private void OnInputChanged(string text)
     {
+        // Programmatic recall (setting _input.Input) also raises InputChanged; skip our draft/history
+        // bookkeeping for it. A genuine keystroke while recalling re-bases the recalled line as the draft.
+        if (_suppressInputChanged)
+        {
+            return;
+        }
+
+        if (_history.IsRecalling)
+        {
+            _history.Rebase();
+            UpdateInputChrome();
+        }
+
         var windowId = ActiveWindowId();
         if (string.IsNullOrEmpty(text))
         {
@@ -522,6 +554,61 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private string ActiveWindowId() => _workspace.Layout.FocusedPane.ActiveTab ?? MainWindowId;
 
     /// <summary>
+    /// Handles ↑/↓ as draft-safe history recall on a single-line input. Multi-line drafts keep the
+    /// arrows for cursor movement, and ↓ at the live draft is left to the control. Returns whether the
+    /// key was consumed.
+    /// </summary>
+    private bool TryRecallKey(KeyPressedEventArgs e)
+    {
+        if (_input.Input.Contains('\n'))
+        {
+            return false;
+        }
+
+        string? text;
+        switch (e.KeyInfo.Key)
+        {
+            case ConsoleKey.UpArrow:
+                text = _history.Recall(_input.Input);
+                break;
+            case ConsoleKey.DownArrow:
+                if (!_history.IsRecalling)
+                {
+                    return false;
+                }
+
+                text = _history.Forward();
+                break;
+            default:
+                return false;
+        }
+
+        e.Handled = true;
+        if (text is not null)
+        {
+            ApplyRecalledText(text);
+        }
+
+        return true;
+    }
+
+    /// <summary>Puts a recalled entry into the input without tripping draft/history bookkeeping.</summary>
+    private void ApplyRecalledText(string text)
+    {
+        _suppressInputChanged = true;
+        try
+        {
+            _input.Input = text;
+        }
+        finally
+        {
+            _suppressInputChanged = false;
+        }
+
+        UpdateInputChrome();
+    }
+
+    /// <summary>
     /// Refreshes the input region: the character-bound prompt (<c>Corvid@Aetherfall ›</c>) and the
     /// gutter (destination window, other windows holding drafts, character count). Both come from the
     /// tested <see cref="StatusFormatter"/>.
@@ -539,6 +626,14 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             .Where(w => w.HasUnsentInput && w.Id != activeId)
             .Select(w => w.Title)
             .ToList();
+
+        // While recalling history, the gutter tells you how to get your draft back (design input region).
+        if (_history.IsRecalling)
+        {
+            _inputGutter.SetContent(new List<string> { $"[{AccentHex(AccentPalette[0])}]history[/] [dim]· ↓ back to draft[/]" });
+            return;
+        }
+
         _inputGutter.SetContent(new List<string> { $"[dim]{Escape(StatusFormatter.InputGutter(destination, drafts, _input.Input.Length))}[/]" });
     }
 
@@ -852,12 +947,24 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private void OnTabChanged(string paneId, TabPage? newTab)
     {
         _workspace.Layout.Focus(paneId);
+        // A tab switch resets the history cursor (hIdx → -1) so recall restarts against this tab's draft.
+        _history.ResetCursor();
         if (newTab?.Tag is string id)
         {
             _workspace.ActivateWindow(id);
-            // Restore this window's saved input draft into the shared prompt.
-            _input.Input = _drafts.GetValueOrDefault(id, string.Empty);
+            // Restore this window's saved input draft into the shared prompt (not a keystroke: no rebase).
+            _suppressInputChanged = true;
+            try
+            {
+                _input.Input = _drafts.GetValueOrDefault(id, string.Empty);
+            }
+            finally
+            {
+                _suppressInputChanged = false;
+            }
+
             RefreshTabTitles();
+            UpdateInputChrome();
         }
     }
 
@@ -1077,6 +1184,12 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         if (!_prefixArmed)
         {
+            // Draft-safe history recall on ↑/↓ — our own, so a half-typed draft survives (see InputHistory).
+            if (!_palette.IsOpen && !_settings.IsOpen)
+            {
+                TryRecallKey(e);
+            }
+
             return;
         }
 
@@ -1210,9 +1323,20 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             _window.FocusControl(tabs);
         }
 
-        // The input line follows focus: restore the newly focused window's draft.
-        _input.Input = _drafts.GetValueOrDefault(ActiveWindowId(), string.Empty);
+        // The input line follows focus: reset the history cursor and restore the window's draft.
+        _history.ResetCursor();
+        _suppressInputChanged = true;
+        try
+        {
+            _input.Input = _drafts.GetValueOrDefault(ActiveWindowId(), string.Empty);
+        }
+        finally
+        {
+            _suppressInputChanged = false;
+        }
+
         RefreshTabTitles();
+        UpdateInputChrome();
     }
 
     /// <summary>Closes the focused pane's active window (Ctrl+W). The main window can't be closed.</summary>
