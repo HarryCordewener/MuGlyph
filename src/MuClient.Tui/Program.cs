@@ -29,7 +29,7 @@ internal static class Program
 
             var (width, height) = ParseSize(args);
             var app = new MuGlyphApp(config, capabilities, new HeadlessConsoleDriver(width, height));
-            var frame = app.RenderSnapshot();
+            var frame = app.RenderSnapshot(GetOption(args, "--view"));
             var outPath = GetOption(args, "--out");
             if (outPath is not null)
             {
@@ -133,6 +133,7 @@ internal static class Program
         Console.WriteLine("  --name <name>        Display name for the world.");
         Console.WriteLine("  --snapshot           Render one demo frame (ANSI) headlessly and exit.");
         Console.WriteLine("  --size <WxH>         Snapshot size in cells (default 100x30).");
+        Console.WriteLine("  --view <name>        Snapshot an overlay (e.g. 'settings') over the workspace.");
         Console.WriteLine("  --out <file>         Write the snapshot to a file instead of stdout.");
         Console.WriteLine("  -h, --help           Show this help.");
         Console.WriteLine();

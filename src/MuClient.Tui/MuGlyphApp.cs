@@ -50,6 +50,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private readonly MuClient.Web.WebPageFetcher _fetcher = new();
 
     private readonly CommandPalette _palette;
+    private readonly WorldSettingsView _worldSettings;
 
     /// <summary>Per-world accents when a world hasn't set its own, keyed by position.</summary>
     private static readonly TerminalColor[] AccentPalette =
@@ -125,6 +126,9 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             .Build();
 
         _palette = new CommandPalette(_system, BuildCatalog, () => _active?.SessionKey, DispatchCommand);
+        _worldSettings = new WorldSettingsView(
+            _system,
+            () => ActiveWorld() is { } w ? (w.World, w.Accent) : ((WorldDefinition, TerminalColor)?)null);
 
         _window.OnResize += (_, _) => ReportWindowSize();
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.Q, () => _system.RequestExit(0));
@@ -134,6 +138,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.W, CloseActiveWindow);
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.O, CyclePane);
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.P, () => _palette.Toggle());
+        _system.RegisterGlobalShortcut((ConsoleModifiers)0, ConsoleKey.F2, () => _worldSettings.Toggle());
         _system.AddWindow(_window);
     }
 
@@ -150,9 +155,15 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     /// required. Used by the <c>--snapshot</c> mode to produce documentation images and CI golden
     /// snapshots. Requires the app to have been constructed with a <see cref="HeadlessConsoleDriver"/>.
     /// </summary>
-    public string RenderSnapshot()
+    public string RenderSnapshot(string? view = null)
     {
         LoadDemoScene();
+
+        // Optionally open a modal panel over the workspace so its frame can be captured too.
+        if (string.Equals(view, "settings", StringComparison.OrdinalIgnoreCase))
+        {
+            _worldSettings.Open();
+        }
 
         // Render exactly one frame, synchronously, inline on this thread. ForceRender() performs a
         // single render cycle (bypassing the frame-rate limiter) with no Run() loop, no driver
