@@ -54,7 +54,6 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private readonly MarkupControl _statusBar;
     private readonly MarkupControl _rail;
     private readonly MarkupControl _railSpacer = new(new List<string>());
-    private readonly MarkupControl _inputGutter;
     private readonly Dictionary<string, TabControl> _paneTabs = new(StringComparer.Ordinal);
     private readonly PromptControl _input;
     private readonly GmcpStats _stats = new();
@@ -133,12 +132,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         // The input region gets its own subtly-elevated background so it's easy to tell apart from the
         // output body above and the status bar below.
-        var inputBg = ToColor(new Rgb(0x26, 0x27, 0x30));
-
-        // A thin gutter above the input: which window the line goes to, other windows holding drafts,
-        // and the character count — the design's input-region affordance. StatusFormatter builds it.
-        _inputGutter = Controls.Markup("[dim]→ main  0 chars[/]").StickyBottom().Build();
-        _inputGutter.BackgroundColor = inputBg;
+        // The input bar gets its own clearly-elevated background so it reads as a distinct region.
+        var inputBg = ToColor(new Rgb(0x2b, 0x2f, 0x3d));
 
         // Draft-safe history is ours (InputHistory), not the framework's: ↑ stashes the live draft,
         // ↓ past the newest entry restores it. So the built-in recall is off.
@@ -163,7 +158,6 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             .WithColors(fg, bg)
             .AddControl(_header)
             .AddControl(_workspaceRow)
-            .AddControl(_inputGutter)
             .AddControl(_input)
             .AddControl(_statusBar)
             .Build();
@@ -171,7 +165,11 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _palette = new CommandPalette(_system, BuildCatalog, () => _active?.SessionKey, DispatchCommand);
         _settings = new SettingsOverlay(_system);
 
-        _window.OnResize += (_, _) => ReportWindowSize();
+        _window.OnResize += (_, _) =>
+        {
+            ReportWindowSize();
+            _header.SetContent(new List<string> { HeaderMarkup() }); // re-align the status cluster to the new width
+        };
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.Q, () => _system.RequestExit(0));
         // Next window (Ctrl+N, plus Ctrl+Tab where the terminal reports it) and close window (Ctrl+W).
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.N, NextWindow);
@@ -359,8 +357,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             _workspace.NoteActivity(chatId); // each line accrues unread while Chat is in the background
         }
 
-        // Sample vitals so the status-bar meters render in snapshots.
-        _stats.Update("Char.Vitals", "{\"hp\":312,\"maxhp\":400,\"mp\":180,\"maxmp\":330}");
+        _statusIdentity = ("Corvid", "aetherfall.mux", 4201, "connected");
         _statusBar.SetContent(new List<string> { StatusBarMarkup("Corvid", "aetherfall.mux", 4201, "connected") });
         _header.SetContent(new List<string> { HeaderMarkup() });
         _input.Input = "say hello there";
@@ -631,8 +628,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
     /// <summary>
     /// Refreshes the input region: the character-bound prompt (<c>Corvid@Aetherfall ›</c>) and the
-    /// gutter (destination window, other windows holding drafts, character count). Both come from the
-    /// tested <see cref="StatusFormatter"/>.
+    /// status bar (which carries the live character count now that the gutter is gone).
     /// </summary>
     private void UpdateInputChrome()
     {
@@ -640,22 +636,22 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         var character = session?.Character?.Name ?? (ActiveWorld() is { } aw ? aw.Character : null);
         var world = session?.World.Name ?? ActiveWorld()?.World.Name;
         _input.Prompt = StatusFormatter.CharacterPrompt(character, world);
+        RefreshStatusBar();
+    }
 
-        var activeId = ActiveWindowId();
-        var destination = _workspace.FindWindow(activeId)?.Title ?? activeId;
-        var drafts = _workspace.Windows
-            .Where(w => w.HasUnsentInput && w.Id != activeId)
-            .Select(w => w.Title)
-            .ToList();
+    /// <summary>The active connection's status-bar identity (character/host/port/state), or null.</summary>
+    private (string Character, string Host, int Port, string State)? _statusIdentity;
 
-        // While recalling history, the gutter tells you how to get your draft back (design input region).
-        if (_history.IsRecalling)
+    /// <summary>Repaints the connection status bar from the stored identity, folding in the live char
+    /// count. A no-op while a transient status (move-mode prompt) owns the bar or nothing's connected.</summary>
+    private void RefreshStatusBar()
+    {
+        if (_moveMode || _statusIdentity is not { } id)
         {
-            _inputGutter.SetContent(new List<string> { $"[{AccentHex(AccentPalette[0])}]history[/] [dim]· ↓ back to draft[/]" });
             return;
         }
 
-        _inputGutter.SetContent(new List<string> { $"[dim]{Escape(StatusFormatter.InputGutter(destination, drafts, _input.Input.Length))}[/]" });
+        SetStatus(StatusBarMarkup(id.Character, id.Host, id.Port, id.State));
     }
 
     /// <summary>The <c>world.character</c> key of the character whose windows the rail expands.</summary>
@@ -1635,7 +1631,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         }
 
         var character = session.Character?.Name ?? session.World.Name;
-        SetStatus(StatusBarMarkup(character, session.World.Host, session.World.Port, session.State.ToString().ToLowerInvariant()));
+        _statusIdentity = (character, session.World.Host, session.World.Port, session.State.ToString().ToLowerInvariant());
+        RefreshStatusBar();
         _header.SetContent(new List<string> { HeaderMarkup() });
         RefreshRail();
     }
@@ -1689,11 +1686,15 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         var log = logFormat == LogFormat.None
             ? $"[dim]{Glyphs.Log} LOG off[/]"
             : $"[#00f5b7]{Glyphs.Log}[/] [dim]LOG {logFormat.ToString().ToLowerInvariant()}[/]";
-        var clock = _headless ? "09:24" : DateTime.Now.ToString("HH:mm");
-        var right = $"[dim]{conn}[/]{log}   [dim]Graphics {Escape(_capabilities.Protocol.ToString())}   {clock}[/]";
+        var right = $"[dim]{conn}[/]{log}   [dim]Graphics {Escape(_capabilities.Protocol.ToString())} [/]";
 
-        return $"{leftBar}          {right}";
+        // Right-align the status cluster to the far edge so the menu bar spans the whole console.
+        var gap = Math.Max(3, HeaderWidth() - MarkupWidth(leftBar) - MarkupWidth(right));
+        return $"{leftBar}{new string(' ', gap)}{right}";
     }
+
+    /// <summary>The header width to lay out against — the live window width, or a sane default early on.</summary>
+    private int HeaderWidth() => _window is { Width: > 0 } ? _window.Width : 160;
 
     /// <summary>Formats an <see cref="Rgb"/> as <c>#rrggbb</c> markup.</summary>
     private static string Hex(Rgb rgb) => $"#{rgb.R:x2}{rgb.G:x2}{rgb.B:x2}";
@@ -1707,20 +1708,6 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         var accent = ActiveWorld() is { } world ? AccentHex(world.Accent) : "#00f5b7";
         var parts = new List<string> { $"[{accent}]●[/] [bold]{Escape(character)}[/] [dim]{Escape(state)}[/]" };
 
-        var hp = _stats.GetInt("hp");
-        var maxhp = _stats.GetInt("maxhp");
-        if (hp is not null && maxhp is > 0)
-        {
-            parts.Add($"[#ff5f5f]HP[/] [#ff5f5f]{Meters.Bar(hp.Value, maxhp.Value, 8)}[/] {hp}");
-        }
-
-        var mp = _stats.GetInt("mp");
-        var maxmp = _stats.GetInt("maxmp");
-        if (mp is not null && maxmp is > 0)
-        {
-            parts.Add($"[#5fafff]EN[/] [#5fafff]{Meters.Bar(mp.Value, maxmp.Value, 8)}[/] {mp}");
-        }
-
         // Keepalive latency sparkline + last ack (compact), per the design status bar.
         var spark = Meters.Sparkline(new[] { 38, 44, 41, 47, 40, 43 });
         var ackMs = ActiveWorld() is { } w && w.World.KeepaliveSeconds > 0 ? 41 : 0;
@@ -1728,6 +1715,13 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         var encoding = ActiveWorld() is { } enc ? enc.World.Encoding : "UTF-8";
         parts.Add($"[dim]{Escape($"{host}:{port}")}  {Escape(encoding)}[/]");
+
+        // The character count lives at the bottom now (the input gutter is gone); while recalling
+        // history it becomes the "back to draft" hint instead.
+        parts.Add(_history.IsRecalling
+            ? $"[{AccentHex(AccentPalette[0])}]history[/] [dim]· ↓ back to draft[/]"
+            : $"[dim]{_input.Input.Length} chars[/]");
+
         parts.Add("[dim]⌃P palette[/]");
         return string.Join("   ", parts);
     }
