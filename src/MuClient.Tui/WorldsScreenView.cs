@@ -72,13 +72,16 @@ internal static class WorldsScreenView
                 .Build();
             edit.BackgroundColor = new Color(WorldsScreenRenderer.EditBg);
 
+            // A one-row panel-background gap sits between the editing pane and the footer so the footer
+            // reads as a separate bar, not the last row of the character setup section.
             root.Rows(
-                    GridLength.Cells(1), GridLength.Star(1), GridLength.Cells(editHeight), GridLength.Cells(1))
+                    GridLength.Cells(1), GridLength.Star(1), GridLength.Cells(editHeight),
+                    GridLength.Cells(1), GridLength.Cells(1))
                 .Columns(GridLength.Star(1));
             root.Place(header, 0, 0, 1, 1);
             root.Place(body, 1, 0, 1, 1);
             root.Place(edit, 2, 0, 1, 1);
-            root.Place(footer, 3, 0, 1, 1);
+            root.Place(footer, 4, 0, 1, 1);
         }
         else
         {
