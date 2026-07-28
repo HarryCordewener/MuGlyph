@@ -1,7 +1,10 @@
-# MuGlyph
+<p align="center">
+  <img src="docs/logo.svg" alt="MuGlyph logo" width="120" height="120">
+</p>
 
-A hyper-modern, cross-platform **TUI client for MU\*** (MUSH / MUCK / MUD) worlds, built for
-GPU-accelerated terminals (Kitty, WezTerm, Ghostty) on **Windows and Linux**.
+<h1 align="center">MuGlyph</h1>
+
+<p align="center">A hyper-modern, cross-platform <strong>TUI client for MU*</strong> (MUSH / MUCK / MUD) worlds, built for GPU-accelerated terminals (Kitty, WezTerm, Ghostty) on <strong>Windows and Linux</strong>.</p>
 
 The goal is [BeipMU](https://beipdev.github.io/BeipMU/)-class feature parity in a terminal-native
 client: rich truecolor text, inline graphics, powerful automation, and full MU\* protocol support.
