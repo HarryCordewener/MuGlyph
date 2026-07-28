@@ -1,6 +1,6 @@
-# MuGlyph icon font
+# SharpMUTerm icon font
 
-`MuGlyph.ttf` is a single-glyph font containing the MuGlyph mark (from `docs/logo.svg`) at
+`SharpMUTerm.ttf` is a single-glyph font containing the SharpMUTerm mark (from `docs/logo.svg`) at
 codepoint **U+E000** (Private Use Area). It's meant to be merged into your terminal font (or a
 Nerd-Font-style patch) so the logo can appear in the TUI header as a normal character.
 
