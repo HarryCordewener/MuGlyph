@@ -81,6 +81,16 @@ public class RailRendererTests
     }
 
     [Test]
+    public async Task RenderCollapsed_ShowsWorldSeparatorsAndCharacterInitials()
+    {
+        var lines = RailRenderer.RenderCollapsed(Scene());
+        // Two world separators (▚), and Corvid's initial with a connected dot + unread count.
+        await Assert.That(lines.Count(l => l.Contains("▚"))).IsEqualTo(2);
+        await Assert.That(lines.Any(l => l.Contains("●") && l.Contains("C") && l.Contains("5"))).IsTrue();
+        await Assert.That(lines.Any(l => l.Contains("○") && l.Contains("R"))).IsTrue();
+    }
+
+    [Test]
     public async Task Render_EscapesMarkupBrackets()
     {
         var rows = RailModel.Build(new[]

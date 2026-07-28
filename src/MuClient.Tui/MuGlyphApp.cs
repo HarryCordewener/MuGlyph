@@ -66,6 +66,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private WorldDefinition? _pendingWorld;
     private string? _demoActiveKey;
     private readonly bool _headless;
+    private bool _railCollapsed;
+    private bool _prefixArmed;
 
     /// <summary>The rail + pane-area row currently in the window (index 1). Swapped on layout change.</summary>
     private IWindowControl _workspaceRow = null!;
@@ -140,6 +142,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.W, CloseActiveWindow);
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.O, CyclePane);
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.P, ToggleMenu);
+        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.B, ArmPrefix);
+        _window.PreviewKeyPressed += OnWindowKey;
         RegisterSettingsShortcuts();
         _system.AddWindow(_window);
     }
@@ -159,6 +163,16 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     /// </summary>
     public string RenderSnapshot(string? view = null)
     {
+        // Workspace-state variants (rail collapsed / ⌃B armed) apply before the demo scene renders.
+        if (string.Equals(view, "collapsed", StringComparison.OrdinalIgnoreCase))
+        {
+            _railCollapsed = true;
+        }
+        else if (string.Equals(view, "prefix", StringComparison.OrdinalIgnoreCase))
+        {
+            _prefixArmed = true;
+        }
+
         LoadDemoScene();
 
         // Optionally open a settings screen over the workspace so its frame can be captured too.
@@ -703,7 +717,11 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     }
 
     /// <summary>Repaints the rail from current state.</summary>
-    private void RefreshRail() => _rail.SetContent(RailRenderer.Render(BuildRail()));
+    private void RefreshRail()
+    {
+        var rows = BuildRail();
+        _rail.SetContent(_railCollapsed ? RailRenderer.RenderCollapsed(rows) : RailRenderer.Render(rows));
+    }
 
     /// <summary>Builds the ⌃P command catalog from live config + workspace state.</summary>
     private IReadOnlyList<CommandItem> BuildCatalog()
@@ -902,7 +920,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         return Controls.HorizontalGrid()
             .WithVerticalAlignment(VerticalAlignment.Fill)
-            .Column(c => c.Width(30).Add(_rail))
+            .Column(c => c.Width(_railCollapsed ? 6 : 30).Add(_rail))
             .Column(c => c.Flex(1).Add(paneArea))
             .WithSplitterAfter(0)
             .Build();
@@ -1010,6 +1028,48 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         {
             tabs.ActiveTabIndex = (tabs.ActiveTabIndex + 1) % tabs.TabCount;
         }
+    }
+
+    /// <summary>
+    /// Arms the tmux-style ⌃B prefix: the header shows <c>⌃B — awaiting …</c> and the next key is
+    /// consumed by <see cref="OnWindowKey"/> as a pane command. Ignored while an overlay is open.
+    /// </summary>
+    private void ArmPrefix()
+    {
+        if (_palette.IsOpen || _settings.IsOpen)
+        {
+            return;
+        }
+
+        _prefixArmed = true;
+        _header.SetContent(new List<string> { HeaderMarkup() });
+    }
+
+    /// <summary>Consumes the key after ⌃B and runs the matching pane command (tmux-style).</summary>
+    private void OnWindowKey(object? sender, KeyPressedEventArgs e)
+    {
+        if (!_prefixArmed)
+        {
+            return;
+        }
+
+        _prefixArmed = false;
+        e.Handled = true;
+        switch (char.ToLowerInvariant(e.KeyInfo.KeyChar))
+        {
+            case '|': PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitRight); RebuildPaneArea(); break;
+            case '-': PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitDown); RebuildPaneArea(); break;
+            case 'z': _workspace.Layout.ToggleZoom(); RebuildPaneArea(); break;
+            case 'o': CyclePane(); break;
+            case 'x': CloseActiveWindow(); break;
+            case 'b': _railCollapsed = !_railCollapsed; RebuildPaneArea(); break;
+            case '<': if (_workspace.Layout.ReorderActiveTab(-1)) RefreshTabTitles(); break;
+            case '>': if (_workspace.Layout.ReorderActiveTab(1)) RefreshTabTitles(); break;
+            case 'm': _active?.PrintSystem("*** move mode is keyboard-driven; drag or ⌃B m coming next."); break;
+            default: break; // any other key just disarms
+        }
+
+        _header.SetContent(new List<string> { HeaderMarkup() });
     }
 
     /// <summary>Moves focus to the next pane in the split (Ctrl+O), routing input to its active tab.</summary>
@@ -1152,6 +1212,12 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         else
         {
             middle = "[dim]multi-world MU* workspace[/]";
+        }
+
+        // The ⌃B prefix indicator shows only while armed (design: "⌃B — awaiting | - z o x b m < >").
+        if (_prefixArmed)
+        {
+            return $"{brand}   [#e5c07b]⌃B — awaiting[/]   [dim]| - z o x b m < >[/]";
         }
 
         var connected = _connectedKeys.Count;
