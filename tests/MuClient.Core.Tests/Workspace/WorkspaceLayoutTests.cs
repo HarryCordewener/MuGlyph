@@ -1,6 +1,6 @@
-using MuClient.Core.Workspace;
+using MuClient.Core.Workspaces;
 
-namespace MuClient.Core.Tests.Workspace;
+namespace MuClient.Core.Tests.Workspaces;
 
 public class WorkspaceLayoutTests
 {

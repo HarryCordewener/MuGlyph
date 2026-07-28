@@ -1,4 +1,4 @@
-namespace MuClient.Core.Workspace;
+namespace MuClient.Core.Workspaces;
 
 /// <summary>How a <see cref="SplitNode"/> arranges its children.</summary>
 public enum SplitDirection

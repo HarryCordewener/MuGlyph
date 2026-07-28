@@ -123,10 +123,15 @@ in reviewable steps landing on `Core` first (pure + tested), then the Terminal.G
 - **Config schema** (`Core.Configuration`): worlds (servers) hold **characters**; automation lives
   in shared, named **trigger sets** that characters opt into. Sessions key on `world.character` and
   compose engines from the union of a character's sets. Versioned with `ConfigurationMigrator`.
-- **Workspace model** (`Core.Workspace`): a pure `WorkspaceLayout` split tree — `PaneNode`
+- **Workspace model** (`Core.Workspaces`): a pure `WorkspaceLayout` split tree — `PaneNode`
   (tab strip of window ids) / `SplitNode` (row/col) with focus, zoom, freeze, and the tmux-style
   split / close / cycle / move / reorder operations, maintaining the no-empty-pane / no-lone-split
-  invariants. The Terminal.Gui view hosting renders from this model (next).
+  invariants.
+- **Windows & spawn routing** (`Core.Workspaces`): a `Workspace` aggregate ties the layout to a
+  registry of `WorkspaceWindow`s (title, kind, owning `world.character`, unread count, unsent-input
+  marker). `RouteSpawn` finds-or-creates a background spawn window per `TriggerEngine` `SpawnTarget`
+  and accrues unread while it is not the visible tab; activating a window clears it. The Terminal.Gui
+  view hosting (panes, dividers, tab strips, rail) renders from this model (next).
 
 ### Still open (M5+)
 - Dedicated **spawn windows** and **multiple input windows** (capture + routing hooks exist),

@@ -1,4 +1,4 @@
-namespace MuClient.Core.Workspace;
+namespace MuClient.Core.Workspaces;
 
 /// <summary>
 /// The pure, UI-agnostic model of a tmux-style pane workspace: a recursive split tree of panes,
@@ -119,14 +119,22 @@ public sealed class WorkspaceLayout
         pane.Frozen = !pane.Frozen;
     }
 
-    /// <summary>Adds a window as a tab in a pane (the focused pane by default) and activates it.</summary>
-    public void AddWindow(string windowId, string? paneId = null)
+    /// <summary>
+    /// Adds a window as a tab in a pane (the focused pane by default). When
+    /// <paramref name="activate"/> is true it becomes the pane's active tab; otherwise it is added in
+    /// the background (but an empty pane always activates its first tab).
+    /// </summary>
+    public void AddWindow(string windowId, string? paneId = null, bool activate = true)
     {
         ArgumentNullException.ThrowIfNull(windowId);
         DetachWindow(windowId);
         var pane = paneId is null ? FocusedPane : FindPane(paneId) ?? FocusedPane;
         pane.Tabs.Add(windowId);
-        pane.ActiveIndex = pane.Tabs.Count - 1;
+        if (activate || pane.ActiveIndex < 0)
+        {
+            pane.ActiveIndex = pane.Tabs.Count - 1;
+        }
+
         PruneAndFix();
     }
 
