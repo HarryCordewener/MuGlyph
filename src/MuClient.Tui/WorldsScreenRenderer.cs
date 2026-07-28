@@ -5,12 +5,11 @@ using MuClient.Core.Text;
 namespace MuClient.Tui;
 
 /// <summary>
-/// Renders the F5 Worlds &amp; Characters screen: a top-left WORLDS list beside a world/characters
-/// detail column, over a full-width CHARACTER editing pane (its own elevated background), framed by
-/// a header band (title + keyboard hints) and a footer action bar (Cancel/Save) pinned to the
-/// bottom. Pure so the screen is unit-testable. Passing <c>width</c>/<c>height</c> (&gt; 0) lays the
-/// screen out to fill the console — full-width bands, the editing-pane background, and the footer at
-/// the last row; with both 0 it renders the same content in natural width (used by the unit tests).
+/// Produces the markup sub-blocks for the F5 Worlds &amp; Characters screen — the header band, the
+/// WORLDS list, the world/characters detail column, the character form, the assigned-trigger-set
+/// list, and the footer action bar. <see cref="WorldsScreenView"/> composes these into real panels
+/// (grids) for the live/snapshot view; <see cref="Render"/> merges the same blocks into a single
+/// line list for the unit tests. Pure so every block is testable.
 /// </summary>
 internal static class WorldsScreenRenderer
 {
@@ -18,19 +17,29 @@ internal static class WorldsScreenRenderer
     private const int LeftColumnWidth = 28;
     private const int WorldLabelWidth = 9;
     private const int CharLabelWidth = 10;
-    private const int CharDetailColumnWidth = 26;
-    private const string Divider = " │ ";
+    private const int CharDetailColumnWidth = 40;
+    private const string DividerGlyph = " │ ";
 
-    // Palette. The panel background is set on the host control; these are the accents/bands drawn in markup.
-    private const string HeaderBg = "#232b3d";
-    private const string EditBg = "#1d2333";
-    private const string FooterBg = "#232b3d";
+    // Palette shared with the view (which sets these as control backgrounds).
+    internal const string PanelBg = "#171b24";
+    internal const string HeaderBg = "#232b3d";
+    internal const string EditBg = "#1d2333";
+    internal const string FooterBg = "#232b3d";
     private const string Label = "#7c8699";
     private const string Value = "#d7deec";
     private const string RuleColor = "#3a4257";
-    private const string SelectBg = "#2c3448";
     private const string Ink = "#0f1620";
 
+    /// <summary>The accent hex for the selected world (its own, or the default teal).</summary>
+    internal static string AccentFor(IReadOnlyList<WorldDefinition> worlds, int selectedWorld) =>
+        selectedWorld >= 0 && selectedWorld < worlds.Count ? Hex(worlds[selectedWorld].Accent) : DefaultAccent;
+
+    /// <summary>
+    /// Merges every sub-block into one line list (header, worlds list | detail, character form |
+    /// trigger sets, footer). Used by the unit tests and as a width-agnostic fallback; the live view
+    /// composes the same blocks into panels instead. <paramref name="width"/>/<paramref name="height"/>
+    /// &gt; 0 lay the merged form out full-console (bands + footer at the last row).
+    /// </summary>
     public static List<string> Render(
         IReadOnlyList<WorldDefinition> worlds,
         IReadOnlyList<TriggerSet> triggerSets,
@@ -42,23 +51,23 @@ internal static class WorldsScreenRenderer
         ArgumentNullException.ThrowIfNull(worlds);
         ArgumentNullException.ThrowIfNull(triggerSets);
 
-        var accent = selectedWorld >= 0 && selectedWorld < worlds.Count ? Hex(worlds[selectedWorld].Accent) : DefaultAccent;
+        var accent = AccentFor(worlds, selectedWorld);
+        var lines = new List<string> { Band(HeaderLine(width), HeaderBg, width) };
+        lines.AddRange(MergeColumns(WorldsColumn(worlds, selectedWorld),
+            DetailColumn(worlds, triggerSets, selectedWorld, selectedCharacter, accent), LeftColumnWidth));
 
-        var lines = new List<string> { HeaderBand(width) };
-
-        var left = BuildLeft(worlds, selectedWorld);
-        var right = BuildRight(worlds, triggerSets, selectedWorld, selectedCharacter, accent);
-        lines.AddRange(MergeColumns(left, right, LeftColumnWidth, width));
-
-        // The character editing pane is a full-width, distinctly-backed band below the two-column area.
-        if (selectedWorld >= 0 && selectedWorld < worlds.Count &&
-            selectedCharacter >= 0 && selectedCharacter < worlds[selectedWorld].Characters.Count)
+        if (HasCharacter(worlds, selectedWorld, selectedCharacter))
         {
+            var character = worlds[selectedWorld].Characters[selectedCharacter];
             lines.Add(string.Empty);
-            lines.AddRange(EditPane(worlds[selectedWorld].Characters[selectedCharacter], triggerSets, accent, width));
+            lines.Add(Band($"[{RuleColor}]{new string('─', width > 4 ? width - 2 : 60)}[/]", EditBg, width));
+            foreach (var row in MergeColumns(FormColumn(character, accent),
+                TriggersColumn(character, triggerSets, accent), CharDetailColumnWidth))
+            {
+                lines.Add(Band(" " + row, EditBg, width));
+            }
         }
 
-        // Footer action bar pinned to the last row (pad the panel out to it when a height is given).
         if (height > 0)
         {
             while (lines.Count < height - 1)
@@ -67,18 +76,22 @@ internal static class WorldsScreenRenderer
             }
         }
 
-        lines.Add(FooterBand(worlds, selectedWorld, selectedCharacter, accent, width));
+        lines.Add(Band(FooterLine(worlds, selectedWorld, selectedCharacter, accent, width), FooterBg, width));
         return lines;
     }
 
-    private static string HeaderBand(int width)
+    internal static bool HasCharacter(IReadOnlyList<WorldDefinition> worlds, int selectedWorld, int selectedCharacter) =>
+        selectedWorld >= 0 && selectedWorld < worlds.Count &&
+        selectedCharacter >= 0 && selectedCharacter < worlds[selectedWorld].Characters.Count;
+
+    internal static string HeaderLine(int width)
     {
-        var title = $"[bold {Value}] Worlds & Characters[/]";
-        var hints = $"[{Label}]↑↓ select · ⇥ switch pane · ⏎ edit · [/][{DefaultAccent}]Esc[/][{Label}] close[/]";
-        return Band(SpreadLR(" " + title, hints + " ", width), HeaderBg, width);
+        var title = $"[bold {Value}] Worlds & Characters[/]";
+        var hints = $"[{Label}]↑↓ select · ⇥ switch pane · ⏎ edit · [/][{DefaultAccent}]Esc[/][{Label}] close [/]";
+        return SpreadLR(" " + title, hints, width);
     }
 
-    private static string FooterBand(
+    internal static string FooterLine(
         IReadOnlyList<WorldDefinition> worlds, int selectedWorld, int selectedCharacter, string accent, int width)
     {
         var context = string.Empty;
@@ -93,12 +106,12 @@ internal static class WorldsScreenRenderer
         }
 
         var actions = $"[{Label}] [[Esc]] cancel [/]  [{Ink} on {accent}] [[⏎]] Save [/] ";
-        return Band(SpreadLR(" " + context, actions, width), FooterBg, width);
+        return SpreadLR(" " + context, actions, width);
     }
 
-    private static List<string> BuildLeft(IReadOnlyList<WorldDefinition> worlds, int selectedWorld)
+    internal static List<string> WorldsColumn(IReadOnlyList<WorldDefinition> worlds, int selectedWorld)
     {
-        var left = new List<string> { $"[{Label}]WORLDS[/]" };
+        var left = new List<string> { $"[{Label}]WORLDS[/]", string.Empty };
 
         for (var i = 0; i < worlds.Count; i++)
         {
@@ -127,7 +140,7 @@ internal static class WorldsScreenRenderer
         return left;
     }
 
-    private static List<string> BuildRight(
+    internal static List<string> DetailColumn(
         IReadOnlyList<WorldDefinition> worlds,
         IReadOnlyList<TriggerSet> triggerSets,
         int selectedWorld,
@@ -176,6 +189,36 @@ internal static class WorldsScreenRenderer
         return right;
     }
 
+    /// <summary>The character form — labels left-aligned with their values, one field per row.</summary>
+    internal static List<string> FormColumn(CharacterDefinition character, string accent) => new()
+    {
+        $"[bold {accent}]└ CHARACTER · {Escape(character.Name)}[/]",
+        string.Empty,
+        CharField("name", $"[{Value}]{Escape(character.Name)}[/]"),
+        CharField("password", $"[{Value}]••••••••[/] [{Label}]keychain[/]"),
+        CharField("on connect", $"[{Value}]{Escape(character.OnConnect ?? "—")}[/]"),
+        CharField("auto-login", character.AutoLogin ? $"[{accent}]yes[/]" : $"[{Label}]no[/]"),
+        CharField("session", $"[{Label}]offline[/]"),
+    };
+
+    /// <summary>The assigned-trigger-sets checklist for a character.</summary>
+    internal static List<string> TriggersColumn(
+        CharacterDefinition character, IReadOnlyList<TriggerSet> triggerSets, string accent)
+    {
+        var list = new List<string> { $"[{Label}]assigned trigger sets[/]", string.Empty };
+        foreach (var set in triggerSets)
+        {
+            var assigned = character.TriggerSets.Contains(set.Name);
+            var box = assigned ? $"[{accent}][[x]][/]" : $"[{Label}][[ ]][/]";
+            var nameColor = assigned ? Value : Label;
+            var description = Escape(set.Description ?? string.Empty);
+            list.Add(
+                $"{box} [{nameColor}]▪ {Escape(set.Name)}[/] [{Label}]— {description}   {set.Triggers.Count.ToString(CultureInfo.InvariantCulture)} rules[/]");
+        }
+
+        return list;
+    }
+
     private static string CharacterRow(CharacterDefinition character, bool selected)
     {
         var marker = selected ? $"[bold {DefaultAccent}]▸[/]" : " ";
@@ -183,49 +226,6 @@ internal static class WorldsScreenRenderer
         var login = PadVisible(character.AutoLogin ? "auto-login" : "manual", 12);
         var sets = Escape(string.Join(", ", character.TriggerSets));
         return $"{marker} {name} [{Label}]○ offline[/]  [{Label}]{login}[/] [{Label}]{sets}[/]";
-    }
-
-    private static List<string> EditPane(
-        CharacterDefinition character,
-        IReadOnlyList<TriggerSet> triggerSets,
-        string accent,
-        int width)
-    {
-        var charLeft = new List<string>
-        {
-            $"[bold {accent}]└ CHARACTER · {Escape(character.Name)}[/]",
-            string.Empty,
-            CharField("name", $"[{Value}]{Escape(character.Name)}[/]"),
-            CharField("password", $"[{Value}]••••••••[/] [{Label}]keychain[/]"),
-            CharField("on connect", $"[{Value}]{Escape(character.OnConnect ?? "—")}[/]"),
-            CharField("auto-login", character.AutoLogin ? $"[{accent}]yes[/]" : $"[{Label}]no[/]"),
-            CharField("session", $"[{Label}]offline[/]"),
-        };
-
-        var charRight = new List<string>
-        {
-            string.Empty,
-            string.Empty,
-            $"[{Label}]assigned trigger sets[/]",
-        };
-        foreach (var set in triggerSets)
-        {
-            var assigned = character.TriggerSets.Contains(set.Name);
-            var box = assigned ? $"[{accent}][[x]][/]" : $"[{Label}][[ ]][/]";
-            var nameColor = assigned ? Value : Label;
-            var description = Escape(set.Description ?? string.Empty);
-            charRight.Add(
-                $"{box} [{nameColor}]▪ {Escape(set.Name)}[/] [{Label}]— {description}   {set.Triggers.Count.ToString(CultureInfo.InvariantCulture)} rules[/]");
-        }
-
-        // A subtle rule opens the editing pane, then its rows carry the elevated edit background.
-        var pane = new List<string> { Band($"[{RuleColor}]{Rule(width)}[/]", EditBg, width) };
-        foreach (var row in MergeColumns(charLeft, charRight, CharDetailColumnWidth, 0))
-        {
-            pane.Add(Band(" " + row, EditBg, width));
-        }
-
-        return pane;
     }
 
     private static string Security(WorldDefinition world) =>
@@ -237,17 +237,12 @@ internal static class WorldsScreenRenderer
         $"  [{Label}]{label.PadLeft(WorldLabelWidth)}[/]  {value}";
 
     private static string CharField(string label, string value) =>
-        $"  [{Label}]{label.PadLeft(CharLabelWidth)}[/]  {value}";
+        $"  [{Label}]{label.PadRight(CharLabelWidth)}[/]  {value}";
 
     private static string OnOff(bool value) => value ? "on" : "off";
 
-    private static string Rule(int width) => new('─', width > 4 ? width - 2 : 40);
-
-    /// <summary>
-    /// Lays out a left- and right-hand markup fragment on one line, right-aligning the right fragment
-    /// to <paramref name="width"/> (or a single gap in natural mode when width is 0).
-    /// </summary>
-    private static string SpreadLR(string left, string right, int width)
+    /// <summary>Lays a left- and right-hand fragment on one line, right-aligning the right to <paramref name="width"/>.</summary>
+    internal static string SpreadLR(string left, string right, int width)
     {
         if (width <= 0)
         {
@@ -258,7 +253,6 @@ internal static class WorldsScreenRenderer
         return left + new string(' ', gap) + right;
     }
 
-    /// <summary>Wraps a row as a full-width background band (padded to <paramref name="width"/>); a no-op when width is 0.</summary>
     private static string Band(string inner, string bg, int width)
     {
         if (width <= 0)
@@ -270,8 +264,7 @@ internal static class WorldsScreenRenderer
         return $"[on {bg}]{inner}{new string(' ', pad)}[/]";
     }
 
-    /// <summary>Merges two column line-lists into single lines, blank-padding the shorter side.</summary>
-    private static List<string> MergeColumns(IReadOnlyList<string> left, IReadOnlyList<string> right, int leftWidth, int width)
+    private static List<string> MergeColumns(IReadOnlyList<string> left, IReadOnlyList<string> right, int leftWidth)
     {
         var count = Math.Max(left.Count, right.Count);
         var merged = new List<string>(count);
@@ -279,21 +272,19 @@ internal static class WorldsScreenRenderer
         {
             var l = i < left.Count ? left[i] : string.Empty;
             var r = i < right.Count ? right[i] : string.Empty;
-            merged.Add(PadVisible(l, leftWidth) + $"[{RuleColor}]{Divider}[/]" + r);
+            merged.Add(PadVisible(l, leftWidth) + $"[{RuleColor}]{DividerGlyph}[/]" + r);
         }
 
         return merged;
     }
 
-    /// <summary>Pads a markup string with trailing spaces to <paramref name="width"/> visible columns,
-    /// ignoring markup tags (but counting escaped <c>[[</c>/<c>]]</c> literals as one column each).</summary>
     private static string PadVisible(string markup, int width)
     {
         var visible = VisibleLength(markup);
         return visible >= width ? markup : markup + new string(' ', width - visible);
     }
 
-    private static int VisibleLength(string markup)
+    internal static int VisibleLength(string markup)
     {
         var length = 0;
         var i = 0;

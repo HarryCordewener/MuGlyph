@@ -291,8 +291,13 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             _palette.Toggle();
         }
 
-        // Optionally open a settings screen over the workspace so its frame can be captured too.
-        if (view is not null && SettingsView(view) is { } screen)
+        // F5 Worlds & Characters is a composed-control screen (real panels); others are markup.
+        if (string.Equals(view, "worlds", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(view, "settings", StringComparison.OrdinalIgnoreCase))
+        {
+            _settings.OpenForSnapshot(ConsoleKey.F5, WorldsControl);
+        }
+        else if (view is not null && SettingsView(view) is { } screen)
         {
             _settings.OpenForSnapshot(screen.Key, screen.Content);
         }
@@ -724,7 +729,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         Bind(ConsoleKey.F2, () => TriggersScreenRenderer.Render(_config.TriggerSets, 0, SpawnTargets()));
         Bind(ConsoleKey.F3, () => AliasesScreenRenderer.Render(_config.TriggerSets, 0));
         Bind(ConsoleKey.F4, () => KeypadScreenRenderer.Render(Macros()));
-        Bind(ConsoleKey.F5, () => WorldsScreenRenderer.Render(_config.Worlds, _config.TriggerSets, ActiveWorldIndex(), ActiveCharacterIndex(), _system.DesktopDimensions.Width, _system.DesktopDimensions.Height));
+        _system.RegisterGlobalShortcut((ConsoleModifiers)0, ConsoleKey.F5, () => _settings.Toggle(ConsoleKey.F5, WorldsControl));
         Bind(ConsoleKey.F6, () => TimersScreenRenderer.Render(_config.TriggerSets, 0));
         Bind(ConsoleKey.F7, OptionsScreenRenderer.TextAnsi);
         Bind(ConsoleKey.F8, OptionsScreenRenderer.InputSpellcheck);
@@ -786,12 +791,15 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     }
 
     /// <summary>Maps a <c>--view</c> name to a settings screen (F-key + content) for snapshots.</summary>
+    /// <summary>Builds the F5 Worlds &amp; Characters screen as a composed control tree (real panels).</summary>
+    private IWindowControl WorldsControl() => WorldsScreenView.Build(
+        _config.Worlds, _config.TriggerSets, ActiveWorldIndex(), ActiveCharacterIndex(), _system.DesktopDimensions.Width);
+
     private (ConsoleKey Key, Func<IReadOnlyList<string>> Content)? SettingsView(string view) => view.ToLowerInvariant() switch
     {
         "triggers" => (ConsoleKey.F2, () => TriggersScreenRenderer.Render(_config.TriggerSets, 0, SpawnTargets())),
         "aliases" => (ConsoleKey.F3, () => AliasesScreenRenderer.Render(_config.TriggerSets, 0)),
         "keypad" => (ConsoleKey.F4, () => KeypadScreenRenderer.Render(Macros())),
-        "worlds" or "settings" => (ConsoleKey.F5, () => WorldsScreenRenderer.Render(_config.Worlds, _config.TriggerSets, ActiveWorldIndex(), ActiveCharacterIndex(), _system.DesktopDimensions.Width, _system.DesktopDimensions.Height)),
         "timers" => (ConsoleKey.F6, () => TimersScreenRenderer.Render(_config.TriggerSets, 0)),
         "textansi" => (ConsoleKey.F7, OptionsScreenRenderer.TextAnsi),
         "input" => (ConsoleKey.F8, OptionsScreenRenderer.InputSpellcheck),
