@@ -15,23 +15,24 @@ namespace SharpMUTerm.Tui;
 /// </summary>
 internal static class TimersScreenView
 {
-    private const string RuleColor = "#3a4257";
     private const int ListColumnWidth = 56;
 
     public static IWindowControl Build(IReadOnlyList<TriggerSet> sets, int selected, int width)
     {
-        var header = Band(TimersScreenRenderer.HeaderLine(width), TimersScreenRenderer.HeaderBg);
-        var footer = Band(TimersScreenRenderer.FooterLine(sets, selected, width), TimersScreenRenderer.FooterBg);
+        var header = ScreenChrome.Band(TimersScreenRenderer.HeaderLine(width), ScreenPalette.HeaderBg);
+        var footer = ScreenChrome.Band(
+            TimersScreenRenderer.FooterLine(sets, selected, width), ScreenPalette.FooterBg);
 
         // Body: timer list │ editor, as two real columns.
-        var listCol = Stretch(new MarkupControl(TimersScreenRenderer.ListColumn(sets, selected)));
-        var editorCol = Stretch(new MarkupControl(Indent(TimersScreenRenderer.EditorColumn(sets, selected))));
+        var listCol = ScreenChrome.Stretch(new MarkupControl(TimersScreenRenderer.ListColumn(sets, selected)));
+        var editorCol = ScreenChrome.Stretch(
+            new MarkupControl(ScreenChrome.Indent(TimersScreenRenderer.EditorColumn(sets, selected))));
         var body = Controls.HorizontalGrid()
             .WithAlignment(HorizontalAlignment.Stretch)
             .WithVerticalAlignment(VerticalAlignment.Fill)
             .Column(c => c.Width(ListColumnWidth).Add(listCol))
-            .Column(c => c.Width(1).Add(VerticalRule()))
-            .Column(c => c.Width(1).Add(new MarkupControl(new List<string>())))
+            .Column(c => c.Width(1).Add(ScreenChrome.VerticalRule()))
+            .Column(c => c.Width(1).Add(ScreenChrome.Filler()))
             .Column(c => c.Flex(1).Add(editorCol))
             .Build();
 
@@ -47,35 +48,4 @@ internal static class TimersScreenView
 
         return root.Build();
     }
-
-    private static MarkupControl Band(string line, string bg) => new(new List<string> { line })
-    {
-        BackgroundColor = new Color(bg),
-        HorizontalAlignment = HorizontalAlignment.Stretch,
-    };
-
-    private static MarkupControl Stretch(MarkupControl control)
-    {
-        control.HorizontalAlignment = HorizontalAlignment.Stretch;
-        return control;
-    }
-
-    /// <summary>
-    /// The one-cell rule between the columns. A <see cref="MarkupControl"/> with no lines measures to
-    /// nothing and never paints its background, so the rule is an empty grid instead — a grid's
-    /// background covers its whole arranged area, giving a full-height hairline.
-    /// </summary>
-    private static IWindowControl VerticalRule()
-    {
-        var rule = Controls.HorizontalGrid()
-            .WithAlignment(HorizontalAlignment.Stretch)
-            .WithVerticalAlignment(VerticalAlignment.Fill)
-            .Column(c => c.Flex(1).Add(new MarkupControl(new List<string>())))
-            .Build();
-        rule.BackgroundColor = new Color(RuleColor);
-        return rule;
-    }
-
-    /// <summary>Prefixes each editor row with a space so it doesn't sit flush against the rule.</summary>
-    private static List<string> Indent(IEnumerable<string> lines) => lines.Select(l => " " + l).ToList();
 }

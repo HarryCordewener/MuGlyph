@@ -16,8 +16,6 @@ namespace SharpMUTerm.Tui;
 /// </summary>
 internal static class WorldsScreenView
 {
-    private const string RuleColor = "#3a4257";
-
     public static IWindowControl Build(
         IReadOnlyList<WorldDefinition> worlds,
         IReadOnlyList<TriggerSet> triggerSets,
@@ -27,21 +25,22 @@ internal static class WorldsScreenView
     {
         var accent = WorldsScreenRenderer.AccentFor(worlds, selectedWorld);
 
-        var header = Band(WorldsScreenRenderer.HeaderLine(width), WorldsScreenRenderer.HeaderBg);
-        var footer = Band(
+        var header = ScreenChrome.Band(WorldsScreenRenderer.HeaderLine(width), ScreenPalette.HeaderBg);
+        var footer = ScreenChrome.Band(
             WorldsScreenRenderer.FooterLine(worlds, selectedWorld, selectedCharacter, accent, width),
-            WorldsScreenRenderer.FooterBg);
+            ScreenPalette.FooterBg);
 
         // Body: WORLDS list │ detail, as two real columns.
-        var worldsCol = Stretch(new MarkupControl(WorldsScreenRenderer.WorldsColumn(worlds, selectedWorld).ToList()));
-        var detailCol = Stretch(new MarkupControl(
+        var worldsCol = ScreenChrome.Stretch(
+            new MarkupControl(WorldsScreenRenderer.WorldsColumn(worlds, selectedWorld).ToList()));
+        var detailCol = ScreenChrome.Stretch(new MarkupControl(
             WorldsScreenRenderer.DetailColumn(worlds, triggerSets, selectedWorld, selectedCharacter, accent).ToList()));
         var body = Controls.HorizontalGrid()
             .WithAlignment(HorizontalAlignment.Stretch)
             .WithVerticalAlignment(VerticalAlignment.Fill)
             .Column(c => c.Width(30).Add(worldsCol))
-            .Column(c => c.Width(1).Add(VerticalRule()))
-            .Column(c => c.Width(1).Add(new MarkupControl(new List<string>())))
+            .Column(c => c.Width(1).Add(ScreenChrome.VerticalRule()))
+            .Column(c => c.Width(1).Add(ScreenChrome.Filler()))
             .Column(c => c.Flex(1).Add(detailCol))
             .Build();
 
@@ -60,17 +59,20 @@ internal static class WorldsScreenView
             // block sits on the right while its checkboxes stay left-aligned (an Auto column hugs it, not
             // per-row right-justify, which would ragged the left edge). The edit grid's own background
             // gives the full-width elevated band behind both.
-            var formPanel = new MarkupControl(Indent(form)) { HorizontalAlignment = HorizontalAlignment.Left };
+            var formPanel = new MarkupControl(ScreenChrome.Indent(form))
+            {
+                HorizontalAlignment = HorizontalAlignment.Left,
+            };
             var trigPanel = new MarkupControl(triggers) { HorizontalAlignment = HorizontalAlignment.Left };
             var edit = Controls.HorizontalGrid()
                 .WithAlignment(HorizontalAlignment.Stretch)
                 .WithVerticalAlignment(VerticalAlignment.Fill)
                 .Column(c => c.Width(48).Add(formPanel))
-                .Column(c => c.Flex(1).Add(new MarkupControl(new List<string>())))
+                .Column(c => c.Flex(1).Add(ScreenChrome.Filler()))
                 .Column(c => c.Add(trigPanel))
-                .Column(c => c.Width(2).Add(new MarkupControl(new List<string>())))
+                .Column(c => c.Width(2).Add(ScreenChrome.Filler()))
                 .Build();
-            edit.BackgroundColor = new Color(WorldsScreenRenderer.EditBg);
+            edit.BackgroundColor = new Color(ScreenPalette.EditBg);
 
             // A one-row panel-background gap sits between the editing pane and the footer so the footer
             // reads as a separate bar, not the last row of the character setup section.
@@ -93,35 +95,4 @@ internal static class WorldsScreenView
 
         return root.Build();
     }
-
-    private static MarkupControl Band(string line, string bg) => new(new List<string> { line })
-    {
-        BackgroundColor = new Color(bg),
-        HorizontalAlignment = HorizontalAlignment.Stretch,
-    };
-
-    private static MarkupControl Stretch(MarkupControl control)
-    {
-        control.HorizontalAlignment = HorizontalAlignment.Stretch;
-        return control;
-    }
-
-    /// <summary>
-    /// The one-cell rule between the columns. A <see cref="MarkupControl"/> with no lines measures to
-    /// nothing and never paints its background, so the rule is an empty grid instead — a grid's
-    /// background covers its whole arranged area, giving a full-height hairline.
-    /// </summary>
-    private static IWindowControl VerticalRule()
-    {
-        var rule = Controls.HorizontalGrid()
-            .WithAlignment(HorizontalAlignment.Stretch)
-            .WithVerticalAlignment(VerticalAlignment.Fill)
-            .Column(c => c.Flex(1).Add(new MarkupControl(new List<string>())))
-            .Build();
-        rule.BackgroundColor = new Color(RuleColor);
-        return rule;
-    }
-
-    /// <summary>Prefixes each form row with a space so the editing pane doesn't sit flush to the left edge.</summary>
-    private static List<string> Indent(IEnumerable<string> lines) => lines.Select(l => " " + l).ToList();
 }

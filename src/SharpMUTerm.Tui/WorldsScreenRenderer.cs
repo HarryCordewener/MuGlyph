@@ -1,6 +1,8 @@
 using System.Globalization;
 using SharpMUTerm.Core.Configuration;
 using SharpMUTerm.Core.Text;
+using static SharpMUTerm.Tui.MarkupText;
+using static SharpMUTerm.Tui.ScreenPalette;
 
 namespace SharpMUTerm.Tui;
 
@@ -13,26 +15,15 @@ namespace SharpMUTerm.Tui;
 /// </summary>
 internal static class WorldsScreenRenderer
 {
-    private const string DefaultAccent = "#00f5b7";
     private const int LeftColumnWidth = 28;
     private const int WorldLabelWidth = 9;
     private const int CharLabelWidth = 10;
     private const int CharDetailColumnWidth = 40;
     private const string DividerGlyph = " │ ";
 
-    // Palette shared with the view (which sets these as control backgrounds).
-    internal const string PanelBg = "#171b24";
-    internal const string HeaderBg = "#232b3d";
-    internal const string EditBg = "#1d2333";
-    internal const string FooterBg = "#232b3d";
-    private const string Label = "#7c8699";
-    private const string Value = "#d7deec";
-    private const string RuleColor = "#3a4257";
-    private const string Ink = "#0f1620";
-
     /// <summary>The accent hex for the selected world (its own, or the default teal).</summary>
     internal static string AccentFor(IReadOnlyList<WorldDefinition> worlds, int selectedWorld) =>
-        selectedWorld >= 0 && selectedWorld < worlds.Count ? Hex(worlds[selectedWorld].Accent) : DefaultAccent;
+        selectedWorld >= 0 && selectedWorld < worlds.Count ? Hex(worlds[selectedWorld].Accent) : Accent;
 
     /// <summary>
     /// Merges every sub-block into one line list (header, worlds list | detail, character form |
@@ -60,7 +51,7 @@ internal static class WorldsScreenRenderer
         {
             var character = worlds[selectedWorld].Characters[selectedCharacter];
             lines.Add(string.Empty);
-            lines.Add(Band($"[{RuleColor}]{new string('─', width > 4 ? width - 2 : 60)}[/]", EditBg, width));
+            lines.Add(Band($"[{Rule}]{new string('─', width > 4 ? width - 2 : 60)}[/]", EditBg, width));
             foreach (var row in MergeColumns(FormColumn(character, accent),
                 TriggersColumn(character, triggerSets, accent), CharDetailColumnWidth))
             {
@@ -87,7 +78,7 @@ internal static class WorldsScreenRenderer
     internal static string HeaderLine(int width)
     {
         var title = $"[bold {Value}] Worlds & Characters[/]";
-        var hints = $"[{Label}]↑↓ select · ⇥ switch pane · ⏎ edit · [/][{DefaultAccent}]Esc[/][{Label}] close [/]";
+        var hints = ScreenChrome.Hints("↑↓ select · ⇥ switch pane · ⏎ edit", "F5");
         return SpreadLR(" " + title, hints, width);
     }
 
@@ -105,7 +96,7 @@ internal static class WorldsScreenRenderer
             }
         }
 
-        var actions = $"[{Label}] [[Esc]] cancel [/]  [{Ink} on {accent}] [[⏎]] Save [/] ";
+        var actions = ScreenChrome.Actions(accent);
         return SpreadLR(" " + context, actions, width);
     }
 
@@ -122,7 +113,7 @@ internal static class WorldsScreenRenderer
 
             var world = worlds[i];
             var selected = i == selectedWorld;
-            var marker = selected ? $"[bold {DefaultAccent}]▸[/]" : " ";
+            var marker = selected ? $"[bold {Accent}]▸[/]" : " ";
             var accentHex = Hex(world.Accent);
             var name = selected ? $"[bold {Value}]{Escape(world.Name)}[/]" : $"[{Value}]{Escape(world.Name)}[/]";
             left.Add($"{marker} [{accentHex}]▚[/] {name}");
@@ -136,7 +127,7 @@ internal static class WorldsScreenRenderer
         }
 
         left.Add(string.Empty);
-        left.Add($"[{DefaultAccent}][[+ world]][/]  [{Label}][[- del]][/]");
+        left.Add($"[{Accent}][[+ world]][/]  [{Label}][[- del]][/]");
         return left;
     }
 
@@ -185,7 +176,7 @@ internal static class WorldsScreenRenderer
         }
 
         right.Add(string.Empty);
-        right.Add($"[{DefaultAccent}][[+ add character]][/] [{Label}][[⧉ duplicate]] [[- remove]][/]");
+        right.Add($"[{Accent}][[+ add character]][/] [{Label}][[⧉ duplicate]] [[- remove]][/]");
         return right;
     }
 
@@ -221,7 +212,7 @@ internal static class WorldsScreenRenderer
 
     private static string CharacterRow(CharacterDefinition character, bool selected)
     {
-        var marker = selected ? $"[bold {DefaultAccent}]▸[/]" : " ";
+        var marker = selected ? $"[bold {Accent}]▸[/]" : " ";
         var name = PadVisible($"[{(selected ? "bold " : string.Empty)}{Value}]{Escape(character.Name)}[/]", 13);
         var login = PadVisible(character.AutoLogin ? "auto-login" : "manual", 12);
         var sets = Escape(string.Join(", ", character.TriggerSets));
@@ -240,18 +231,6 @@ internal static class WorldsScreenRenderer
         $"  [{Label}]{label.PadRight(CharLabelWidth)}[/]  {value}";
 
     private static string OnOff(bool value) => value ? "on" : "off";
-
-    /// <summary>Lays a left- and right-hand fragment on one line, right-aligning the right to <paramref name="width"/>.</summary>
-    internal static string SpreadLR(string left, string right, int width)
-    {
-        if (width <= 0)
-        {
-            return $"{left}   {right}";
-        }
-
-        var gap = Math.Max(1, width - VisibleLength(left) - VisibleLength(right));
-        return left + new string(' ', gap) + right;
-    }
 
     private static string Band(string inner, string bg, int width)
     {
@@ -272,61 +251,12 @@ internal static class WorldsScreenRenderer
         {
             var l = i < left.Count ? left[i] : string.Empty;
             var r = i < right.Count ? right[i] : string.Empty;
-            merged.Add(PadVisible(l, leftWidth) + $"[{RuleColor}]{DividerGlyph}[/]" + r);
+            merged.Add(PadVisible(l, leftWidth) + $"[{Rule}]{DividerGlyph}[/]" + r);
         }
 
         return merged;
     }
 
-    private static string PadVisible(string markup, int width)
-    {
-        var visible = VisibleLength(markup);
-        return visible >= width ? markup : markup + new string(' ', width - visible);
-    }
-
-    internal static int VisibleLength(string markup)
-    {
-        var length = 0;
-        var i = 0;
-        while (i < markup.Length)
-        {
-            var c = markup[i];
-            if (c == '[')
-            {
-                if (i + 1 < markup.Length && markup[i + 1] == '[')
-                {
-                    length++;
-                    i += 2;
-                    continue;
-                }
-
-                var close = markup.IndexOf(']', i);
-                if (close < 0)
-                {
-                    length += markup.Length - i;
-                    break;
-                }
-
-                i = close + 1;
-                continue;
-            }
-
-            if (c == ']' && i + 1 < markup.Length && markup[i + 1] == ']')
-            {
-                length++;
-                i += 2;
-                continue;
-            }
-
-            length++;
-            i++;
-        }
-
-        return length;
-    }
-
     private static string Hex(TerminalColor color) =>
-        color.Kind == TerminalColorKind.Rgb ? $"#{color.R:x2}{color.G:x2}{color.B:x2}" : DefaultAccent;
-
-    private static string Escape(string text) => text.Replace("[", "[[").Replace("]", "]]");
+        color.Kind == TerminalColorKind.Rgb ? $"#{color.R:x2}{color.G:x2}{color.B:x2}" : Accent;
 }

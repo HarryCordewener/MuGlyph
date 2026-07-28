@@ -1,6 +1,7 @@
 using System.Text;
 using SharpMUTerm.Core.Text;
 using SharpMUTerm.Core.Theming;
+using static SharpMUTerm.Tui.MarkupText;
 
 namespace SharpMUTerm.Tui;
 
@@ -154,7 +155,4 @@ internal sealed class MarkupFormatter(Theme theme)
     };
 
     private static string Hex(Rgb rgb) => $"#{rgb.R:x2}{rgb.G:x2}{rgb.B:x2}";
-
-    /// <summary>Escapes markup metacharacters so literal text can't be parsed as tags.</summary>
-    private static string Escape(string text) => text.Replace("[", "[[").Replace("]", "]]");
 }

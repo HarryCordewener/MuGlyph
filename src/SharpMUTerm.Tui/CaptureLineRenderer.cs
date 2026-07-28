@@ -1,3 +1,5 @@
+using static SharpMUTerm.Tui.MarkupText;
+
 namespace SharpMUTerm.Tui;
 
 /// <summary>
@@ -12,6 +14,4 @@ internal static class CaptureLineRenderer
         ArgumentNullException.ThrowIfNull(pattern);
         return $"[dim]{Glyphs.Capture} capture {Escape(pattern)}[/]";
     }
-
-    private static string Escape(string text) => text.Replace("[", "[[").Replace("]", "]]");
 }

@@ -1,5 +1,6 @@
 using System.Text;
 using SharpMUTerm.Core.Commands;
+using static SharpMUTerm.Tui.MarkupText;
 
 namespace SharpMUTerm.Tui;
 
@@ -103,47 +104,4 @@ internal static class CommandSurfaceRenderer
         var pad = width > VisibleLength(text) ? new string(' ', width - VisibleLength(text)) : string.Empty;
         return $"[#18181c on #00f5b7]{text}{pad}[/]";
     }
-
-    /// <summary>Visible length of a markup string: strips <c>[…]</c> tags, counts <c>[[</c>/<c>]]</c> as one.</summary>
-    private static int VisibleLength(string markup)
-    {
-        var length = 0;
-        var i = 0;
-        while (i < markup.Length)
-        {
-            var c = markup[i];
-            if (c == '[')
-            {
-                if (i + 1 < markup.Length && markup[i + 1] == '[')
-                {
-                    length++;
-                    i += 2;
-                    continue;
-                }
-
-                var close = markup.IndexOf(']', i);
-                if (close < 0)
-                {
-                    return length + (markup.Length - i);
-                }
-
-                i = close + 1;
-                continue;
-            }
-
-            if (c == ']' && i + 1 < markup.Length && markup[i + 1] == ']')
-            {
-                length++;
-                i += 2;
-                continue;
-            }
-
-            length++;
-            i++;
-        }
-
-        return length;
-    }
-
-    private static string Escape(string text) => text.Replace("[", "[[").Replace("]", "]]");
 }

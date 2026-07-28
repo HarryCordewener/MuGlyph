@@ -1,6 +1,7 @@
 using System.Globalization;
-using System.Text.RegularExpressions;
 using SharpMUTerm.Core.Automation;
+using static SharpMUTerm.Tui.MarkupText;
+using static SharpMUTerm.Tui.ScreenPalette;
 
 namespace SharpMUTerm.Tui;
 
@@ -14,18 +15,8 @@ namespace SharpMUTerm.Tui;
 /// </summary>
 internal static class KeypadScreenRenderer
 {
-    private const string Accent = "#00f5b7";
     private const int KeyColumnWidth = 12;
     private const int ColumnWidth = 48;
-
-    // Palette shared with the view (which sets these as control backgrounds).
-    internal const string HeaderBg = "#232b3d";
-    internal const string FooterBg = "#232b3d";
-    private const string Label = "#7c8699";
-    private const string Value = "#d7deec";
-    private const string Ink = "#0f1620";
-
-    private static readonly Regex TagPattern = new(@"\[[^\[\]]*\]", RegexOptions.Compiled);
 
     private static readonly int[][] NumpadRows =
     {
@@ -66,8 +57,7 @@ internal static class KeypadScreenRenderer
     internal static string HeaderLine(int width)
     {
         var title = $"[bold {Value}] Keypad & hotkeys[/]";
-        var hints = $"[{Label}]↑↓ select · ⇥ switch pane · ⏎ rebind · [/][{Accent}]F4[/][{Label}]/[/]"
-            + $"[{Accent}]Esc[/][{Label}] close [/]";
+        var hints = ScreenChrome.Hints("↑↓ select · ⇥ switch pane · ⏎ rebind", "F4");
         return SpreadLR(" " + title, hints, width);
     }
 
@@ -92,7 +82,7 @@ internal static class KeypadScreenRenderer
         var context = $"[{Label}]{total} bindings[/]"
             + $"[{Label}]  ·  {bound.ToString(CultureInfo.InvariantCulture)} of 9 numpad keys bound[/]";
 
-        var actions = $"[{Label}] [[Esc]] Cancel [/]  [{Ink} on {Accent}] [[⏎]] Save [/] ";
+        var actions = ScreenChrome.Actions();
         return SpreadLR(" " + context, actions, width);
     }
 
@@ -170,35 +160,4 @@ internal static class KeypadScreenRenderer
 
     private static string Truncate(string text, int maxLength) =>
         text.Length <= maxLength ? text : string.Concat(text.AsSpan(0, maxLength - 1), "…");
-
-    /// <summary>Lays a left- and right-hand fragment on one line, right-aligning the right to <paramref name="width"/>.</summary>
-    private static string SpreadLR(string left, string right, int width)
-    {
-        if (width <= 0)
-        {
-            return $"{left}   {right}";
-        }
-
-        var gap = Math.Max(1, width - VisibleLength(left) - VisibleLength(right));
-        return left + new string(' ', gap) + right;
-    }
-
-    /// <summary>Pads a markup string to a target *visible* column width, ignoring markup tags.</summary>
-    private static string PadVisible(string markup, int width)
-    {
-        var visible = VisibleLength(markup);
-        return visible >= width ? markup : markup + new string(' ', width - visible);
-    }
-
-    /// <summary>
-    /// Counts the printable length of a markup string: escaped brackets (<c>[[</c>/<c>]]</c>) count
-    /// as one literal character each, and <c>[tag]</c> wrappers are stripped entirely.
-    /// </summary>
-    private static int VisibleLength(string markup)
-    {
-        var protectedText = markup.Replace("[[", "\u0001").Replace("]]", "\u0002");
-        return TagPattern.Replace(protectedText, string.Empty).Length;
-    }
-
-    private static string Escape(string text) => text.Replace("[", "[[").Replace("]", "]]");
 }

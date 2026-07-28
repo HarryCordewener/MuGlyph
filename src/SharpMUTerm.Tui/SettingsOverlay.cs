@@ -1,23 +1,19 @@
 using SharpConsoleUI;
 using SharpConsoleUI.Builders;
 using SharpConsoleUI.Controls;
-using SharpConsoleUI.Layout;
+using static SharpMUTerm.Tui.ScreenPalette;
 
 namespace SharpMUTerm.Tui;
 
 /// <summary>
 /// A full-screen overlay hosting the F2–F9 settings screens. The design specifies these as
 /// full-screen surfaces, not floating dialogs: this maximises a frameless modal (no title bar,
-/// buttons, or resize grip) with a deep panel background. Every screen supplies a control: the
-/// converted ones (F2–F6) a composed tree of real panels, the rest a single <see cref="MarkupPanel"/>
-/// wrapping their markup. Esc (or the same F-key) closes it. The renderers stay pure and tested;
-/// this is a thin host.
+/// buttons, or resize grip) with a deep panel background. Every screen supplies a composed tree of
+/// real panels. Esc (or the same F-key) closes it. The renderers stay pure and tested; this is a thin
+/// host.
 /// </summary>
 internal sealed class SettingsOverlay
 {
-    private const string PanelBg = "#171b24";
-    private const string PanelFg = "#c8d0e0";
-
     private readonly ConsoleWindowSystem _system;
 
     private Window? _window;
@@ -30,18 +26,11 @@ internal sealed class SettingsOverlay
 
     public bool IsOpen => _window is not null;
 
-    /// <summary>Toggles a screen (a composed control tree, or a <see cref="MarkupPanel"/>).</summary>
+    /// <summary>Toggles a screen's composed control tree.</summary>
     public void Toggle(ConsoleKey key, Func<IWindowControl> control) => ToggleControl(key, control);
 
     /// <summary>Renders a screen into a headless frame (used by snapshots).</summary>
     public void OpenForSnapshot(ConsoleKey key, Func<IWindowControl> control) => Open(key, control);
-
-    /// <summary>Wraps a screen that is still one markup block in the full-screen panel.</summary>
-    public static MarkupControl MarkupPanel(IReadOnlyList<string> lines) => new(lines.ToList())
-    {
-        BackgroundColor = new Color(PanelBg),
-        HorizontalAlignment = HorizontalAlignment.Stretch,
-    };
 
     private void ToggleControl(ConsoleKey key, Func<IWindowControl> factory)
     {

@@ -15,6 +15,7 @@ using SharpConsoleUI.Drivers;
 using SharpConsoleUI.Events;
 using SharpConsoleUI.Layout;
 using SColor = SharpConsoleUI.Color;
+using static SharpMUTerm.Tui.MarkupText;
 
 namespace SharpMUTerm.Tui;
 
@@ -723,8 +724,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// The F2–F9 settings screens, in F-key order. Both the global shortcuts and the <c>--view</c>
     /// snapshot lookup read this one table, so a screen can't be bound to a key without also being
     /// reachable by name. Each control is built on demand from live config by its pure renderer, so
-    /// re-opening always reflects current state — converted screens (F2–F6) hand back a composed
-    /// tree of real panels, the rest a <see cref="Markup"/> panel.
+    /// re-opening always reflects current state, and every screen hands back a composed tree of real
+    /// panels.
     /// </summary>
     private IReadOnlyList<SettingsScreen> SettingsScreens() => new SettingsScreen[]
     {
@@ -733,9 +734,9 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         new(ConsoleKey.F4, new[] { "keypad" }, KeypadControl),
         new(ConsoleKey.F5, new[] { "worlds", "settings" }, WorldsControl),
         new(ConsoleKey.F6, new[] { "timers" }, TimersControl),
-        new(ConsoleKey.F7, new[] { "textansi" }, Markup(OptionsScreenRenderer.TextAnsi)),
-        new(ConsoleKey.F8, new[] { "input" }, Markup(OptionsScreenRenderer.InputSpellcheck)),
-        new(ConsoleKey.F9, new[] { "logging" }, Markup(() => OptionsScreenRenderer.Logging(ActiveLogging()))),
+        new(ConsoleKey.F7, new[] { "textansi" }, TextAnsiControl),
+        new(ConsoleKey.F8, new[] { "input" }, InputSpellcheckControl),
+        new(ConsoleKey.F9, new[] { "logging" }, LoggingControl),
     };
 
     /// <summary>
@@ -823,9 +824,17 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private IWindowControl TimersControl() => TimersScreenView.Build(
         _config.TriggerSets, 0, _system.DesktopDimensions.Width);
 
-    /// <summary>Hosts a screen that is still one markup block in the overlay's full-screen panel.</summary>
-    private static Func<IWindowControl> Markup(Func<IReadOnlyList<string>> content) =>
-        () => SettingsOverlay.MarkupPanel(content());
+    /// <summary>Builds the F7 Text &amp; ANSI screen as a composed control tree (real panels).</summary>
+    private IWindowControl TextAnsiControl() => OptionsScreenView.Build(
+        OptionsScreenRenderer.TextAnsiScreen(), _system.DesktopDimensions.Width);
+
+    /// <summary>Builds the F8 Input &amp; spellcheck screen as a composed control tree (real panels).</summary>
+    private IWindowControl InputSpellcheckControl() => OptionsScreenView.Build(
+        OptionsScreenRenderer.InputSpellcheckScreen(), _system.DesktopDimensions.Width);
+
+    /// <summary>Builds the F9 Logging screen as a composed control tree (real panels).</summary>
+    private IWindowControl LoggingControl() => OptionsScreenView.Build(
+        OptionsScreenRenderer.LoggingScreen(ActiveLogging()), _system.DesktopDimensions.Width);
 
     /// <summary>Maps a <c>--view</c> name to a settings screen (F-key + control factory) for snapshots.</summary>
     private (ConsoleKey Key, Func<IWindowControl> Control)? SettingsView(string view)
@@ -1851,8 +1860,6 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
     /// <summary>Marshals an action onto the UI thread (session events fire on background threads).</summary>
     private void OnUi(Action action) => _system.EnqueueOnUIThread(action);
-
-    private static string Escape(string text) => text.Replace("[", "[[").Replace("]", "]]");
 
     private static SColor ToColor(Rgb rgb) => new(rgb.R, rgb.G, rgb.B, 255);
 

@@ -14,36 +14,24 @@ Context for whoever (human or agent) picks up this work next.
 Ordered roughly by value. Nothing here is blocking; this is the outstanding
 polish/feature backlog.
 
-### 1. Apply the panel treatment to the other config screens
+### 1. Apply the panel treatment to the other config screens — done
 
-**Status:** offered, awaiting go-ahead.
-**Why:** F5 (Worlds & Characters) was rebuilt into a proper full-screen control
-tree — header band, real column panels, an editing pane laid out with a
-`HorizontalGrid`, and a footer action bar pinned to the bottom (see
-`WorldsScreenView.cs`). The other settings screens still render in the older
-"single merged markup blob" style:
+**Status:** complete. All eight settings screens (F2–F9) now render as composed
+control trees: a full-width header band with keyboard hints, the body on real
+panels, and a Cancel/Save action bar pinned to the last row.
 
-- **F2** Triggers & spawn routing — `TriggersScreenRenderer`
-- **F3** Aliases — `AliasesScreenRenderer`
-- **F4** Keypad/macros — `KeypadScreenRenderer`
-- **F6** Timers — `TimersScreenRenderer`
-- **F7** Text & ANSI options — `OptionsScreenRenderer.TextAnsi`
-- **F8** Input & spellcheck — `OptionsScreenRenderer.InputSpellcheck`
-- **F9** Logging — `OptionsScreenRenderer.Logging`
+Each screen has a pure `*ScreenRenderer` exposing its regions as markup blocks
+(`HeaderLine`, `FooterLine`, and its body columns) plus a `*ScreenView` that
+composes them into controls; the renderer's `Render(...)` still merges the same
+blocks into one line list for the unit tests. F7/F8/F9 share
+`OptionsScreenRenderer`/`OptionsScreenView`, which take an `OptionsScreen`
+(title + F-key + rows) — those screens are a single options list, so their body
+is one full-width elevated card rather than a column split.
 
-They are **not broken** — they render cleanly on the reworked frameless overlay
-with the deep panel background — but they lack: a full-width header band with
-keyboard hints, real column panels, a bottom-pinned Cancel/Save action bar, and
-the elevated background bands F5 now has.
-
-**How:** follow the F5 pattern exactly. `WorldsScreenRenderer` was refactored to
-expose each region as a pure markup block (`HeaderLine`, `FooterLine`,
-`WorldsColumn`, `DetailColumn`, `FormColumn`, `TriggersColumn`); `WorldsScreenView`
-composes those into controls. Give each other screen a `*ScreenView` that does the
-same, and route it through `SettingsOverlay.Toggle(key, Func<IWindowControl>)`
-(the control-hosting overload already exists) plus the snapshot path in
-`SharpMUTermApp.RenderSnapshot`. Keep the pure `Render(...)` method on each renderer
-for the unit tests.
+Wiring is one table, `SharpMUTermApp.SettingsScreens()`, read by both the global
+F-key shortcuts and the `--view` snapshot lookup. Shared chrome lives in
+`ScreenPalette` (colours), `ScreenChrome` (hint/action fragments, band, vertical
+rule, indent) and `MarkupText` (escape, visible width, padding, spread).
 
 ### 2. Task #20 — fold inline graphics into SharpConsoleUI's Kitty support
 

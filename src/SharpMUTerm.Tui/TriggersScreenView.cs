@@ -15,7 +15,6 @@ namespace SharpMUTerm.Tui;
 /// </summary>
 internal static class TriggersScreenView
 {
-    private const string RuleColor = "#3a4257";
     private const int RulesColumnWidth = 56;
 
     public static IWindowControl Build(
@@ -24,20 +23,21 @@ internal static class TriggersScreenView
         IReadOnlyList<string> spawnTargets,
         int width)
     {
-        var header = Band(TriggersScreenRenderer.HeaderLine(width), TriggersScreenRenderer.HeaderBg);
-        var footer = Band(
-            TriggersScreenRenderer.FooterLine(sets, selectedTrigger, width), TriggersScreenRenderer.FooterBg);
+        var header = ScreenChrome.Band(TriggersScreenRenderer.HeaderLine(width), ScreenPalette.HeaderBg);
+        var footer = ScreenChrome.Band(
+            TriggersScreenRenderer.FooterLine(sets, selectedTrigger, width), ScreenPalette.FooterBg);
 
         // Body: rule list │ editor, as two real columns.
-        var rulesCol = Stretch(new MarkupControl(TriggersScreenRenderer.RulesColumn(sets, selectedTrigger)));
-        var editorCol = Stretch(new MarkupControl(
-            Indent(TriggersScreenRenderer.EditorColumn(sets, selectedTrigger, spawnTargets))));
+        var rulesCol = ScreenChrome.Stretch(
+            new MarkupControl(TriggersScreenRenderer.RulesColumn(sets, selectedTrigger)));
+        var editorCol = ScreenChrome.Stretch(new MarkupControl(
+            ScreenChrome.Indent(TriggersScreenRenderer.EditorColumn(sets, selectedTrigger, spawnTargets))));
         var body = Controls.HorizontalGrid()
             .WithAlignment(HorizontalAlignment.Stretch)
             .WithVerticalAlignment(VerticalAlignment.Fill)
             .Column(c => c.Width(RulesColumnWidth).Add(rulesCol))
-            .Column(c => c.Width(1).Add(VerticalRule()))
-            .Column(c => c.Width(1).Add(new MarkupControl(new List<string>())))
+            .Column(c => c.Width(1).Add(ScreenChrome.VerticalRule()))
+            .Column(c => c.Width(1).Add(ScreenChrome.Filler()))
             .Column(c => c.Flex(1).Add(editorCol))
             .Build();
 
@@ -53,35 +53,4 @@ internal static class TriggersScreenView
 
         return root.Build();
     }
-
-    private static MarkupControl Band(string line, string bg) => new(new List<string> { line })
-    {
-        BackgroundColor = new Color(bg),
-        HorizontalAlignment = HorizontalAlignment.Stretch,
-    };
-
-    private static MarkupControl Stretch(MarkupControl control)
-    {
-        control.HorizontalAlignment = HorizontalAlignment.Stretch;
-        return control;
-    }
-
-    /// <summary>
-    /// The one-cell rule between the columns. A <see cref="MarkupControl"/> with no lines measures to
-    /// nothing and never paints its background, so the rule is an empty grid instead — a grid's
-    /// background covers its whole arranged area, giving a full-height hairline.
-    /// </summary>
-    private static IWindowControl VerticalRule()
-    {
-        var rule = Controls.HorizontalGrid()
-            .WithAlignment(HorizontalAlignment.Stretch)
-            .WithVerticalAlignment(VerticalAlignment.Fill)
-            .Column(c => c.Flex(1).Add(new MarkupControl(new List<string>())))
-            .Build();
-        rule.BackgroundColor = new Color(RuleColor);
-        return rule;
-    }
-
-    /// <summary>Prefixes each editor row with a space so it doesn't sit flush against the rule.</summary>
-    private static List<string> Indent(IEnumerable<string> lines) => lines.Select(l => " " + l).ToList();
 }

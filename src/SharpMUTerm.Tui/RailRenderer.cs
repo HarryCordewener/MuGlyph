@@ -1,5 +1,6 @@
 using SharpMUTerm.Core.Text;
 using SharpMUTerm.Core.Workspaces;
+using static SharpMUTerm.Tui.MarkupText;
 
 namespace SharpMUTerm.Tui;
 
@@ -85,6 +86,4 @@ internal static class RailRenderer
         row.Accent.Kind == TerminalColorKind.Rgb
             ? $"#{row.Accent.R:x2}{row.Accent.G:x2}{row.Accent.B:x2}"
             : DefaultAccent;
-
-    private static string Escape(string text) => text.Replace("[", "[[").Replace("]", "]]");
 }
