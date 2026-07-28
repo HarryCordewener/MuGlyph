@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build a single-glyph font from docs/logo.svg.
 
-Produces assets/fonts/MuGlyph.ttf containing the MuGlyph mark at U+E000 (a Private
+Produces assets/fonts/SharpMUTerm.ttf containing the SharpMUTerm mark at U+E000 (a Private
 Use Area codepoint), so it can be merged into a terminal font / Nerd Font patch and
 shown in the TUI header. Run: python3 tools/make-glyph-font.py
 """
@@ -15,12 +15,12 @@ from fontTools.svgLib.path.parser import parse_path
 
 ROOT = Path(__file__).resolve().parent.parent
 SVG = ROOT / "docs" / "logo.svg"
-OUT = ROOT / "assets" / "fonts" / "MuGlyph.ttf"
+OUT = ROOT / "assets" / "fonts" / "SharpMUTerm.ttf"
 
 UPM = 1000
 VIEWBOX = 512
 CODEPOINT = 0xE000  # Private Use Area
-GLYPH_NAME = "muglyph"
+GLYPH_NAME = "sharpmuterm"
 
 
 def svg_path_data(svg_text: str):
@@ -54,9 +54,9 @@ def build():
     fb.setupHorizontalMetrics({".notdef": (UPM, 0), GLYPH_NAME: (UPM, 0)})
     fb.setupHorizontalHeader(ascent=UPM, descent=0)
     fb.setupNameTable({
-        "familyName": "MuGlyph",
+        "familyName": "SharpMUTerm",
         "styleName": "Regular",
-        "psName": "MuGlyph-Regular",
+        "psName": "SharpMUTerm-Regular",
         "version": "1.0",
     })
     fb.setupOS2(sTypoAscender=UPM, sTypoDescender=0, usWinAscent=UPM, usWinDescent=0)

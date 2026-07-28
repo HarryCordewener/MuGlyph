@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="MuGlyph logo" width="120" height="120">
+  <img src="docs/logo.svg" alt="SharpMUTerm logo" width="120" height="120">
 </p>
 
-<h1 align="center">MuGlyph</h1>
+<h1 align="center">SharpMUTerm</h1>
 
 <p align="center">A hyper-modern, cross-platform <strong>TUI client for MU*</strong> (MUSH / MUCK / MUD) worlds, built for GPU-accelerated terminals (Kitty, WezTerm, Ghostty) on <strong>Windows and Linux</strong>.</p>
 
