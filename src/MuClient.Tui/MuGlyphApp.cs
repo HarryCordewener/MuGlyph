@@ -40,6 +40,12 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private readonly Dictionary<string, string> _drafts = new(StringComparer.Ordinal);
     private readonly InputHistory _history = new();
     private bool _suppressInputChanged;
+
+    // Per-window markup line buffer (the scrollback source of truth) and, per frozen pane, the buffer
+    // length of its active window at the moment it froze — the split point between pinned scrollback and
+    // the live tail. Kept here (not read back from the controls) so freeze can rebuild both regions.
+    private readonly Dictionary<string, List<string>> _lines = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _freezePoints = new(StringComparer.Ordinal);
     private readonly HashSet<string> _connectedKeys = new(StringComparer.Ordinal);
 
     private readonly ConsoleWindowSystem _system;
@@ -154,6 +160,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.O, CyclePane);
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.P, ToggleMenu);
         _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.B, ArmPrefix);
+        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.F, ToggleFreeze);
         _window.PreviewKeyPressed += OnWindowKey;
         RegisterSettingsShortcuts();
         _system.AddWindow(_window);
@@ -189,6 +196,25 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         }
 
         LoadDemoScene();
+
+        // Freeze the focused pane so the pinned-scrollback / live-tail split + FROZEN bar render, then
+        // feed a couple of lines that land in the live tail below the bar.
+        if (string.Equals(view, "freeze", StringComparison.OrdinalIgnoreCase))
+        {
+            ToggleFreeze();
+            var parser = new AnsiParser();
+            foreach (var text in new[]
+            {
+                "\x1b[0;32mA courier\x1b[0m jogs in from the east, breathless.",
+                "\x1b[0;37mThe courier says, 'Word from the northern watch!'\x1b[0m",
+            })
+            {
+                foreach (var line in parser.Feed(text + "\n"))
+                {
+                    AppendWindowLine(MainWindowId, _formatter.ToMarkup(line, Stamp()));
+                }
+            }
+        }
 
         // Move mode needs a split to have multiple target panes; set it up then arm move mode.
         if (string.Equals(view, "move", StringComparison.OrdinalIgnoreCase))
@@ -248,19 +274,18 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         }
 
         var parser = new AnsiParser();
-        void Feed(MarkupControl pane, string ansiLine)
+        void Feed(string windowId, string ansiLine)
         {
             foreach (var line in parser.Feed(ansiLine + "\n"))
             {
-                pane.AppendLine(_formatter.ToMarkup(line, Stamp()));
+                AppendWindowLine(windowId, _formatter.ToMarkup(line, Stamp()));
             }
         }
 
-        var main = _panes[MainWindowId];
-        Feed(main, "\x1b[1;36mThe Grand Plaza\x1b[0m");
-        Feed(main, "\x1b[0;37mA marble fountain bubbles at the centre of a wide plaza. Merchants\x1b[0m");
-        Feed(main, "\x1b[0;37mhawk their wares beneath striped awnings.\x1b[0m");
-        Feed(main, "\x1b[0;32mA town guard\x1b[0m stands watch by the northern gate.");
+        Feed(MainWindowId, "\x1b[1;36mThe Grand Plaza\x1b[0m");
+        Feed(MainWindowId, "\x1b[0;37mA marble fountain bubbles at the centre of a wide plaza. Merchants\x1b[0m");
+        Feed(MainWindowId, "\x1b[0;37mhawk their wares beneath striped awnings.\x1b[0m");
+        Feed(MainWindowId, "\x1b[0;32mA town guard\x1b[0m stands watch by the northern gate.");
 
         // A line with clickable MXP-style exits (rendered as [link=…] spans).
         var exits = new StyledLine(new[]
@@ -270,26 +295,26 @@ internal sealed class MuGlyphApp : IAsyncDisposable
             new StyledSpan("  ", TextStyle.Default),
             Link("east"),
         });
-        main.AppendLine(_formatter.ToMarkup(exits));
+        AppendWindowLine(MainWindowId, _formatter.ToMarkup(exits, Stamp()));
 
         // A trigger-highlighted line: carries a left-rule colour, so it gets the 2-col rule treatment.
         var highlighted = new StyledLine(
             new[] { new StyledSpan("[public] Rivane: to the crypt, then!", TextStyle.Default) },
             TerminalColor.FromRgb(0x00, 0xf5, 0xb7));
-        main.AppendLine(_formatter.ToMarkup(highlighted));
+        AppendWindowLine(MainWindowId, _formatter.ToMarkup(highlighted, Stamp()));
 
         // A spawn window fed by a "Chat" trigger target, left in the background with unread.
         var chat = _workspace.RouteSpawn("Chat");
-        var chatPane = PaneContentFor(chat.Id, chat.Title);
+        PaneContentFor(chat.Id, chat.Title);
         var chatParser = new AnsiParser();
         foreach (var line in chatParser.Feed("\x1b[1;35m[Chat]\x1b[0m Rivane: anyone up for the crypt run?\n"))
         {
-            chatPane.AppendLine(_formatter.ToMarkup(line));
+            AppendWindowLine(chat.Id, _formatter.ToMarkup(line, Stamp()));
         }
 
         foreach (var line in chatParser.Feed("\x1b[1;35m[Chat]\x1b[0m Bob: aye, meet me at the gate\n"))
         {
-            chatPane.AppendLine(_formatter.ToMarkup(line));
+            AppendWindowLine(chat.Id, _formatter.ToMarkup(line, Stamp()));
         }
 
         _workspace.NoteActivity(chat.Id); // second unread line
@@ -470,17 +495,33 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         UpdateStatus();
     }
 
-    /// <summary>Appends a line to a window's pane and badges it unread when it isn't the visible tab.</summary>
     /// <summary>The optional output-view timestamp gutter, or null when the column is off. Headless
     /// snapshots use a fixed clock so golden images stay stable.</summary>
     private string? Stamp() => _showTimestamps ? (_headless ? "09:24" : DateTime.Now.ToString("HH:mm")) : null;
 
+    /// <summary>
+    /// Appends one already-formatted markup line to a window: records it in the scrollback buffer and,
+    /// if the window has a live control, paints it. A frozen pane's live control is its tail region, so
+    /// new lines land below the <c>▲ FROZEN ⌃F</c> bar while the pinned scrollback stays put.
+    /// </summary>
+    private void AppendWindowLine(string windowId, string markup)
+    {
+        if (!_lines.TryGetValue(windowId, out var buffer))
+        {
+            _lines[windowId] = buffer = new List<string>();
+        }
+
+        buffer.Add(markup);
+        if (_panes.TryGetValue(windowId, out var control))
+        {
+            control.AppendLine(markup);
+        }
+    }
+
+    /// <summary>Appends a line to a window's pane and badges it unread when it isn't the visible tab.</summary>
     private void OnLine(string windowId, StyledLine line)
     {
-        if (_panes.TryGetValue(windowId, out var pane))
-        {
-            pane.AppendLine(_formatter.ToMarkup(line, Stamp()));
-        }
+        AppendWindowLine(windowId, _formatter.ToMarkup(line, Stamp()));
 
         if (!_workspace.IsVisible(windowId))
         {
@@ -494,7 +535,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     {
         var existed = _workspace.FindWindow(Workspace.SpawnWindowId(target)) is not null;
         var window = _workspace.RouteSpawn(target, _active?.SessionKey);
-        PaneContentFor(window.Id, window.Title).AppendLine(_formatter.ToMarkup(line, Stamp()));
+        PaneContentFor(window.Id, window.Title); // ensure the live control exists before buffering
+        AppendWindowLine(window.Id, _formatter.ToMarkup(line, Stamp()));
 
         // A first-seen spawn adds a tab to its pane, so rebuild; otherwise just refresh badges.
         if (existed)
@@ -901,8 +943,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
                 return;
             case "term:freeze":
             case "term:unfreeze":
-                _workspace.Layout.ToggleFreezeFocused();
-                break;
+                ToggleFreeze();
+                return;
             case "term:clear":
                 if (_panes.TryGetValue(ActiveWindowId(), out var pane))
                 {
@@ -926,6 +968,33 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         }
 
         RefreshTabTitles();
+    }
+
+    /// <summary>
+    /// Freezes or resumes the focused pane (⌃F). Freezing records the active window's current scrollback
+    /// length as the split point (pinned scrollback above, live tail below); resuming clears it and
+    /// re-flows the whole buffer back into the single output control.
+    /// </summary>
+    private void ToggleFreeze()
+    {
+        var pane = _workspace.Layout.FocusedPane;
+        var windowId = pane.ActiveTab ?? MainWindowId;
+        _workspace.Layout.ToggleFreezeFocused();
+
+        if (pane.Frozen)
+        {
+            _freezePoints[windowId] = _lines.TryGetValue(windowId, out var buf) ? buf.Count : 0;
+        }
+        else
+        {
+            _freezePoints.Remove(windowId);
+            if (_lines.TryGetValue(windowId, out var buf) && _panes.TryGetValue(windowId, out var control))
+            {
+                control.SetContent(new List<string>(buf));
+            }
+        }
+
+        RebuildPaneArea();
     }
 
     /// <summary>The custom link scheme the header's <c>☰</c> affordance uses to open the menu.</summary>
@@ -1129,7 +1198,12 @@ internal sealed class MuGlyphApp : IAsyncDisposable
                 continue;
             }
 
-            builder.AddTab(TabTitles.For(window), PaneContentFor(windowId, window.Title));
+            // A frozen pane splits its *active* window into pinned scrollback + live tail; other tabs
+            // (and unfrozen panes) show the plain live control.
+            var content = pane.Frozen && pane.ActiveTab == windowId
+                ? BuildFrozenContent(windowId, window.Title)
+                : (IWindowControl)PaneContentFor(windowId, window.Title);
+            builder.AddTab(TabTitles.For(window), content);
             ids.Add(windowId);
         }
 
@@ -1148,6 +1222,40 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         tabs.TabChanged += (_, e) => OnTabChanged(paneId, e.NewTab);
         _paneTabs[paneId] = tabs;
         return tabs;
+    }
+
+    /// <summary>
+    /// Builds a frozen window's content: a vertical split of pinned scrollback (buffer up to the freeze
+    /// point), the <c>▲ FROZEN ⌃F</c> bar, and the live tail (buffer since the freeze). The tail is the
+    /// window's real control, so incoming lines keep landing below the bar while the top stays pinned.
+    /// </summary>
+    private IWindowControl BuildFrozenContent(string windowId, string title)
+    {
+        var buffer = _lines.TryGetValue(windowId, out var b) ? b : new List<string>();
+        var split = _freezePoints.TryGetValue(windowId, out var p) ? Math.Clamp(p, 0, buffer.Count) : buffer.Count;
+
+        var frozen = new MarkupControl(buffer.Take(split).ToList());
+        frozen.LinkClicked += (_, e) => OnLinkClicked(e.Url);
+
+        var bar = new MarkupControl(new List<string> { FreezeBarRenderer.Bar(FrozenAccentHex()) });
+
+        var live = PaneContentFor(windowId, title);
+        live.SetContent(buffer.Skip(split).ToList());
+
+        // Pinned scrollback gets the lion's share; the live tail is a few rows under the bar.
+        var grid = Controls.Grid().WithVerticalAlignment(VerticalAlignment.Fill);
+        grid.Rows(GridLength.Star(3), GridLength.Cells(1), GridLength.Star(1)).Columns(GridLength.Star(1));
+        grid.Place(frozen, 0, 0, 1, 1);
+        grid.Place(bar, 1, 0, 1, 1);
+        grid.Place(live, 2, 0, 1, 1);
+        return grid.Build();
+    }
+
+    /// <summary>The frozen-split chrome colour (design token #c678dd / ANSI 5), resolved through the theme.</summary>
+    private string FrozenAccentHex()
+    {
+        var rgb = _theme.ResolveIndex(5);
+        return $"#{rgb.R:x2}{rgb.G:x2}{rgb.B:x2}";
     }
 
     /// <summary>Rebuilds the pane area from the model and swaps it into the live window.</summary>
