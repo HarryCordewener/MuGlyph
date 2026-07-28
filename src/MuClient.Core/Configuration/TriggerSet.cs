@@ -20,6 +20,9 @@ public sealed class TriggerSet
 
     public List<Macro> Macros { get; set; } = new();
 
+    /// <summary>Interval timers that fire while this set is active for a session.</summary>
+    public List<TimerDefinition> Timers { get; set; } = new();
+
     /// <summary>Lua script files loaded when this set is active for a session.</summary>
     public List<string> ScriptFiles { get; set; } = new();
 }

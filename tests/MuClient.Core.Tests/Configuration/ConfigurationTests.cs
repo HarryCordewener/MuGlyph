@@ -67,6 +67,35 @@ public class ConfigurationTests
     }
 
     [Test]
+    public async Task RoundTrip_PreservesEncodingKeepaliveAndTimers()
+    {
+        var config = new AppConfiguration
+        {
+            Worlds =
+            {
+                new WorldDefinition { Name = "W", Encoding = "ISO-8859-1", KeepaliveSeconds = 45 },
+            },
+            TriggerSets =
+            {
+                new TriggerSet
+                {
+                    Name = "Ticks",
+                    Timers = { new TimerDefinition { Name = "heartbeat", IntervalSeconds = 30, Command = "look" } },
+                },
+            },
+        };
+
+        var restored = ConfigurationStore.Deserialize(ConfigurationStore.Serialize(config));
+
+        await Assert.That(restored.Worlds[0].Encoding).IsEqualTo("ISO-8859-1");
+        await Assert.That(restored.Worlds[0].KeepaliveSeconds).IsEqualTo(45);
+        var timer = restored.TriggerSets[0].Timers[0];
+        await Assert.That(timer.Name).IsEqualTo("heartbeat");
+        await Assert.That(timer.IntervalSeconds).IsEqualTo(30d);
+        await Assert.That(timer.Command).IsEqualTo("look");
+    }
+
+    [Test]
     public async Task ResolveTriggerSets_ReturnsCharactersSetsInOrder_SkippingMissingAndDuplicates()
     {
         var config = new AppConfiguration

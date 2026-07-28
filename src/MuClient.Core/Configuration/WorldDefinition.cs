@@ -65,6 +65,12 @@ public sealed class WorldDefinition
     /// <summary>Echo typed commands locally into the output window.</summary>
     public bool LocalEcho { get; set; } = true;
 
+    /// <summary>The wire text encoding for this world (e.g. <c>UTF-8</c>, <c>ISO-8859-1</c>).</summary>
+    public string Encoding { get; set; } = "UTF-8";
+
+    /// <summary>Seconds between keepalive probes (NOP/telnet), or 0 to disable.</summary>
+    public int KeepaliveSeconds { get; set; }
+
     /// <summary>How inbound text is parsed for styling and interactive links.</summary>
     public ContentFormat ContentFormat { get; set; } = ContentFormat.Ansi;
 
