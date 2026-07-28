@@ -2,25 +2,17 @@
 
 Context for whoever (human or agent) picks up this work next.
 
-- **Landed on:** `main` — PR #2 (the M5 work this documents) and PR #4 (the rename)
-  are both merged. Start follow-up work as a **fresh branch off `main`**, not by
-  stacking onto merged history.
+- **Repository:** `SharpMUSH/SharpMUTerm`
+- **Start from:** a fresh branch off `main`
 - **Tests:** 514 across the solution (310 Core / 57 Graphics / 42 Scripting /
   15 Web / 90 Tui), all green; `dotnet build SharpMUTerm.slnx` clean (0 warnings)
-
-> ⚠️ **The project was renamed and the repository moved** after this handoff was
-> first written: `harryCordewener/MuGlyph` → `SharpMUSH/SharpMUTerm`, assemblies
-> `MuClient.*` → `SharpMUTerm.*`, binary `muglyph` → `sharpmuterm`. Paths and
-> commands below have been updated. See
-> [`docs/superpowers/specs/2026-07-28-sharpmuterm-naming-design.md`](superpowers/specs/2026-07-28-sharpmuterm-naming-design.md)
-> for the reasoning.
 
 ---
 
 ## What Is Left To Do
 
-Ordered roughly by value. None of these are blocking a merge of the current work;
-they're the outstanding polish/feature backlog.
+Ordered roughly by value. Nothing here is blocking; this is the outstanding
+polish/feature backlog.
 
 ### 1. Apply the panel treatment to the other config screens
 
@@ -225,7 +217,7 @@ Things that will waste your time if you don't know them.
 
 ---
 
-## Key Files Touched This Session
+## Key Files
 
 | File | Role |
 |---|---|
