@@ -33,6 +33,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private readonly MarkupFormatter _formatter;
     private readonly Workspace _workspace = new(MainWindowId, "Main");
     private readonly Dictionary<string, MarkupControl> _panes = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _drafts = new(StringComparer.Ordinal);
 
     private readonly ConsoleWindowSystem _system;
     private readonly Window _window;
@@ -66,6 +67,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         _input = Controls.Prompt(">").WithHistory(true).StickyBottom().Build();
         _input.Entered += (_, text) => OnCommandEntered(text);
+        _input.InputChanged += (_, text) => OnInputChanged(text);
 
         var bg = ToColor(_theme.Resolve(TerminalColor.Default, isBackground: true));
         var fg = ToColor(_theme.Resolve(TerminalColor.Default, isBackground: false));
@@ -171,7 +173,12 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
     private void OnCommandEntered(string command)
     {
+        // The entered command clears this window's draft and its unsent-input marker.
+        var windowId = ActiveWindowId();
+        _drafts.Remove(windowId);
+        _workspace.SetUnsentInput(windowId, false);
         _input.Input = string.Empty;
+        RefreshTabTitles();
 
         // `/web <url>` opens the in-TUI web view; everything else goes to the world.
         if (command.StartsWith("/web ", StringComparison.OrdinalIgnoreCase))
@@ -182,6 +189,26 @@ internal sealed class MuGlyphApp : IAsyncDisposable
 
         _ = _active?.SendUserInputAsync(command);
     }
+
+    /// <summary>Tracks the per-window input draft and the <c>✎</c> unsent-input marker as you type.</summary>
+    private void OnInputChanged(string text)
+    {
+        var windowId = ActiveWindowId();
+        if (string.IsNullOrEmpty(text))
+        {
+            _drafts.Remove(windowId);
+        }
+        else
+        {
+            _drafts[windowId] = text;
+        }
+
+        _workspace.SetUnsentInput(windowId, !string.IsNullOrEmpty(text));
+        RefreshTabTitles();
+    }
+
+    /// <summary>The window id of the visible tab (the input line belongs to it).</summary>
+    private string ActiveWindowId() => _workspace.Layout.FocusedPane.ActiveTab ?? MainWindowId;
 
     private void OnLinkClicked(string url)
     {
@@ -204,6 +231,8 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         if (newTab?.Tag is string id)
         {
             _workspace.ActivateWindow(id);
+            // Restore this window's saved input draft into the shared prompt.
+            _input.Input = _drafts.GetValueOrDefault(id, string.Empty);
             RefreshTabTitles();
         }
     }
