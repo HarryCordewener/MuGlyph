@@ -1,6 +1,6 @@
-This bundled font (MuGlyphMonoNerd.woff) is a SUBSET of JetBrainsMono Nerd Font
+This bundled font (SharpMUTermMonoNerd.woff) is a SUBSET of JetBrainsMono Nerd Font
 Mono, redistributed here solely as a documentation-screenshot asset. It is not
-used by the MuGlyph application itself.
+used by the SharpMUTerm application itself.
 
 Portions Copyright (c) Ryan L McIntyre and the Nerd Fonts project
     (https://github.com/ryanoasis/nerd-fonts)

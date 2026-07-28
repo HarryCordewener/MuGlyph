@@ -5,7 +5,7 @@ using SharpMUTerm.Core.Theming;
 namespace SharpMUTerm.Tui;
 
 /// <summary>
-/// Converts MuGlyph's UI-agnostic <see cref="StyledLine"/> model into SharpConsoleUI (Spectre-style)
+/// Converts SharpMUTerm's UI-agnostic <see cref="StyledLine"/> model into SharpConsoleUI (Spectre-style)
 /// markup: truecolor foreground/background, bold/italic/underline/etc., and clickable
 /// <see cref="SpanInteraction"/>s rendered as <c>[link=…]</c> spans. Colours are resolved through the
 /// active <see cref="Theme"/> so palette-indexed and default colours land on real RGB values.

@@ -1,22 +1,22 @@
-# Handoff: MuGlyph multi-pane workspace, spawn windows & settings (M5 UI)
+# Handoff: SharpMUTerm multi-pane workspace, spawn windows & settings (M5 UI)
 
 ## Overview
 
-A design for MuGlyph's TUI shell at M5 scope: a tmux-style pane tree hosting BeipMU-style
+A design for SharpMUTerm's TUI shell at M5 scope: a tmux-style pane tree hosting BeipMU-style
 spawn windows, a worlds→characters connection model, trigger sets assignable to characters,
 a searchable command surface, and per-tab input drafts.
 
-This covers the UI layer only. It assumes the existing `MuClient.Core` engines
+This covers the UI layer only. It assumes the existing `SharpMUTerm.Core` engines
 (`TriggerEngine`, `AliasEngine`, `IntervalScheduler`, `ScrollbackBuffer`, `SessionManager`)
-and asks for two **schema changes** in `MuClient.Core.Configuration` — see *Schema changes* below.
+and asks for two **schema changes** in `SharpMUTerm.Core.Configuration` — see *Schema changes* below.
 
 ## About the design files
 
-`Glyph-TUI-v3.dc.html` is a **design reference written in HTML**, not production code and not
+`SharpMUTerm-TUI-v3.dc.html` is a **design reference written in HTML**, not production code and not
 something to port. It is a browser mock of a terminal UI: every "pane border", "block meter"
 and "box-drawing glyph" is HTML standing in for what SharpConsoleUI will draw as real cells.
 
-The task is to **rebuild these screens in `MuClient.Tui`** using SharpConsoleUI views and the
+The task is to **rebuild these screens in `SharpMUTerm.Tui`** using SharpConsoleUI views and the
 existing `Theme`/`ColorMapper` pipeline. Do not translate the HTML structure; translate the
 layout, the interaction model, and the information hierarchy.
 
@@ -28,7 +28,7 @@ Open the file in a browser to interact with it (typing, pane splits, ⌃P, F2–
 low-fidelity for colour.**
 
 Every colour in the mock is a literal hex, because HTML has no theme layer. In the real client
-these must resolve through `MuClient.Core.Theming.Theme` — do not hardcode the mock's hexes.
+these must resolve through `SharpMUTerm.Core.Theming.Theme` — do not hardcode the mock's hexes.
 The mapping table under *Design tokens* gives the theme field or ANSI index each mock colour
 stands for.
 
@@ -104,7 +104,7 @@ world's imported character, preserving today's behaviour.
 
 The whole client. Five regions, top to bottom: header, [rail | pane area], input, status bar.
 
-**Header** (1 row): `☰ glyph·tui` at far left is the menu affordance and opens the command
+**Header** (1 row): `☰ muterm` at far left is the menu affordance and opens the command
 surface (the caret flips `☰`→`▾` while open). Right side carries a `⌃B` prefix indicator
 (shown only while armed), the log indicator (`◉ LOG 1284` / `◉ LOG off`), and a clock.
 
@@ -337,7 +337,7 @@ None. No images, no icon fonts — glyphs only.
 
 ## Files
 
-- `Glyph TUI v3.dc.html` — the interactive design reference (open in a browser)
+- `SharpMUTerm-TUI-v3.dc.html` — the interactive design reference (open in a browser)
 - `support.js` — runtime for the above; not part of the design
 
 Repo files each screen maps to are tabulated in `github.md` at the project root.

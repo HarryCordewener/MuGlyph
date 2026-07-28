@@ -35,7 +35,7 @@ internal static class Program
             }
 
             var (width, height) = ParseSize(args);
-            var app = new MuGlyphApp(config, capabilities, new HeadlessConsoleDriver(width, height));
+            var app = new SharpMUTermApp(config, capabilities, new HeadlessConsoleDriver(width, height));
             var frame = app.RenderSnapshot(GetOption(args, "--view"));
             var outPath = GetOption(args, "--out");
             if (outPath is not null)
@@ -54,7 +54,7 @@ internal static class Program
         }
 
         var world = ResolveWorld(args, config);
-        var liveApp = new MuGlyphApp(config, capabilities);
+        var liveApp = new SharpMUTermApp(config, capabilities);
         var exitCode = liveApp.Run(world); // blocks on the SharpConsoleUI main loop until exit
 
         // Persist the workspace so the next launch resumes where this one left off.
@@ -101,10 +101,10 @@ internal static class Program
 
     private static TerminalCapabilities DetectCapabilities(AppConfiguration config)
     {
-        // A config graphics override maps onto the same MUGLYPH_GRAPHICS mechanism the probe reads.
+        // A config graphics override maps onto the same SHARPMUTERM_GRAPHICS mechanism the probe reads.
         if (!string.IsNullOrEmpty(config.GraphicsOverride))
         {
-            Environment.SetEnvironmentVariable("MUGLYPH_GRAPHICS", config.GraphicsOverride);
+            Environment.SetEnvironmentVariable("SHARPMUTERM_GRAPHICS", config.GraphicsOverride);
         }
 
         return CapabilityProbe.DetectFromEnvironment();
@@ -142,9 +142,9 @@ internal static class Program
 
     private static void PrintUsage()
     {
-        Console.WriteLine("MuGlyph — a cross-platform TUI MU* client.");
+        Console.WriteLine("SharpMUTerm — a cross-platform TUI MU* client.");
         Console.WriteLine();
-        Console.WriteLine("Usage: muglyph [host] [port] [options]");
+        Console.WriteLine("Usage: sharpmuterm [host] [port] [options]");
         Console.WriteLine();
         Console.WriteLine("  host                 Server hostname or IP (IPv4/IPv6).");
         Console.WriteLine("  port                 Server port (default 4000).");

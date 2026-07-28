@@ -18,7 +18,7 @@ public sealed class HtmlLogSink : ILogSink
     private readonly object _gate = new();
     private bool _closed;
 
-    public HtmlLogSink(TextWriter writer, string title = "MuGlyph session log", bool ownsWriter = true)
+    public HtmlLogSink(TextWriter writer, string title = "SharpMUTerm session log", bool ownsWriter = true)
     {
         _writer = writer ?? throw new ArgumentNullException(nameof(writer));
         _ownsWriter = ownsWriter;
@@ -26,7 +26,7 @@ public sealed class HtmlLogSink : ILogSink
     }
 
     /// <summary>Opens an HTML log file, creating parent directories as needed.</summary>
-    public static HtmlLogSink CreateFile(string path, string title = "MuGlyph session log")
+    public static HtmlLogSink CreateFile(string path, string title = "SharpMUTerm session log")
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);

@@ -1,29 +1,29 @@
-# Packaging MuGlyph
+# Packaging SharpMUTerm
 
-MuGlyph publishes as a **self-contained, single-file** executable — no .NET runtime required on
+SharpMUTerm publishes as a **self-contained, single-file** executable — no .NET runtime required on
 the target machine.
 
 ## Supported runtimes
 
 `linux-x64`, `linux-arm64`, `win-x64`, `osx-x64`, `osx-arm64` (declared in
-`src/MuClient.Tui/MuClient.Tui.csproj`).
+`src/SharpMUTerm.Tui/SharpMUTerm.Tui.csproj`).
 
 ## Local publish
 
-Publish profiles live in `src/MuClient.Tui/Properties/PublishProfiles/`:
+Publish profiles live in `src/SharpMUTerm.Tui/Properties/PublishProfiles/`:
 
 ```bash
-# Linux x64 → publish output contains a single `muglyph` binary
-dotnet publish src/MuClient.Tui -p:PublishProfile=linux-x64 -o out/linux-x64
+# Linux x64 → publish output contains a single `sharpmuterm` binary
+dotnet publish src/SharpMUTerm.Tui -p:PublishProfile=linux-x64 -o out/linux-x64
 
-# Windows x64 → `muglyph.exe`
-dotnet publish src/MuClient.Tui -p:PublishProfile=win-x64 -o out/win-x64
+# Windows x64 → `sharpmuterm.exe`
+dotnet publish src/SharpMUTerm.Tui -p:PublishProfile=win-x64 -o out/win-x64
 ```
 
 For a RID without a profile, pass the flags directly:
 
 ```bash
-dotnet publish src/MuClient.Tui -c Release -r osx-arm64 \
+dotnet publish src/SharpMUTerm.Tui -c Release -r osx-arm64 \
   --self-contained -p:PublishSingleFile=true \
   -p:IncludeNativeLibrariesForSelfExtract=true -o out/osx-arm64
 ```

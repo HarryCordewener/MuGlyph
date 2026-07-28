@@ -7,7 +7,7 @@ public class ReloadTests
     {
         var world = new FakeScriptWorld();
         var host = new ScriptHost(world);
-        var path = Path.Combine(Path.GetTempPath(), $"muglyph_{Guid.NewGuid():N}.lua");
+        var path = Path.Combine(Path.GetTempPath(), $"sharpmuterm_{Guid.NewGuid():N}.lua");
         await File.WriteAllTextAsync(path, "trigger.add('aaa', function() world.send('one') end)");
         try
         {
@@ -27,7 +27,7 @@ public class ReloadTests
     {
         var world = new FakeScriptWorld();
         var host = new ScriptHost(world);
-        var path = Path.Combine(Path.GetTempPath(), $"muglyph_{Guid.NewGuid():N}.lua");
+        var path = Path.Combine(Path.GetTempPath(), $"sharpmuterm_{Guid.NewGuid():N}.lua");
         try
         {
             await File.WriteAllTextAsync(path, "trigger.add('aaa', function() world.send('v1') end)");
@@ -55,7 +55,7 @@ public class ReloadTests
     {
         var world = new FakeScriptWorld();
         var host = new ScriptHost(world);
-        var path = Path.Combine(Path.GetTempPath(), $"muglyph_{Guid.NewGuid():N}.lua");
+        var path = Path.Combine(Path.GetTempPath(), $"sharpmuterm_{Guid.NewGuid():N}.lua");
         try
         {
             await File.WriteAllTextAsync(path, "trigger.add('aaa', function() world.send('v1') end)");
@@ -80,7 +80,7 @@ public class ReloadTests
     {
         var world = new FakeScriptWorld();
         var host = new ScriptHost(world);
-        var path = Path.Combine(Path.GetTempPath(), $"muglyph_{Guid.NewGuid():N}.lua");
+        var path = Path.Combine(Path.GetTempPath(), $"sharpmuterm_{Guid.NewGuid():N}.lua");
         try
         {
             await File.WriteAllTextAsync(path, "timer.every(1000, function() end)");

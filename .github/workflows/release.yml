@@ -33,7 +33,7 @@ jobs:
       - name: Publish single-file
         shell: bash
         run: >
-          dotnet publish src/MuClient.Tui/MuClient.Tui.csproj
+          dotnet publish src/SharpMUTerm.Tui/SharpMUTerm.Tui.csproj
           -p:PublishProfile=${{ matrix.profile }}
           -o publish/${{ matrix.rid }}
 
@@ -42,20 +42,20 @@ jobs:
         shell: bash
         run: |
           cd publish/${{ matrix.rid }}
-          tar -czf ../../muglyph-${{ matrix.rid }}.tar.gz muglyph
+          tar -czf ../../sharpmuterm-${{ matrix.rid }}.tar.gz sharpmuterm
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           cd publish/${{ matrix.rid }}
-          7z a ../../muglyph-${{ matrix.rid }}.zip muglyph.exe
+          7z a ../../sharpmuterm-${{ matrix.rid }}.zip sharpmuterm.exe
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: muglyph-${{ matrix.rid }}
-          path: muglyph-${{ matrix.rid }}.*
+          name: sharpmuterm-${{ matrix.rid }}
+          path: sharpmuterm-${{ matrix.rid }}.*
 
   # Serialize release creation in a single downstream job so the two matrix jobs don't race
   # softprops/action-gh-release on the same tag.

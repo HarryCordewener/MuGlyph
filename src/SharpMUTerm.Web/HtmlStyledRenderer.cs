@@ -5,7 +5,7 @@ using SharpMUTerm.Core.Text;
 namespace SharpMUTerm.Web;
 
 /// <summary>
-/// Renders an HTML document into MuGlyph's <see cref="StyledLine"/> model (a text-mode browser,
+/// Renders an HTML document into SharpMUTerm's <see cref="StyledLine"/> model (a text-mode browser,
 /// w3m/lynx-style): block elements become line breaks, inline elements map to <see cref="TextStyle"/>,
 /// and <c>&lt;a href&gt;</c>/<c>&lt;img&gt;</c> become clickable <see cref="SpanInteraction"/> spans.
 /// Pure and UI-agnostic — the TUI places the result in a pane, and images can be realised later via

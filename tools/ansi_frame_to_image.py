@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert a MuGlyph headless snapshot (`muglyph --snapshot`) into an SVG image.
+"""Convert a SharpMUTerm headless snapshot (`sharpmuterm --snapshot`) into an SVG image.
 
 The headless SharpConsoleUI driver emits a full-screen ANSI frame: per-row cursor
 moves (`ESC[row;colH`), truecolor SGR runs (`ESC[...;38;2;r;g;b;48;2;r;g;b;...m`),
@@ -8,7 +8,7 @@ a self-contained SVG (monospace, background rects + text) — no external deps, 
 runs anywhere and the output embeds directly in Markdown/READMEs.
 
 Usage:
-    muglyph --snapshot --size 100x30 | python3 tools/ansi_frame_to_image.py > shot.svg
+    sharpmuterm --snapshot --size 100x30 | python3 tools/ansi_frame_to_image.py > shot.svg
     python3 tools/ansi_frame_to_image.py frame.ansi shot.svg
 """
 import base64
@@ -30,8 +30,8 @@ DEFAULT_FG = (238, 238, 238)
 # A subset JetBrainsMono Nerd Font Mono (OFL), embedded so the Nerd Font icons + box drawing render
 # anywhere the SVG is opened — no font install required on the viewer's side. Falls back to generic
 # monospace when the file is absent (icons then show as tofu, same as before).
-FONT_NAME = "MuGlyph Mono Nerd"
-FONT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "MuGlyphMonoNerd.woff")
+FONT_NAME = "SharpMUTerm Mono Nerd"
+FONT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "SharpMUTermMonoNerd.woff")
 FONT_FAMILY = f"'{FONT_NAME}',ui-monospace,Menlo,Consolas,monospace"
 
 
@@ -233,7 +233,7 @@ def to_html(grid, maxr, maxc):
     body = "\n".join(rows)
     face = font_face_style().replace("<defs>", "").replace("</defs>", "")
     return (
-        "<!doctype html><meta charset=\"utf-8\"><title>MuGlyph</title>"
+        "<!doctype html><meta charset=\"utf-8\"><title>SharpMUTerm</title>"
         f"{face}"
         f"<body style=\"margin:0;background:{hexc(DEFAULT_BG)}\">"
         f"<pre style=\"font:15px/1.2 {FONT_FAMILY};"

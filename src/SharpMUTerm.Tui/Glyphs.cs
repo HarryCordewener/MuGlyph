@@ -1,7 +1,7 @@
 namespace SharpMUTerm.Tui;
 
 /// <summary>
-/// Centralised Nerd Font (v3) icon glyphs for MuGlyph's chrome. The terminals MuGlyph targets
+/// Centralised Nerd Font (v3) icon glyphs for SharpMUTerm's chrome. The terminals SharpMUTerm targets
 /// (Kitty, WezTerm, Ghostty) are routinely run with Nerd Font builds, so these icons render as
 /// crisp symbols there; on a plain font they degrade to a "tofu" box. Keeping them in one place
 /// means a future MTTS-driven fallback to plain geometric glyphs is a single-file change rather

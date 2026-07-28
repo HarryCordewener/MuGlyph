@@ -3,7 +3,7 @@ using SharpMUTerm.Core.Workspaces;
 
 namespace SharpMUTerm.Core.Configuration;
 
-/// <summary>Top-level MuGlyph configuration: global preferences, saved worlds, and shared trigger sets.</summary>
+/// <summary>Top-level SharpMUTerm configuration: global preferences, saved worlds, and shared trigger sets.</summary>
 public sealed class AppConfiguration
 {
     /// <summary>The current on-disk schema version. Older configs are upgraded by <see cref="ConfigurationMigrator"/>.</summary>

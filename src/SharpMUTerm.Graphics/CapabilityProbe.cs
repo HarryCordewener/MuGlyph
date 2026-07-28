@@ -13,7 +13,7 @@ namespace SharpMUTerm.Graphics;
 public static class CapabilityProbe
 {
     /// <summary>Explicit override: forces a specific protocol regardless of heuristics.</summary>
-    public const string OverrideVariable = "MUGLYPH_GRAPHICS";
+    public const string OverrideVariable = "SHARPMUTERM_GRAPHICS";
 
     // Terminals known to speak Sixel that do not otherwise advertise it via TERM.
     private static readonly string[] KnownSixelTermPrograms =
@@ -49,7 +49,7 @@ public static class CapabilityProbe
 
         var supportsSixel =
             Contains(term, "sixel") ||
-            Equals(Get(environment, "MUGLYPH_SIXEL"), "1") ||
+            Equals(Get(environment, "SHARPMUTERM_SIXEL"), "1") ||
             IsKnownSixelProgram(termProgram);
 
         // An explicit override wins over everything, but we still report the individual

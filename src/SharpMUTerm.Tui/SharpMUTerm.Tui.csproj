@@ -3,7 +3,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>SharpMUTerm.Tui</RootNamespace>
-    <AssemblyName>muglyph</AssemblyName>
+    <AssemblyName>sharpmuterm</AssemblyName>
 
     <!--
       Runtimes we ship single-file builds for. Declaring them here is build-safe (only used on

@@ -36,7 +36,7 @@ internal static class DemoScene
             UseTls = true,
             Encoding = "UTF-8",
             KeepaliveSeconds = 30,
-            Accent = MuGlyphApp.AccentPalette[0],
+            Accent = SharpMUTermApp.AccentPalette[0],
             Characters =
             {
                 new CharacterDefinition
@@ -57,7 +57,7 @@ internal static class DemoScene
             Host = "grapevine.haus",
             Port = 4000,
             Encoding = "ISO-8859-1",
-            Accent = MuGlyphApp.AccentPalette[1],
+            Accent = SharpMUTermApp.AccentPalette[1],
             Characters = { new CharacterDefinition { Name = "Thistle" } },
         });
     }

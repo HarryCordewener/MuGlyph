@@ -35,7 +35,7 @@ public static class ConfigurationStore
                 baseDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config");
             }
 
-            return Path.Combine(baseDir, "MuGlyph", "config.json");
+            return Path.Combine(baseDir, "SharpMUTerm", "config.json");
         }
     }
 

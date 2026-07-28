@@ -85,7 +85,7 @@ public class CapabilityProbeTests
     [Test]
     public async Task Sixel_ViaEnvFlag()
     {
-        var caps = Detect(("MUGLYPH_SIXEL", "1"));
+        var caps = Detect(("SHARPMUTERM_SIXEL", "1"));
         await Assert.That(caps.SupportsSixel).IsTrue();
         await Assert.That(caps.Protocol).IsEqualTo(GraphicsProtocol.Sixel);
     }
@@ -101,7 +101,7 @@ public class CapabilityProbeTests
     [Test]
     public async Task Kitty_TakesPrecedenceOverSixel()
     {
-        var caps = Detect(("TERM", "xterm-kitty"), ("MUGLYPH_SIXEL", "1"));
+        var caps = Detect(("TERM", "xterm-kitty"), ("SHARPMUTERM_SIXEL", "1"));
         await Assert.That(caps.SupportsKittyGraphics).IsTrue();
         await Assert.That(caps.SupportsSixel).IsTrue();
         await Assert.That(caps.Protocol).IsEqualTo(GraphicsProtocol.Kitty);
@@ -117,14 +117,14 @@ public class CapabilityProbeTests
     public async Task Override_ForcesProtocol(string value, GraphicsProtocol expected)
     {
         // Even with a Kitty-advertising env, the override must win.
-        var caps = Detect(("TERM", "xterm-kitty"), ("MUGLYPH_GRAPHICS", value));
+        var caps = Detect(("TERM", "xterm-kitty"), ("SHARPMUTERM_GRAPHICS", value));
         await Assert.That(caps.Protocol).IsEqualTo(expected);
     }
 
     [Test]
     public async Task Override_Invalid_IsIgnored()
     {
-        var caps = Detect(("TERM", "xterm-kitty"), ("MUGLYPH_GRAPHICS", "bogus"));
+        var caps = Detect(("TERM", "xterm-kitty"), ("SHARPMUTERM_GRAPHICS", "bogus"));
         await Assert.That(caps.Protocol).IsEqualTo(GraphicsProtocol.Kitty);
     }
 

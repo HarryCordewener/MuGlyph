@@ -24,7 +24,7 @@ public sealed class WebPageFetcher : IDisposable
             Timeout = TimeSpan.FromSeconds(20),
         };
 
-        if (!_http.DefaultRequestHeaders.UserAgent.TryParseAdd("MuGlyph/0.1 (+https://github.com/HarryCordewener/MuGlyph)"))
+        if (!_http.DefaultRequestHeaders.UserAgent.TryParseAdd("SharpMUTerm/0.1 (+https://github.com/SharpMUSH/SharpMUTerm)"))
         {
             // A restrictive HttpClient may reject the header; not fatal.
         }

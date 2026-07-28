@@ -19,13 +19,13 @@ using SColor = SharpConsoleUI.Color;
 namespace SharpMUTerm.Tui;
 
 /// <summary>
-/// The top-level MuGlyph application on SharpConsoleUI: a status line, a tabbed set of output
+/// The top-level SharpMUTerm application on SharpConsoleUI: a status line, a tabbed set of output
 /// windows (main + trigger-routed spawn windows + the web view), and a command prompt. The tab set
 /// is driven by the UI-agnostic <see cref="Workspace"/> model — a single pane holding many window
 /// tabs — so spawn routing and unread badges reuse the tested Core logic. Splits (via SharpConsoleUI
 /// splitters) layer on this later. Background session events are marshalled onto the UI thread.
 /// </summary>
-internal sealed class MuGlyphApp : IAsyncDisposable
+internal sealed class SharpMUTermApp : IAsyncDisposable
 {
     private const string MainWindowId = "main";
     private const string WebWindowId = "web";
@@ -89,7 +89,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     /// <summary>The window index the workspace row sits at (after the sticky-top header).</summary>
     private const int WorkspaceRowIndex = 1;
 
-    public MuGlyphApp(AppConfiguration config, TerminalCapabilities capabilities, IConsoleDriver? driver = null)
+    public SharpMUTermApp(AppConfiguration config, TerminalCapabilities capabilities, IConsoleDriver? driver = null)
     {
         _config = config;
         _capabilities = capabilities;
@@ -113,7 +113,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _header = Controls.Markup(HeaderMarkup()).StickyTop().Build();
         _header.LinkClicked += (_, e) => OnLinkClicked(e.Url);
         _header.BackgroundColor = ToColor(_theme.StatusBackground); // the menu bar is a distinct chrome band
-        // Keep the clickable "glyph" button on-brand (violet) instead of the driver's default link highlight.
+        // Keep the clickable brand button on-brand (violet) instead of the driver's default link highlight.
         var brand = AccentPalette[2];
         _header.FocusedLinkBackgroundColor = ToColor(new Rgb(brand.R, brand.G, brand.B));
         _header.FocusedLinkForegroundColor = ToColor(_theme.Resolve(TerminalColor.Default, isBackground: true));
@@ -152,7 +152,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         var fg = ToColor(_theme.Resolve(TerminalColor.Default, isBackground: false));
 
         _window = new WindowBuilder(_system)
-            .WithTitle("MuGlyph — MU* client")
+            .WithTitle("SharpMUTerm — MU* client")
             .Maximized()
             .Frameless() // no outer chrome — the workspace fills the whole screen for maximum room
             .WithColors(fg, bg)
@@ -437,7 +437,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         var session = _sessions.Open(world, _config.ScrollbackLines);
         BindSession(session);
 
-        session.PrintSystem($"*** MuGlyph — theme '{_theme.Name}', graphics: {_capabilities.Protocol}.");
+        session.PrintSystem($"*** SharpMUTerm — theme '{_theme.Name}', graphics: {_capabilities.Protocol}.");
 
         try
         {
@@ -1023,7 +1023,7 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     }
 
     /// <summary>The custom link scheme the header's <c>☰</c> affordance uses to open the menu.</summary>
-    private const string MenuScheme = "muglyph-menu:";
+    private const string MenuScheme = "sharpmuterm-menu:";
 
     /// <summary>Opens/closes the command surface (⌃P or the header ☰ menu) and flips the header caret.</summary>
     private void ToggleMenu()
@@ -1732,11 +1732,11 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         var headerBg = Hex(_theme.StatusBackground);
         var chip = "#3f4859"; // dim chrome the character segment sits on
 
-        // Build the ribbon by hand so only the glyph "button" is a link (wrapping the whole bar makes
+        // Build the ribbon by hand so only the brand "button" is a link (wrapping the whole bar makes
         // the driver's link highlight repaint every segment and flatten the flowing colours).
         var brandBg = AccentHex(AccentPalette[2]); // violet
         var sb = new System.Text.StringBuilder();
-        sb.Append($"[link={MenuScheme}toggle][bold {dark} on {brandBg}] {caret} glyph [/][/]");
+        sb.Append($"[link={MenuScheme}toggle][bold {dark} on {brandBg}] {caret} muterm [/][/]");
 
         var tail = brandBg;
         if (ActiveWorld() is { } active)
