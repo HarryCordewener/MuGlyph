@@ -98,7 +98,20 @@ internal static class DemoScene
                 new Alias { Name = "say", Pattern = @"^'(.*)", Substitution = "say $1" },
                 new Alias { Name = "wtf", Pattern = @"^wtf\s+(.+)$", Substitution = "who\nfinger $1" },
             },
-            Macros = { new Macro { Key = "Num5", Command = "look" }, new Macro { Key = "Ctrl+F1", Command = "score" } },
+            // A movement keypad: enough bound keys, of differing command lengths, to actually show
+            // the 3x3 grid doing its job (and one command long enough to be ellipsised).
+            Macros =
+            {
+                new Macro { Key = "Num7", Command = "northwest" },
+                new Macro { Key = "Num8", Command = "north" },
+                new Macro { Key = "Num9", Command = "northeast" },
+                new Macro { Key = "Num4", Command = "west" },
+                new Macro { Key = "Num5", Command = "look" },
+                new Macro { Key = "Num6", Command = "east" },
+                new Macro { Key = "Num1", Command = "look at altar" },
+                new Macro { Key = "Num2", Command = "south" },
+                new Macro { Key = "Ctrl+F1", Command = "score" },
+            },
             Timers = { new TimerDefinition { Name = "keepalive", IntervalSeconds = 60, Command = "@@idle" } },
         });
 

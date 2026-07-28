@@ -21,6 +21,49 @@ public class KeypadScreenRendererTests
         await Assert.That(middleRow).Contains("look");
     }
 
+    /// <summary>
+    /// Every numpad cell is padded to a fixed visible width, so the three columns line up whatever is
+    /// bound. Without that, a bound key widens its own cell and shunts the rest of its row right.
+    /// </summary>
+    [Test]
+    public async Task NumpadColumn_ColumnsAlignRegardlessOfBoundCommandLength()
+    {
+        // Deliberately lopsided: one row long enough to be ellipsised, one row entirely unbound.
+        var macros = new List<Macro>
+        {
+            new() { Key = "Num7", Enabled = true, Command = "northwest" },
+            new() { Key = "Num5", Enabled = true, Command = "look" },
+            new() { Key = "Num3", Enabled = true, Command = "a very long command indeed" },
+        };
+
+        // Skip(1): the first entry is the "NUMPAD" caption, not a key row.
+        var offsets = KeypadScreenRenderer.NumpadColumn(macros).Skip(1).Select(CellOffsets).ToList();
+
+        await Assert.That(offsets).HasCount().EqualTo(3);
+        await Assert.That(offsets[1]).IsEqualTo(offsets[0]);
+        await Assert.That(offsets[2]).IsEqualTo(offsets[0]);
+    }
+
+    /// <summary>
+    /// The visible columns at which each cell starts, as a comparable string. Strips markup the way
+    /// the renderer's own width maths does: an escaped bracket counts as one literal character, a
+    /// styling tag as zero. Each cell starts at the literal '[' of its "[n]" marker.
+    /// </summary>
+    private static string CellOffsets(string row)
+    {
+        var protectedText = row.Replace("[[", "\u0001").Replace("]]", "\u0002");
+        var visible = System.Text.RegularExpressions.Regex
+            .Replace(protectedText, @"\[[^\]]*\]", string.Empty)
+            .Replace('\u0001', '[')
+            .Replace('\u0002', ']');
+
+        var starts = Enumerable.Range(0, visible.Length)
+            .Where(i => visible[i] == '[')
+            .Select(i => i.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+        return string.Join(",", starts);
+    }
+
     [Test]
     public async Task Render_UnboundNumpadCellShowsPlaceholder()
     {

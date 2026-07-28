@@ -18,6 +18,14 @@ internal static class KeypadScreenRenderer
     private const int KeyColumnWidth = 12;
     private const int ColumnWidth = 48;
 
+    /// <summary>Longest command shown inside a numpad cell before it is ellipsised.</summary>
+    private const int NumpadCommandWidth = 10;
+
+    /// <summary>Visible width of one numpad cell: "[N] " (4) plus <see cref="NumpadCommandWidth"/>.</summary>
+    private const int NumpadCellWidth = 4 + NumpadCommandWidth;
+
+    private const string NumpadCellGap = "   ";
+
     private static readonly int[][] NumpadRows =
     {
         new[] { 7, 8, 9 },
@@ -125,16 +133,21 @@ internal static class KeypadScreenRenderer
         var cells = new string[digits.Length];
         for (var i = 0; i < digits.Length; i++)
         {
-            cells[i] = NumpadCell(digits[i], macros);
+            var cell = NumpadCell(digits[i], macros);
+
+            // Every cell is padded to the same visible width so the three columns line up whatever
+            // is bound: a cell is as wide as "[N] " plus the longest command it can hold. The last
+            // cell in a row is left unpadded to avoid trailing whitespace.
+            cells[i] = i == digits.Length - 1 ? cell : PadVisible(cell, NumpadCellWidth);
         }
 
-        return string.Join("   ", cells);
+        return string.Join(NumpadCellGap, cells);
     }
 
     private static string NumpadCell(int digit, IReadOnlyList<Macro> macros)
     {
         var macro = FindByKey(macros, $"Num{digit}");
-        var command = macro is null ? "[dim]—[/]" : Escape(Truncate(macro.Command, 10));
+        var command = macro is null ? "[dim]—[/]" : Escape(Truncate(macro.Command, NumpadCommandWidth));
         return $"[bold {Accent}][[{digit}]][/] {command}";
     }
 
