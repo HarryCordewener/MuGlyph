@@ -1,0 +1,27 @@
+This bundled font (MuGlyphMonoNerd.woff) is a SUBSET of JetBrainsMono Nerd Font
+Mono, redistributed here solely as a documentation-screenshot asset.
+
+Copyright (c) 2020 The JetBrains Mono Project Authors
+    (https://github.com/JetBrains/JetBrainsMono)
+Portions Copyright (c) Ryan L McIntyre and the Nerd Fonts project
+    (https://github.com/ryanoasis/nerd-fonts)
+
+JetBrainsMono is licensed under the SIL Open Font License, Version 1.1.
+The Nerd Fonts patch/glyph tooling is licensed under the MIT License.
+
+The full, canonical text of the SIL Open Font License 1.1 applies to this
+subset and is available at:
+
+    https://openfontlicense.org
+    https://github.com/JetBrains/JetBrainsMono/blob/master/OFL.txt
+
+The full text of the MIT License for the Nerd Fonts contributions is available
+at:
+
+    https://github.com/ryanoasis/nerd-fonts/blob/master/LICENSE
+
+Under the SIL OFL 1.1, this font (and subsets/derivatives of it) may be freely
+used, embedded, and redistributed, provided it is not sold on its own and this
+notice travels with it. It is used here only to render Nerd Font icons and box
+drawing in the generated documentation images; it is not used by the MuGlyph
+application itself.

@@ -101,10 +101,10 @@ public class TriggersScreenRendererTests
     public async Task Render_GagToggleReflectsActionsGag()
     {
         var gagged = TriggersScreenRenderer.Render(Scene(), selectedTrigger: 1, spawnTargets: Array.Empty<string>());
-        await Assert.That(gagged.Any(l => l.Contains("[x] gag line") || l.Contains("#00f5b7][x][/] gag line"))).IsTrue();
+        await Assert.That(gagged.Any(l => l.Contains("[[x]] gag line") || l.Contains("#00f5b7][[x]][/] gag line"))).IsTrue();
 
         var notGagged = TriggersScreenRenderer.Render(Scene(), selectedTrigger: 0, spawnTargets: Array.Empty<string>());
-        await Assert.That(notGagged.Any(l => l.Contains("[dim][ ] gag line[/]"))).IsTrue();
+        await Assert.That(notGagged.Any(l => l.Contains("[dim][[ ]] gag line[/]"))).IsTrue();
     }
 
     [Test]
@@ -112,7 +112,7 @@ public class TriggersScreenRendererTests
     {
         var lines = TriggersScreenRenderer.Render(Scene(), selectedTrigger: 0, spawnTargets: Array.Empty<string>());
 
-        await Assert.That(lines.Any(l => l.Contains("highlight line") && l.Contains("[x]"))).IsTrue();
+        await Assert.That(lines.Any(l => l.Contains("highlight line") && l.Contains("[[x]]"))).IsTrue();
         await Assert.That(lines.Any(l => l.Contains("████") && l.Contains("fg"))).IsTrue();
         await Assert.That(lines.Any(l => l.Contains("#ffd700"))).IsTrue();
     }

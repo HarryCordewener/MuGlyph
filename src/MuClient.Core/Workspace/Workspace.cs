@@ -5,7 +5,7 @@ namespace MuClient.Core.Workspaces;
 /// the registry of <see cref="WorkspaceWindow"/>s the panes host. It keeps the two consistent —
 /// opening a window places it in a pane, closing one removes its tab, spawn routing finds-or-creates
 /// the destination window — and tracks activity badges (unread, unsent-input) against visibility.
-/// UI-agnostic and fully testable; the Terminal.Gui layer renders from it and calls its operations.
+/// UI-agnostic and fully testable; the SharpConsoleUI layer renders from it and calls its operations.
 /// </summary>
 public sealed class Workspace
 {

@@ -11,7 +11,7 @@ public class OptionsScreenRendererTests
         var rows = new[] { new OptionsScreenRenderer.OptionRow("underline hyperlinks", null, true) };
         var lines = OptionsScreenRenderer.Render("Text & ANSI", "F7", rows);
         var row = lines.Single(l => l.Contains("underline hyperlinks"));
-        await Assert.That(row).Contains("[x]");
+        await Assert.That(row).Contains("[[x]]");
     }
 
     [Test]
@@ -20,7 +20,7 @@ public class OptionsScreenRendererTests
         var rows = new[] { new OptionsScreenRenderer.OptionRow("strip incoming ANSI colour", null, false) };
         var lines = OptionsScreenRenderer.Render("Text & ANSI", "F7", rows);
         var row = lines.Single(l => l.Contains("strip incoming ANSI colour"));
-        await Assert.That(row).Contains("[ ]");
+        await Assert.That(row).Contains("[[ ]]");
     }
 
     [Test]
@@ -106,7 +106,7 @@ public class OptionsScreenRendererTests
         var lines = OptionsScreenRenderer.Logging(logging);
         await Assert.That(lines.Any(l => l.Contains("format") && l.Contains("Html"))).IsTrue();
         await Assert.That(lines.Any(l => l.Contains("directory") && l.Contains("/var/log/mu"))).IsTrue();
-        await Assert.That(lines.Any(l => l.Contains("auto-start on connect") && l.Contains("[x]"))).IsTrue();
+        await Assert.That(lines.Any(l => l.Contains("auto-start on connect") && l.Contains("[[x]]"))).IsTrue();
     }
 
     [Test]
@@ -116,6 +116,6 @@ public class OptionsScreenRendererTests
         var lines = OptionsScreenRenderer.Logging(logging);
         await Assert.That(lines.Any(l => l.Contains("directory") && l.Contains("(default)"))).IsTrue();
         var autoStart = lines.Single(l => l.Contains("auto-start on connect"));
-        await Assert.That(autoStart).Contains("[ ]");
+        await Assert.That(autoStart).Contains("[[ ]]");
     }
 }

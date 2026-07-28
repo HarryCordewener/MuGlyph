@@ -10,7 +10,7 @@ public readonly record struct PaneRect(int X, int Y, int Width, int Height)
 /// <summary>
 /// Turns a <see cref="LayoutNode"/> split tree into concrete per-pane rectangles for a given
 /// bounding area, reserving one cell for the divider between siblings and honouring each split's
-/// fractional <see cref="SplitNode.Sizes"/>. Pure and deterministic; the Terminal.Gui layer maps
+/// fractional <see cref="SplitNode.Sizes"/>. Pure and deterministic; the SharpConsoleUI layer maps
 /// the resulting <see cref="PaneRect"/>s onto views. When a pane is zoomed it fills the whole area.
 /// </summary>
 public static class LayoutSolver

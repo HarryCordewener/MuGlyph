@@ -12,11 +12,11 @@ and asks for two **schema changes** in `MuClient.Core.Configuration` — see *Sc
 
 ## About the design files
 
-`Glyph TUI v3.dc.html` is a **design reference written in HTML**, not production code and not
+`Glyph-TUI-v3.dc.html` is a **design reference written in HTML**, not production code and not
 something to port. It is a browser mock of a terminal UI: every "pane border", "block meter"
-and "box-drawing glyph" is HTML standing in for what Terminal.Gui v2 will draw as real cells.
+and "box-drawing glyph" is HTML standing in for what SharpConsoleUI will draw as real cells.
 
-The task is to **rebuild these screens in `MuClient.Tui`** using Terminal.Gui v2 views and the
+The task is to **rebuild these screens in `MuClient.Tui`** using SharpConsoleUI views and the
 existing `Theme`/`ColorMapper` pipeline. Do not translate the HTML structure; translate the
 layout, the interaction model, and the information hierarchy.
 
@@ -108,7 +108,7 @@ The whole client. Five regions, top to bottom: header, [rail | pane area], input
 surface (the caret flips `☰`→`▾` while open). Right side carries a `⌃B` prefix indicator
 (shown only while armed), the log indicator (`◉ LOG 1284` / `◉ LOG off`), and a clock.
 
-**Connection rail** (left, ~204 cols wide expanded / 46 collapsed): a two-level tree.
+**Connection rail** (left, ~204px ≈ 25 cols expanded / 46px ≈ 6 collapsed): a two-level tree.
 
 ```
 ┌ CONNECTIONS

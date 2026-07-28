@@ -104,8 +104,8 @@ internal static class AliasesScreenRenderer
         }
 
         lines.Add(alias.CaseSensitive
-            ? $"[{Accent}][x][/] case sensitive"
-            : "[dim][ ] case sensitive[/]");
+            ? $"[{Accent}][[x]][/] case sensitive"
+            : "[dim][[ ]] case sensitive[/]");
 
         return lines;
     }

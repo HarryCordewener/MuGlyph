@@ -15,5 +15,9 @@ It is **not** used by the application itself — only by the documentation scree
   permissive licenses.
 
 The SIL OFL permits bundling and redistribution (including subsets) provided the font is not sold on
-its own; this repository redistributes it only as a screenshot asset. See
-<https://github.com/ryanoasis/nerd-fonts> and <https://www.jetbrains.com/lp/mono/>.
+its own; this repository redistributes it only as a screenshot asset.
+
+The copyright notices and license pointers travel with the font in
+[`OFL.txt`](OFL.txt) (SIL OFL 1.1 for JetBrainsMono; MIT for the Nerd Fonts
+contributions). See also <https://github.com/ryanoasis/nerd-fonts> and
+<https://www.jetbrains.com/lp/mono/>.

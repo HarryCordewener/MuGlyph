@@ -128,7 +128,7 @@ internal static class WorldsScreenRenderer
     private static string CharacterRow(CharacterDefinition character, bool selected)
     {
         var marker = selected ? "[bold]▸[/]" : " ";
-        var name = Escape(character.Name).PadRight(13);
+        var name = PadVisible(Escape(character.Name), 13);
         var login = (character.AutoLogin ? "auto-login" : "manual").PadRight(12);
         var sets = Escape(string.Join(", ", character.TriggerSets));
         return $"{marker} {name} [dim]○ offline[/] {login} {sets}";

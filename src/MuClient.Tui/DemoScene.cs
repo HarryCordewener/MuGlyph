@@ -96,7 +96,7 @@ internal static class DemoScene
             Aliases =
             {
                 new Alias { Name = "say", Pattern = @"^'(.*)", Substitution = "say $1" },
-                new Alias { Name = "wtf", Pattern = @"^wtf$", Substitution = "who\nfinger $1" },
+                new Alias { Name = "wtf", Pattern = @"^wtf\s+(.+)$", Substitution = "who\nfinger $1" },
             },
             Macros = { new Macro { Key = "Num5", Command = "look" }, new Macro { Key = "Ctrl+F1", Command = "score" } },
             Timers = { new TimerDefinition { Name = "keepalive", IntervalSeconds = 60, Command = "@@idle" } },

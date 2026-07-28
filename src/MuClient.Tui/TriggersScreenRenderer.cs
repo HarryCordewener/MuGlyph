@@ -164,9 +164,9 @@ internal static class TriggersScreenRenderer
             lines.Add(string.Empty);
         }
 
-        lines.Add(hasHighlight ? $"[{Accent}][x][/] highlight line" : "[dim][ ] highlight line[/]");
-        lines.Add("[dim][ ] play sound[/]");
-        lines.Add(trigger.Actions.Gag ? $"[{Accent}][x][/] gag line" : "[dim][ ] gag line[/]");
+        lines.Add(hasHighlight ? $"[{Accent}][[x]][/] highlight line" : "[dim][[ ]] highlight line[/]");
+        lines.Add("[dim][[ ]] play sound[/]");
+        lines.Add(trigger.Actions.Gag ? $"[{Accent}][[x]][/] gag line" : "[dim][[ ]] gag line[/]");
 
         return lines;
     }

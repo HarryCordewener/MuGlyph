@@ -24,7 +24,7 @@ public class MetersAndStatusTests
     public async Task Sparkline_ScalesAcrossSeriesRange()
     {
         var spark = Meters.Sparkline(new[] { 10, 20, 30, 40 });
-        await Assert.That(spark).HasLength(4);
+        await Assert.That(spark).Length().IsEqualTo(4);
         await Assert.That(spark[0]).IsEqualTo('▁'); // min → lowest
         await Assert.That(spark[3]).IsEqualTo('█'); // max → highest
     }

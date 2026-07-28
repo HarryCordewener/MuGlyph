@@ -8,8 +8,8 @@ a self-contained SVG (monospace, background rects + text) — no external deps, 
 runs anywhere and the output embeds directly in Markdown/READMEs.
 
 Usage:
-    muglyph --snapshot --size 100x30 | python3 tools/ansi_frame_to_svg.py > shot.svg
-    python3 tools/ansi_frame_to_svg.py frame.ansi shot.svg
+    muglyph --snapshot --size 100x30 | python3 tools/ansi_frame_to_image.py > shot.svg
+    python3 tools/ansi_frame_to_image.py frame.ansi shot.svg
 """
 import base64
 import os
@@ -96,6 +96,10 @@ def parse(data):
         elif c == "\r":
             col = 1
         elif c >= " ":
+            # Snapshots currently only contain single-width glyphs (Nerd Font icons, box drawing,
+            # ASCII), so advancing the column by 1 is always correct here. Double-width content
+            # (East Asian / emoji) would need a `unicodedata.east_asian_width(c) in ("W", "F")`
+            # check to advance by 2 and keep the grid aligned.
             cell = Cell()
             cell.ch, cell.fg, cell.bg, cell.bold = c, fg, bg, bold
             grid[(row, col)] = cell
@@ -122,6 +126,14 @@ def apply_sgr(seq, fg, bg, bold):
         elif c == 48 and k + 4 < len(codes) and codes[k + 1] == 2:
             bg = (codes[k + 2], codes[k + 3], codes[k + 4])
             k += 4
+        elif c == 38 and k + 2 < len(codes) and codes[k + 1] == 5:
+            k += 2
+        elif c == 39:
+            fg = DEFAULT_FG
+        elif c == 48 and k + 2 < len(codes) and codes[k + 1] == 5:
+            k += 2
+        elif c == 49:
+            bg = DEFAULT_BG
         k += 1
     return fg, bg, bold
 
@@ -231,14 +243,21 @@ def to_html(grid, maxr, maxc):
 
 
 def main():
-    args = [a for a in sys.argv[1:]]
-    data = open(args[0], encoding="utf-8", errors="replace").read() if args else sys.stdin.read()
+    argv = sys.argv[1:]
+    force_html = "--html" in argv
+    positional = [a for a in argv if not a.startswith("--")]
+    if positional:
+        with open(positional[0], encoding="utf-8", errors="replace") as fh:
+            data = fh.read()
+    else:
+        data = sys.stdin.read()
     grid, maxr, maxc = parse(data)
-    out_path = args[1] if len(args) > 1 else None
-    html = "--html" in args or (out_path is not None and out_path.endswith(".html"))
+    out_path = positional[1] if len(positional) > 1 else None
+    html = force_html or (out_path is not None and out_path.endswith(".html"))
     text = to_html(grid, maxr, maxc) if html else to_svg(grid, maxr, maxc)
     if out_path:
-        open(out_path, "w", encoding="utf-8").write(text)
+        with open(out_path, "w", encoding="utf-8") as fh:
+            fh.write(text)
     else:
         sys.stdout.write(text)
 

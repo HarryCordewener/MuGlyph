@@ -45,8 +45,8 @@ fallbacks) for inline images/maps.
 - **Tui** — **SharpConsoleUI** app: a `TabControl` of output windows (main + trigger-routed **spawn
   windows** + web view, with unread badges), each a `MarkupControl` fed StyledLine → Spectre-style
   markup via `MarkupFormatter` (clickable `[link=…]` MXP/Pueblo/web spans); a `PromptControl` input,
-  status line, `Ctrl+Q` quit, NAWS-on-resize. The tab set is driven by the tested `Core.Workspaces`
-  model (a single pane of window tabs); **splits** (SharpConsoleUI splitters) + rail layer on next.
+  status line, `Ctrl+Q` quit, NAWS-on-resize. The tab/pane set is driven by the tested `Core.Workspaces`
+  model, with **splits** (thin single-line dividers) and the **connection rail** now rendered as well.
 
 ### Notes for future agents (learned the hard way)
 - **.NET 10 SDK**: install via `apt-get install -y dotnet-sdk-10.0` (the Microsoft CDN is often

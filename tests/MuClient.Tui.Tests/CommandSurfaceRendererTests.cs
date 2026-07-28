@@ -1,5 +1,6 @@
 using MuClient.Core.Commands;
 using MuClient.Tui;
+using TUnit.Assertions.Enums;
 
 namespace MuClient.Tui.Tests;
 
@@ -21,7 +22,7 @@ public class CommandSurfaceRendererTests
 
         // GoTo entries come first (both), then Terminal, then Layout.
         await Assert.That(ordered.Select(i => i.Id))
-            .IsEquivalentTo(new[] { "char:k2", "win:2", "term:log-on", "layout:zoom" });
+            .IsEquivalentTo(new[] { "char:k2", "win:2", "term:log-on", "layout:zoom" }, CollectionOrdering.Matching);
     }
 
     [Test]

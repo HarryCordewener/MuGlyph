@@ -30,7 +30,7 @@ public enum PaneCommand
 
 /// <summary>
 /// Maps prefix keys to <see cref="PaneCommand"/>s and applies them to a <see cref="WorkspaceLayout"/>.
-/// Pure and UI-agnostic: the Terminal.Gui key handler resolves a key here, then applies the result,
+/// Pure and UI-agnostic: the SharpConsoleUI key handler resolves a key here, then applies the result,
 /// keeping the tmux keymap out of the view code and unit-testable.
 /// </summary>
 public static class PaneCommands

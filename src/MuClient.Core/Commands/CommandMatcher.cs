@@ -78,36 +78,36 @@ public static class CommandMatcher
     /// </summary>
     private static int? FuzzySpread(string q, string title)
     {
-        var first = -1;
-        var last = -1;
-        var ti = 0;
-        foreach (var c in q)
+        if (q.Length == 0)
         {
-            var found = -1;
-            while (ti < title.Length)
-            {
-                if (title[ti] == c)
-                {
-                    found = ti++;
-                    break;
-                }
-
-                ti++;
-            }
-
-            if (found < 0)
-            {
-                return null;
-            }
-
-            if (first < 0)
-            {
-                first = found;
-            }
-
-            last = found;
+            return 0;
         }
 
-        return last - first;
+        int? best = null;
+        for (var start = 0; start < title.Length; start++)
+        {
+            if (title[start] != q[0])
+            {
+                continue;
+            }
+
+            var titleIndex = start + 1;
+            var queryIndex = 1;
+            while (queryIndex < q.Length && titleIndex < title.Length)
+            {
+                if (title[titleIndex++] == q[queryIndex])
+                {
+                    queryIndex++;
+                }
+            }
+
+            if (queryIndex == q.Length)
+            {
+                var spread = titleIndex - start - 1;
+                best = best is null ? spread : Math.Min(best.Value, spread);
+            }
+        }
+
+        return best;
     }
 }

@@ -47,7 +47,9 @@ internal static class RailRenderer
                     lines.Add($"[{Accent(row)}]▚[/]");
                     break;
                 case RailRowKind.Character:
-                    var initial = row.Label.Length > 0 ? Escape(row.Label[..1]) : "?";
+                    var initial = row.Label.Length > 0
+                        ? Escape(row.Label.EnumerateRunes().First().ToString())
+                        : "?";
                     var dot = row.Connected ? "●" : "○";
                     var name = row.Active ? $"[bold]{initial}[/]" : initial;
                     var unread = row.Unread > 0 ? $"[#00f5b7]{row.Unread}[/]" : string.Empty;

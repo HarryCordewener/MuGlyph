@@ -6,8 +6,8 @@ namespace MuClient.Core.Workspaces;
 /// this type so the invariants — no single-child splits, always at least one pane, a valid focus —
 /// hold after every operation. Empty panes are pruned, with one exception: closing the final
 /// pane leaves a single empty pane (an <c>ActiveTab</c> of <c>null</c>) rather than no pane at all,
-/// so consumers such as the Terminal.Gui renderer must not assume every pane has an active tab.
-/// The Terminal.Gui layer renders from this model.
+/// so consumers such as the SharpConsoleUI renderer must not assume every pane has an active tab.
+/// The SharpConsoleUI layer renders from this model.
 /// </summary>
 public sealed class WorkspaceLayout
 {

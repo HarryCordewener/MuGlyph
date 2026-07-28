@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using MuClient.Core.Automation;
 using MuClient.Core.Configuration;
 
@@ -12,6 +13,9 @@ namespace MuClient.Tui;
 internal static class TimersScreenRenderer
 {
     private const string Accent = "#00f5b7";
+    private const int ColumnWidth = 54;
+
+    private static readonly Regex TagPattern = new(@"\[[^\[\]]*\]", RegexOptions.Compiled);
 
     public static List<string> Render(IReadOnlyList<TriggerSet> sets, int selected)
     {
@@ -40,7 +44,7 @@ internal static class TimersScreenRenderer
         {
             var l = i < left.Count ? left[i] : string.Empty;
             var r = i < right.Count ? right[i] : string.Empty;
-            lines.Add($"{l} │ {r}");
+            lines.Add($"{PadVisible(l, ColumnWidth)} │ {r}");
         }
 
         lines.Add(string.Empty);
@@ -97,8 +101,8 @@ internal static class TimersScreenRenderer
             timer.IntervalSeconds.ToString("0.#", CultureInfo.InvariantCulture),
             "[dim]command[/]",
             Escape(timer.Command),
-            timer.OneShot ? $"[{Accent}][x][/] one-shot" : "[dim][ ] one-shot[/]",
-            timer.Enabled ? $"[{Accent}][x][/] enabled" : "[dim][ ] enabled[/]",
+            timer.OneShot ? $"[{Accent}][[x]][/] one-shot" : "[dim][[ ]] one-shot[/]",
+            timer.Enabled ? $"[{Accent}][[x]][/] enabled" : "[dim][[ ]] enabled[/]",
         };
     }
 
@@ -106,6 +110,23 @@ internal static class TimersScreenRenderer
     {
         var seconds = timer.IntervalSeconds.ToString("0.#", CultureInfo.InvariantCulture);
         return timer.OneShot ? $"once after {seconds}s" : $"every {seconds}s";
+    }
+
+    /// <summary>Pads a markup string to a target *visible* column width, ignoring markup tags.</summary>
+    private static string PadVisible(string markup, int width)
+    {
+        var visible = VisibleLength(markup);
+        return visible >= width ? markup : markup + new string(' ', width - visible);
+    }
+
+    /// <summary>
+    /// Counts the printable length of a markup string: escaped brackets (<c>[[</c>/<c>]]</c>) count
+    /// as one literal character each, and <c>[tag]</c> wrappers are stripped entirely.
+    /// </summary>
+    private static int VisibleLength(string markup)
+    {
+        var protectedText = markup.Replace("[[", "").Replace("]]", "");
+        return TagPattern.Replace(protectedText, string.Empty).Length;
     }
 
     private static string Escape(string text) => text.Replace("[", "[[").Replace("]", "]]");

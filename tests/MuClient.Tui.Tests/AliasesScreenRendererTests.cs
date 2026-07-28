@@ -91,7 +91,7 @@ public class AliasesScreenRendererTests
     public async Task Render_CaseSensitiveCheckboxReflectsFlag()
     {
         var lines = AliasesScreenRenderer.Render(Scene(), 1);
-        await Assert.That(lines.Any(l => l.Contains("[x][/] case sensitive"))).IsTrue();
+        await Assert.That(lines.Any(l => l.Contains("[[x]][/] case sensitive"))).IsTrue();
     }
 
     [Test]

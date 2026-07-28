@@ -94,15 +94,15 @@ public class TimersScreenRendererTests
         await Assert.That(lines.Any(l => l.Contains("interval (seconds)"))).IsTrue();
         await Assert.That(lines.Any(l => l.Contains("command"))).IsTrue();
         await Assert.That(lines.Any(l => l.Contains("one-shot"))).IsTrue();
-        await Assert.That(lines.Any(l => l.Contains("[x][/] enabled"))).IsTrue();
+        await Assert.That(lines.Any(l => l.Contains("[[x]][/] enabled"))).IsTrue();
     }
 
     [Test]
     public async Task Render_OneShotCheckboxReflectsSelectedTimer()
     {
         var lines = TimersScreenRenderer.Render(Scene(), 1);
-        await Assert.That(lines.Any(l => l.Contains("[x][/] one-shot"))).IsTrue();
-        await Assert.That(lines.Any(l => l.Contains("[dim][ ] enabled[/]"))).IsTrue();
+        await Assert.That(lines.Any(l => l.Contains("[[x]][/] one-shot"))).IsTrue();
+        await Assert.That(lines.Any(l => l.Contains("[dim][[ ]] enabled[/]"))).IsTrue();
     }
 
     [Test]

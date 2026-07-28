@@ -52,7 +52,7 @@ internal static class OptionsScreenRenderer
 
         if (row.Toggle is { } toggle)
         {
-            var box = toggle ? $"[{Accent}][x][/]" : "[dim][ ][/]";
+            var box = toggle ? $"[{Accent}][[x]][/]" : "[dim][[ ]][/]";
             return $"{box} {Escape(row.Label)}{hint}";
         }
 
