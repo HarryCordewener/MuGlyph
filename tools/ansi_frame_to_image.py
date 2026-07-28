@@ -11,6 +11,8 @@ Usage:
     muglyph --snapshot --size 100x30 | python3 tools/ansi_frame_to_svg.py > shot.svg
     python3 tools/ansi_frame_to_svg.py frame.ansi shot.svg
 """
+import base64
+import os
 import sys
 
 CELL_W = 8.4
@@ -19,6 +21,28 @@ FONT_SIZE = 15
 PAD = 12
 DEFAULT_BG = (24, 24, 28)
 DEFAULT_FG = (238, 238, 238)
+
+# A subset JetBrainsMono Nerd Font Mono (OFL), embedded so the Nerd Font icons + box drawing render
+# anywhere the SVG is opened — no font install required on the viewer's side. Falls back to generic
+# monospace when the file is absent (icons then show as tofu, same as before).
+FONT_NAME = "MuGlyph Mono Nerd"
+FONT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "MuGlyphMonoNerd.woff")
+FONT_FAMILY = f"'{FONT_NAME}',ui-monospace,Menlo,Consolas,monospace"
+
+
+def font_face_style():
+    """Returns an inline <style> embedding the bundled font as base64, or empty if it's missing."""
+    if not os.path.exists(FONT_PATH):
+        return ""
+    with open(FONT_PATH, "rb") as fh:
+        b64 = base64.b64encode(fh.read()).decode("ascii")
+    return (
+        "<defs><style>"
+        f"@font-face{{font-family:'{FONT_NAME}';"
+        f"src:url(data:font/woff;base64,{b64}) format('woff');"
+        "font-weight:normal;font-style:normal;}"
+        "</style></defs>"
+    )
 
 
 class Cell:
@@ -110,8 +134,9 @@ def to_svg(grid, maxr, maxc):
     height = PAD * 2 + maxr * CELL_H
     out = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width:.0f}" height="{height:.0f}" '
-        f'viewBox="0 0 {width:.0f} {height:.0f}" font-family="ui-monospace,Menlo,Consolas,monospace" '
+        f'viewBox="0 0 {width:.0f} {height:.0f}" font-family="{FONT_FAMILY}" '
         f'font-size="{FONT_SIZE}">',
+        font_face_style(),
         f'<rect width="{width:.0f}" height="{height:.0f}" rx="8" fill="{hexc(DEFAULT_BG)}"/>',
     ]
     # Background rects: merge horizontal runs of equal bg per row.
@@ -188,10 +213,12 @@ def to_html(grid, maxr, maxc):
             spans.append(f'<span style="{style}">{esc("".join(run))}</span>')
         rows.append("".join(spans))
     body = "\n".join(rows)
+    face = font_face_style().replace("<defs>", "").replace("</defs>", "")
     return (
         "<!doctype html><meta charset=\"utf-8\"><title>MuGlyph</title>"
+        f"{face}"
         f"<body style=\"margin:0;background:{hexc(DEFAULT_BG)}\">"
-        "<pre style=\"font:15px/1.2 ui-monospace,Menlo,Consolas,monospace;"
+        f"<pre style=\"font:15px/1.2 {FONT_FAMILY};"
         f"padding:12px;color:{hexc(DEFAULT_FG)};background:{hexc(DEFAULT_BG)}\">"
         f"{body}</pre></body>"
     )
