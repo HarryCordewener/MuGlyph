@@ -1,5 +1,6 @@
 using MuClient.Core.Configuration;
 using MuClient.Graphics;
+using SharpConsoleUI.Drivers;
 
 namespace MuClient.Tui;
 
@@ -14,11 +15,50 @@ internal static class Program
         }
 
         var config = LoadConfiguration();
-        var world = ResolveWorld(args, config);
         var capabilities = DetectCapabilities(config);
 
-        var app = new MuGlyphApp(config, capabilities);
-        return app.Run(world); // blocks on the SharpConsoleUI main loop until exit
+        // Headless snapshot: render one demo frame to ANSI (for docs images / CI golden files) and
+        // exit, without a terminal or a connection. See tools/ansi_frame_to_image.py.
+        if (args.Contains("--snapshot"))
+        {
+            var (width, height) = ParseSize(args);
+            var app = new MuGlyphApp(config, capabilities, new HeadlessConsoleDriver(width, height));
+            var frame = app.RenderSnapshot();
+            var outPath = GetOption(args, "--out");
+            if (outPath is not null)
+            {
+                File.WriteAllText(outPath, frame);
+            }
+            else
+            {
+                Console.Out.Write(frame);
+                Console.Out.Flush();
+            }
+
+            // The framework keeps foreground worker threads alive; the frame is captured, so exit
+            // hard rather than waiting on them (keeps the snapshot fast + deterministic in CI).
+            Environment.Exit(0);
+        }
+
+        var world = ResolveWorld(args, config);
+        var liveApp = new MuGlyphApp(config, capabilities);
+        return liveApp.Run(world); // blocks on the SharpConsoleUI main loop until exit
+    }
+
+    /// <summary>Parses <c>--size WxH</c> (default 100x30) for the snapshot frame.</summary>
+    private static (int Width, int Height) ParseSize(string[] args)
+    {
+        var size = GetOption(args, "--size");
+        if (size is not null)
+        {
+            var parts = size.Split('x', 'X');
+            if (parts.Length == 2 && int.TryParse(parts[0], out var w) && int.TryParse(parts[1], out var h))
+            {
+                return (Math.Clamp(w, 20, 400), Math.Clamp(h, 8, 200));
+            }
+        }
+
+        return (100, 30);
     }
 
     private static AppConfiguration LoadConfiguration()
@@ -85,11 +125,14 @@ internal static class Program
         Console.WriteLine("  --tls                Connect over TLS.");
         Console.WriteLine("  --insecure           Accept invalid TLS certificates.");
         Console.WriteLine("  --name <name>        Display name for the world.");
+        Console.WriteLine("  --snapshot           Render one demo frame (ANSI) headlessly and exit.");
+        Console.WriteLine("  --size <WxH>         Snapshot size in cells (default 100x30).");
+        Console.WriteLine("  --out <file>         Write the snapshot to a file instead of stdout.");
         Console.WriteLine("  -h, --help           Show this help.");
         Console.WriteLine();
         Console.WriteLine($"Config: {ConfigurationStore.DefaultPath}");
         Console.WriteLine("With no host, the first configured world is used (if any).");
         Console.WriteLine();
-        Console.WriteLine("In-app: PgUp/PgDn scroll · Up/Down history · Tab complete · Ctrl+Q quit.");
+        Console.WriteLine("In-app: Up/Down history · Ctrl+N next window · Ctrl+W close · Ctrl+Q quit.");
     }
 }

@@ -46,14 +46,21 @@ internal sealed class MuGlyphApp : IAsyncDisposable
     private WorldSession? _active;
     private WorldDefinition? _pendingWorld;
 
-    public MuGlyphApp(AppConfiguration config, TerminalCapabilities capabilities)
+    public MuGlyphApp(AppConfiguration config, TerminalCapabilities capabilities, IConsoleDriver? driver = null)
     {
         _config = config;
         _capabilities = capabilities;
         _theme = ResolveTheme(config);
         _formatter = new MarkupFormatter(_theme);
 
-        _system = new ConsoleWindowSystem(new NetConsoleDriver(RenderMode.Buffer), new ConsoleWindowSystemOptions());
+        // A headless driver renders to a captured buffer (for snapshots/CI) instead of a real
+        // terminal; hide the desktop panels so those frames are deterministic.
+        var headless = driver is HeadlessConsoleDriver;
+        var options = new ConsoleWindowSystemOptions(
+            ShowTopPanel: !headless,
+            ShowBottomPanel: !headless,
+            EnableAnimations: !headless);
+        _system = new ConsoleWindowSystem(driver ?? new NetConsoleDriver(RenderMode.Buffer), options);
 
         _status = Controls.Markup("Not connected.").StickyTop().Build();
 
@@ -97,6 +104,93 @@ internal sealed class MuGlyphApp : IAsyncDisposable
         _window.OnShown += (_, _) => _ = StartAsync(_pendingWorld);
         return _system.Run();
     }
+
+    /// <summary>
+    /// Renders one demo frame to an ANSI string using a headless driver — no terminal or connection
+    /// required. Used by the <c>--snapshot</c> mode to produce documentation images and CI golden
+    /// snapshots. Requires the app to have been constructed with a <see cref="HeadlessConsoleDriver"/>.
+    /// </summary>
+    public string RenderSnapshot()
+    {
+        LoadDemoScene();
+        var real = Console.Out;
+        var writer = new StringWriter();
+        Console.SetOut(writer);
+        try
+        {
+            _system.ProcessOnce();
+            _system.ForceRender();
+        }
+        finally
+        {
+            Console.SetOut(real);
+        }
+
+        return writer.ToString();
+    }
+
+    /// <summary>Populates the windows with representative MU* content for snapshots/demos.</summary>
+    private void LoadDemoScene()
+    {
+        if (_workspace.FindWindow(MainWindowId) is { } mainWindow)
+        {
+            mainWindow.Title = "Aardwolf";
+        }
+
+        var parser = new AnsiParser();
+        void Feed(MarkupControl pane, string ansiLine)
+        {
+            foreach (var line in parser.Feed(ansiLine + "\n"))
+            {
+                pane.AppendLine(_formatter.ToMarkup(line));
+            }
+        }
+
+        var main = _panes[MainWindowId];
+        Feed(main, "\x1b[1;36mThe Grand Plaza\x1b[0m");
+        Feed(main, "\x1b[0;37mA marble fountain bubbles at the centre of a wide plaza. Merchants\x1b[0m");
+        Feed(main, "\x1b[0;37mhawk their wares beneath striped awnings.\x1b[0m");
+        Feed(main, "\x1b[0;32mA town guard\x1b[0m stands watch by the northern gate.");
+
+        // A line with clickable MXP-style exits (rendered as [link=…] spans).
+        var exits = new StyledLine(new[]
+        {
+            new StyledSpan("Exits: ", TextStyle.Default),
+            Link("north"),
+            new StyledSpan("  ", TextStyle.Default),
+            Link("east"),
+        });
+        main.AppendLine(_formatter.ToMarkup(exits));
+
+        // A spawn window fed by a "Chat" trigger target, left in the background with unread.
+        var chat = _workspace.RouteSpawn("Chat");
+        var chatPane = PaneFor(chat.Id, chat.Title);
+        var chatParser = new AnsiParser();
+        foreach (var line in chatParser.Feed("\x1b[1;35m[Chat]\x1b[0m Rivane: anyone up for the crypt run?\n"))
+        {
+            chatPane.AppendLine(_formatter.ToMarkup(line));
+        }
+
+        foreach (var line in chatParser.Feed("\x1b[1;35m[Chat]\x1b[0m Bob: aye, meet me at the gate\n"))
+        {
+            chatPane.AppendLine(_formatter.ToMarkup(line));
+        }
+
+        _workspace.NoteActivity(chat.Id); // second unread line
+
+        _status.SetContent(new List<string>
+        {
+            $"[bold #00f5b7]Aardwolf[/]  [dim][[Connected]][/]  aardmud.org:4000  " +
+            $"Graphics: {_capabilities.Protocol}.  Ctrl+Q quit.",
+        });
+        _input.Input = "say hello there";
+        RefreshTabTitles();
+    }
+
+    private static StyledSpan Link(string command) => new(
+        command,
+        new TextStyle(TerminalColor.FromIndex(11), TerminalColor.Default, TextAttributes.Underline),
+        SpanInteraction.Command(command));
 
     private async Task StartAsync(WorldDefinition? world)
     {
