@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using SharpMUTerm.Core.Configuration;
 using SharpMUTerm.Core.Logging;
 using SharpMUTerm.Core.Telnet;
+using SharpMUTerm.Core.Text;
 using SharpMUTerm.Core.Transport;
 
 namespace SharpMUTerm.Core.Session;
@@ -46,7 +47,7 @@ public sealed class SessionManager : IAsyncDisposable
     /// </param>
     public WorldSession Open(
         WorldDefinition world,
-        int scrollbackCapacity = 20_000,
+        int scrollbackCapacity = ScrollbackBuffer.DefaultCapacity,
         TextSettings? text = null,
         InputSettings? input = null,
         Func<ConnectionOptions, ITelnetSession>? sessionFactory = null)
@@ -80,7 +81,7 @@ public sealed class SessionManager : IAsyncDisposable
         WorldDefinition world,
         CharacterDefinition character,
         IReadOnlyList<TriggerSet> triggerSets,
-        int scrollbackCapacity = 20_000,
+        int scrollbackCapacity = ScrollbackBuffer.DefaultCapacity,
         ILogSink? log = null,
         TextSettings? text = null,
         InputSettings? input = null,

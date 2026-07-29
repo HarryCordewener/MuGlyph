@@ -336,4 +336,20 @@ public class ConfigurationTests
         await Assert.That(TerminalColorJsonConverter.Parse("rgb:1,2,3")).IsEqualTo(TerminalColor.FromRgb(1, 2, 3));
         await Assert.That(TerminalColorJsonConverter.Parse("garbage")).IsEqualTo(TerminalColor.Default);
     }
+    /// <summary>
+    /// The scrollback default, and the one definition behind it. Ten thousand rather than the twenty
+    /// thousand it was: the TUI hands a window's whole buffer to one markup control whose parse cache is
+    /// keyed on a content version, so a single arriving line re-parses the lot — 88-116 ms at twenty
+    /// thousand lines, which is a client that stutters visibly in a busy room. Pinned here because the
+    /// number is a performance decision and a silent drift back would undo it.
+    /// </summary>
+    [Test]
+    public async Task ScrollbackDefault_IsTenThousand_AndSharedWithTheBuffer()
+    {
+        await Assert.That(SharpMUTerm.Core.Text.ScrollbackBuffer.DefaultCapacity).IsEqualTo(10_000);
+        await Assert.That(new AppConfiguration().ScrollbackLines)
+            .IsEqualTo(SharpMUTerm.Core.Text.ScrollbackBuffer.DefaultCapacity);
+        await Assert.That(new SharpMUTerm.Core.Text.ScrollbackBuffer().Capacity)
+            .IsEqualTo(SharpMUTerm.Core.Text.ScrollbackBuffer.DefaultCapacity);
+    }
 }

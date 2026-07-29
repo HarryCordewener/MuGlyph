@@ -53,7 +53,7 @@ public sealed class WorldSession : IAsyncDisposable
         IReadOnlyList<TriggerSet>? triggerSets = null,
         Func<ConnectionOptions, ITelnetSession>? sessionFactory = null,
         ILogSink? log = null,
-        int scrollbackCapacity = 20_000,
+        int scrollbackCapacity = ScrollbackBuffer.DefaultCapacity,
         TextSettings? text = null,
         InputSettings? input = null)
     {

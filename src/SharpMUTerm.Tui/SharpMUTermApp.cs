@@ -47,6 +47,22 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private readonly MarkupFormatter _formatter;
     private readonly Workspace _workspace;
     private readonly Dictionary<string, MarkupControl> _panes = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The scroll viewport each output region is shown through, keyed by region — a window id for its
+    /// live output, <see cref="FrozenRegionKey"/> for a frozen pane's pinned half, <see cref="WebWindowId"/>
+    /// for the web document. Held here rather than rebuilt with the pane area so a reader's scroll
+    /// position survives a split, a tab change or a freeze; see <see cref="ScrollViewFor"/>.
+    /// </summary>
+    private readonly Dictionary<string, ScrollablePanelControl> _paneScrolls = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The markup control holding a frozen pane's pinned scrollback, per window. It is a second control
+    /// for the same buffer (the window's own control shows the live tail below the bar), and it is kept
+    /// rather than rebuilt so its scroll viewport keeps a stable child and its parse cache survives —
+    /// the pinned half is precisely the half a reader scrolls through.
+    /// </summary>
+    private readonly Dictionary<string, MarkupControl> _frozenPanes = new(StringComparer.Ordinal);
     private readonly DraftStore _drafts;
     private readonly InputBarVisibility _secondBars;
     private readonly InputHistory _history = new();
@@ -506,12 +522,38 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             // emit only the cells that changed. The headless driver ignores InvalidateFrontBuffer
             // (the interface default is an empty body), but re-initialising it builds a fresh buffer,
             // which together with a full repaint makes the closing render a whole frame again.
-            if (_system.ConsoleDriver is HeadlessConsoleDriver headlessDriver)
-            {
-                headlessDriver.Initialize(_system);
-            }
+            ReArmWholeFrame();
+        }
 
-            _system.ForceFullRepaint();
+        // More output than a pane can hold — the state in which the client showed its oldest screenful
+        // for ever and every new line landed off-screen. `scrollback` is the settled live tail;
+        // `scrollback-up` is the same buffer after real PgUp keystrokes, so the frame carries an earlier
+        // region *and* the status row's scrollback segment. Every other view fits in a pane, which is
+        // precisely why no snapshot ever caught this.
+        if (string.Equals(view, "scrollback", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(view, "scrollback-up", StringComparison.OrdinalIgnoreCase))
+        {
+            LoadLongScene(MainWindowId, ScrollbackSceneLines);
+            SettleScroll();
+
+            if (string.Equals(view, "scrollback-up", StringComparison.OrdinalIgnoreCase))
+            {
+                SimulateKey(new ConsoleKeyInfo('\0', ConsoleKey.PageUp, false, false, false));
+                SimulateKey(new ConsoleKeyInfo('\0', ConsoleKey.PageUp, false, false, false));
+                ReArmWholeFrame();
+            }
+        }
+
+        // A frozen pane whose pinned half holds far more than its three-quarters of the pane, scrolled
+        // up inside it — the two features composing, which is the frame that says whether they do.
+        if (string.Equals(view, "freeze-scrollback", StringComparison.OrdinalIgnoreCase))
+        {
+            LoadLongScene(MainWindowId, ScrollbackSceneLines);
+            ToggleFreeze();
+            LoadLongScene(MainWindowId, 6, first: ScrollbackSceneLines + 1); // a few lines into the live tail
+            SettleScroll();
+            SimulateKey(new ConsoleKeyInfo('\0', ConsoleKey.PageUp, false, false, false));
+            ReArmWholeFrame();
         }
 
         // The web view with an inline picture: a small page whose <img> is a data: URI, driven through
@@ -662,6 +704,43 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
+    /// Renders one more frame and hands back the <em>whole</em> frame, not the cells that changed. A
+    /// second render over a populated front buffer emits a delta, which is right for a terminal and
+    /// useless to a reader — so the headless driver is re-initialised first (a fresh buffer) and a full
+    /// repaint forced, the same recipe the <c>drag</c> snapshot uses for the same reason.
+    /// </summary>
+    internal string RenderWholeFrame()
+    {
+        ReArmWholeFrame();
+        return RenderFrame();
+    }
+
+    /// <summary>
+    /// Renders a frame and leaves the driver ready to emit the next one in full. Scrolled panes need it:
+    /// <c>ScrollablePanelControl</c>'s auto-scroll moves the offset <em>during</em> paint (its children
+    /// were already arranged at the old one) and then asks for a relayout, so the frame that discovers a
+    /// pane has overflowed is still showing the top of it and only the next frame shows the tail. A
+    /// terminal spends 16 ms getting there and nobody sees it; a one-frame snapshot would publish the
+    /// stale frame as the answer.
+    /// </summary>
+    private void SettleScroll()
+    {
+        RenderFrame();
+        ReArmWholeFrame();
+    }
+
+    /// <summary>Gives the headless driver a fresh buffer and marks everything dirty, so the next render is whole.</summary>
+    private void ReArmWholeFrame()
+    {
+        if (_system.ConsoleDriver is HeadlessConsoleDriver headless)
+        {
+            headless.Initialize(_system);
+        }
+
+        _system.ForceFullRepaint();
+    }
+
+    /// <summary>
     /// Drives a genuine pane drag through the headless driver for the <c>drag</c> snapshot: primary
     /// button down on the first pane's tab strip, then a drag frame over the second pane's left edge.
     /// The button is deliberately left down so the frame captures the live drop preview. Requires a
@@ -767,6 +846,32 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _input.SetAndNotify("say hello there");
         RebuildPaneArea(); // realise the Chat spawn tab, then refresh badges
     }
+
+    /// <summary>
+    /// Lines the <c>scrollback</c> snapshots and the scrollback tests feed: comfortably more than any
+    /// pane at any terminal size the snapshot pipeline uses, so "the tail is visible" is a claim about
+    /// scrolling rather than about a buffer that happened to fit.
+    /// </summary>
+    internal const int ScrollbackSceneLines = 240;
+
+    /// <summary>
+    /// Feeds <paramref name="count"/> numbered lines into a window, through the same
+    /// <see cref="AppendWindowLine"/> path a session's output takes. Each line names its own number, so a
+    /// rendered frame says <em>which</em> region of the buffer is on screen instead of only that
+    /// something is — the difference between a test that would have caught the scrolling defect and one
+    /// that would have passed while the client showed line 1 for ever.
+    /// </summary>
+    internal void LoadLongScene(string windowId, int count, int first = 1)
+    {
+        for (var i = 0; i < count; i++)
+        {
+            AppendWindowLine(windowId, ScrollbackSceneLine(first + i));
+        }
+    }
+
+    /// <summary>The markup of one numbered scene line. Shared so a test can look for the exact text.</summary>
+    internal static string ScrollbackSceneLine(int number) =>
+        $"[dim]line[/] [bold]{number:0000}[/] [dim]· the courier's road runs on past the northern watch[/]";
 
     /// <summary>
     /// Rebuilds the workspace from a saved session, or a single main window when there's none. Corrupt
@@ -1134,18 +1239,48 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Puts <paramref name="count"/> lines of a window's buffer, starting at <paramref name="from"/>,
+    /// into one output control.
+    /// <para>
+    /// This and the <c>AppendLine</c> in <see cref="AppendWindowLine"/> are <b>the whole seam between the
+    /// line buffer and the controls that draw it</b> — no other code hands pane content to a control.
+    /// That is deliberate. Today every control is fed its region in full, which is what makes appending
+    /// expensive: <c>MarkupControl</c>'s parse cache is keyed on a content version and <c>AppendLine</c>
+    /// bumps it, so one arriving line re-parses everything the control holds (~50 ms at 5,000 lines).
+    /// The fix is a <em>windowed</em> feed — give the control only the slice the viewport can show and
+    /// re-feed it as the viewport moves — and when that lands it replaces these two methods and nothing
+    /// else: a range feed is already a range, and the append becomes "re-window if the tail is visible".
+    /// Keep new callers going through here rather than touching a control's content directly.
+    /// </para>
+    /// </summary>
+    private static void FeedRange(MarkupControl control, List<string> buffer, int from, int count)
+    {
+        var start = Math.Clamp(from, 0, buffer.Count);
+        var length = Math.Clamp(count, 0, buffer.Count - start);
+        control.SetContent(buffer.GetRange(start, length));
+    }
+
     /// <summary>The trigger pattern that routes to a spawn <paramref name="target"/>, for its capture line.</summary>
     private string? CaptureFor(string target) =>
         _config.TriggerSets.SelectMany(s => s.Triggers)
             .FirstOrDefault(t => string.Equals(t.Actions.SpawnTarget, target, StringComparison.Ordinal))
             ?.Pattern;
 
-    /// <summary>Appends a line to a window's pane and badges it unread when it isn't the visible tab.</summary>
+    /// <summary>
+    /// Appends a line to a window's pane and badges it unread when the reader cannot see where it landed.
+    /// <para>
+    /// That is <see cref="Workspace.IsCaughtUp"/> and not <c>IsVisible</c>: a visible tab whose output the
+    /// reader has scrolled back off is exactly as blind as a tab they are not looking at, and asking only
+    /// about visibility meant new output arrived silently below the viewport — the one state in which a
+    /// badge is the only thing that could tell them.
+    /// </para>
+    /// </summary>
     private void OnLine(string windowId, StyledLine line)
     {
         AppendWindowLine(windowId, _formatter.ToMarkup(line, Stamp()));
 
-        if (!_workspace.IsVisible(windowId))
+        if (!_workspace.IsCaughtUp(windowId))
         {
             _workspace.NoteActivity(windowId);
             RefreshTabTitles();
@@ -1481,6 +1616,225 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         return true;
+    }
+
+    // --- Scrollback navigation ------------------------------------------------------------------
+
+    /// <summary>
+    /// Rows a page key keeps on screen. PgUp/PgDn move by the viewport <em>less</em> this, so the couple
+    /// of lines you were reading at the edge are still there after the jump — the difference between
+    /// paging through a transcript and losing your place twice a page.
+    /// </summary>
+    private const int PageOverlapRows = 2;
+
+    /// <summary>
+    /// The viewport the scrollback keys drive: the focused pane's active window.
+    /// <para>
+    /// A frozen pane hands them its <em>pinned</em> half. Freeze and scrollback are two ways of looking
+    /// at the same history and this is where they compose: ⌃F holds a region still above the bar and
+    /// keeps the tail live below it, and while that is up the region worth moving through is the pinned
+    /// one — the live tail is by definition already showing its newest line. The tail keeps its own
+    /// viewport regardless (see <see cref="BuildFrozenContent"/>), so a burst into a four-row tail still
+    /// scrolls itself; it just is not what a page key aims at.
+    /// </para>
+    /// </summary>
+    private ScrollablePanelControl? ScrollTarget()
+    {
+        var pane = _workspace.Layout.FocusedPane;
+        var windowId = pane.ActiveTab ?? MainWindowId;
+        return pane.Frozen && _paneScrolls.TryGetValue(FrozenRegionKey(windowId), out var frozen)
+            ? frozen
+            : _paneScrolls.GetValueOrDefault(windowId);
+    }
+
+    /// <summary>
+    /// Handles the scrollback keys, or reports that this key is not one of them.
+    /// <para>
+    /// They are routed from here — the window's <c>PreviewKeyPressed</c> — rather than left to the
+    /// panel's own <c>ProcessKey</c>, because the panel will never be handed a key. This app pins the
+    /// keyboard focus to the armed command line (<see cref="PinFocusToArmedBar"/>) and routes typing
+    /// explicitly, which is today's fix for a paste that followed framework focus and vanished;
+    /// SharpConsoleUI hands keys to the focused control, and
+    /// <c>ScrollablePanelControl.ProcessKey</c> returns false on its first line unless it has focus. So
+    /// the honest options were to route the keys here or to weaken the pin, and weakening the pin would
+    /// trade a fixed bug for this feature. Routing here also matches how every other key in this window
+    /// reaches its destination, which means one place to read to find out what a keystroke does.
+    /// </para>
+    /// </summary>
+    private bool TryScrollKey(KeyPressedEventArgs e)
+    {
+        var key = e.KeyInfo.Key;
+        var ctrl = e.KeyInfo.Modifiers.HasFlag(ConsoleModifiers.Control);
+        var shift = e.KeyInfo.Modifiers.HasFlag(ConsoleModifiers.Shift);
+
+        // Alt chords belong to macros and to the app, never to text or to scrolling.
+        if (e.KeyInfo.Modifiers.HasFlag(ConsoleModifiers.Alt))
+        {
+            return false;
+        }
+
+        Action<ScrollablePanelControl>? scroll = (key, ctrl, shift) switch
+        {
+            (ConsoleKey.PageUp, false, _) => panel => panel.ScrollVerticalBy(-PageRows(panel)),
+            (ConsoleKey.PageDown, false, _) => panel => panel.ScrollVerticalBy(PageRows(panel)),
+            (ConsoleKey.UpArrow, false, true) => panel => panel.ScrollVerticalBy(-1),
+            (ConsoleKey.DownArrow, false, true) => panel => panel.ScrollVerticalBy(1),
+
+            // ⌃Home/⌃End and not bare Home/End: those two are the command line's, and a caret that
+            // stopped moving to the ends of the line you are typing would be a poor trade for a jump
+            // there are two other ways to make. The bar ignores the Control modifier on them, so
+            // nothing is taken away that plain Home/End does not still do.
+            (ConsoleKey.Home, true, _) => ToOldest,
+            (ConsoleKey.End, true, _) => BackToLive,
+            _ => null,
+        };
+
+        if (scroll is null)
+        {
+            return false;
+        }
+
+        // Claimed whether or not this pane has anything to scroll. "PgUp does nothing here but types a
+        // character over there" is the kind of key that gets reported as a corrupted command line.
+        e.Handled = true;
+        if (ScrollTarget() is { } panel)
+        {
+            scroll(panel);
+            SyncScrollbackState();
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Rows one page key moves. Read off the viewport the last frame arranged the panel at — the panel
+    /// is the only thing that knows how tall its content box came out after the pane's chrome, and the
+    /// figure it reports is the one it will clamp the scroll against.
+    /// </summary>
+    private static int PageRows(ScrollablePanelControl panel) =>
+        Math.Max(1, panel.ViewportHeight - PageOverlapRows);
+
+    /// <summary>
+    /// Returns a viewport to the newest line <em>and re-arms auto-scroll</em>, so it stays there as
+    /// output arrives. <c>ScrollToBottom</c> alone is a one-shot — it moves the offset and leaves the
+    /// viewport detached, which would put the reader at the bottom of a transcript that then walked away
+    /// from them again on the very next line.
+    /// </summary>
+    private static void BackToLive(ScrollablePanelControl panel)
+    {
+        panel.AutoScroll = true;
+        panel.ScrollToBottom();
+    }
+
+    /// <summary>
+    /// Jumps to the oldest line the buffer still holds, <em>and detaches auto-scroll</em>. Only
+    /// <c>ScrollVerticalBy</c> detaches on its own (it is the one the framework treats as a user gesture);
+    /// <c>ScrollToTop</c> is a bare offset write, so leaving auto-scroll armed would have the very next
+    /// repaint pull the viewport back to the bottom — which is what ⌃Home did before this, visibly nothing.
+    /// </summary>
+    private static void ToOldest(ScrollablePanelControl panel)
+    {
+        // A pane whose content fits has nothing to jump to, and detaching it anyway would leave it
+        // refusing to follow its own output the moment it did overflow — a keystroke that appears to do
+        // nothing and then quietly breaks the thing it did nothing to.
+        if (!Scrollable(panel))
+        {
+            return;
+        }
+
+        panel.AutoScroll = false;
+        panel.ScrollToTop();
+    }
+
+    /// <summary>Whether a viewport has anything outside it, in either direction.</summary>
+    private static bool Scrollable(ScrollablePanelControl panel) => panel.CanScrollUp || panel.CanScrollDown;
+
+    /// <summary>
+    /// Runs one scrollback move on the focused pane for the command surface, and says so on the status
+    /// row when there was nothing for it to do — the same rule the ⌃B commands follow, and for the same
+    /// reason: a palette entry that changes nothing and reports nothing reads as a broken client.
+    /// </summary>
+    private void ScrollFocusedPane(Action<ScrollablePanelControl> move)
+    {
+        if (ScrollTarget() is not { } panel || !Scrollable(panel))
+        {
+            RefuseCommand("nothing to scroll — this window fits in its pane");
+            return;
+        }
+
+        move(panel);
+        SyncScrollbackState();
+    }
+
+    /// <summary>
+    /// Publishes the focused pane's scroll position into the state that renders from it: the window's
+    /// <see cref="WorkspaceWindow.ScrolledBack"/> flag (which is what makes unread badging count lines
+    /// arriving below the viewport) and the status row's scrollback segment.
+    /// <para>
+    /// <see cref="ScrollablePanelControl.AutoScroll"/> <em>is</em> the "showing the live tail" bit —
+    /// the framework detaches it when the reader scrolls up and re-attaches it when they reach the
+    /// bottom again — so this mirrors that one fact rather than inventing a second one to keep in step
+    /// with it. The frozen half is deliberately not consulted: while a pane is frozen its live tail is
+    /// still live, so lines are still landing where the reader can see them and nothing is unread.
+    /// </para>
+    /// </summary>
+    /// <param name="windowId">
+    /// The window whose viewport moved. Defaults to the focused pane's, which is what every keyboard
+    /// route means; the wheel passes one explicitly because it scrolls whatever the pointer is over, and
+    /// that need not be the focused pane.
+    /// </param>
+    private void SyncScrollbackState(string? windowId = null)
+    {
+        windowId ??= ActiveWindowId();
+        if (_paneScrolls.GetValueOrDefault(windowId) is { } live
+            && _workspace.SetScrolledBack(windowId, !live.AutoScroll))
+        {
+            RefreshTabTitles();
+        }
+
+        RefreshStatusRow();
+    }
+
+    /// <summary>Raised by any viewport that moved — the wheel and the scrollbar get here too, not just keys.</summary>
+    private void OnPaneScrolled() => SyncScrollbackState();
+
+    /// <summary>
+    /// The status row's scrollback segment: shown exactly while the focused pane has output below its
+    /// viewport, and carrying the key that gets back to it. Empty otherwise — this is the only visible
+    /// sign that a pane is not showing its newest line, because the panes deliberately carry no
+    /// scrollbar (see <see cref="ScrollViewFor"/>), so it has to be right rather than decorative.
+    /// </summary>
+    private string ScrollbackStatus()
+    {
+        if (ScrollTarget() is not { CanScrollDown: true } panel)
+        {
+            return string.Empty;
+        }
+
+        // Kept short on purpose. The row right-aligns a cluster of five segments and only guarantees a
+        // three-cell gap, so a wordier phrasing wrapped the status line onto a second row at 120 columns
+        // — and a status line that grows a row takes one off the workspace (SyncInputHeights counts the
+        // chrome), which is a pane getting shorter because you scrolled it.
+        var below = Math.Max(1, panel.TotalContentHeight - panel.ViewportHeight - panel.VerticalScrollOffset);
+        return $"[#e5c07b]{Glyphs.Scrollback} scrollback[/] [dim]{below} · ⌃End live[/]";
+    }
+
+    /// <summary>
+    /// Repaints the resting status row for whichever state the client is in.
+    /// <see cref="RefreshStatusBar"/> covers the connected case only and returns early otherwise — by
+    /// design, since it runs off every chrome refresh — but a scroll changes the row on a client with
+    /// nothing connected too, and that is exactly the client someone reads their scrollback on.
+    /// </summary>
+    private void RefreshStatusRow()
+    {
+        if (_moveMode)
+        {
+            return;
+        }
+
+        SetStatus(_statusIdentity is { } id
+            ? StatusBarMarkup(id.Character, id.Host, id.Port, id.State)
+            : NotConnectedMarkup());
     }
 
     /// <summary>
@@ -2230,7 +2584,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             Zoomed: _workspace.Layout.ZoomedPaneId is not null,
             Frozen: _workspace.Layout.FocusedPane.Frozen,
             TimestampsOn: _showTimestamps,
-            SecondInputOn: _secondBars.IsShown(ActiveWindowId()));
+            SecondInputOn: _secondBars.IsShown(ActiveWindowId()),
+            ScrolledBack: ScrollTarget() is { CanScrollDown: true });
         return CommandCatalog.Build(
             _workspace, BuildCharacterRefs(), _active?.SessionKey, context, SettingsCommands());
     }
@@ -2357,6 +2712,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                     pane.SetContent(new List<string>());
                 }
 
+                break;
+            case "term:scroll-oldest":
+                ScrollFocusedPane(ToOldest);
+                break;
+            case "term:scroll-live":
+                ScrollFocusedPane(BackToLive);
                 break;
             case "term:timestamps-on":
             case "term:timestamps-off":
@@ -2565,7 +2926,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _freezePoints.Remove(windowId);
             if (_lines.TryGetValue(windowId, out var buf) && _panes.TryGetValue(windowId, out var control))
             {
-                control.SetContent(new List<string>(buf));
+                FeedRange(control, buf, 0, buf.Count);
             }
         }
 
@@ -2820,7 +3181,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         var live = PaneContentFor(WebWindowId, title);
         if (_webPage is null || _webImages.Count == 0)
         {
-            return live;
+            // A text-only page still needs a viewport: it is one markup control, and a control taller
+            // than its box paints only the rows the box has (the same defect the output panes had). Not
+            // auto-scrolling — a page is a document, and its top is where you start reading.
+            return ScrollViewFor(WebWindowId, live, autoScroll: false);
         }
 
         var boxes = new Dictionary<int, WebImageLayout.CellBox>();
@@ -2830,9 +3194,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         var blocks = WebViewComposer.Compose(_webMarkup, _webPage.Images, boxes);
-        var panel = Controls.ScrollablePanel()
-            .WithAlignment(HorizontalAlignment.Stretch)
-            .WithVerticalAlignment(VerticalAlignment.Fill);
+        var panel = new List<IWindowControl>();
 
         var usedLiveControl = false;
         foreach (var block in blocks)
@@ -2847,7 +3209,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                     {
                         usedLiveControl = true;
                         live.SetContent(text.Lines.ToList());
-                        panel.AddControl(live);
+                        panel.Add(live);
                     }
                     else
                     {
@@ -2855,13 +3217,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                         // so a link reads the same wherever on the page it sits.
                         var markup = new MarkupControl(text.Lines.ToList());
                         markup.LinkClicked += (_, e) => OnLinkClicked(e.Url);
-                        panel.AddControl(markup);
+                        panel.Add(markup);
                     }
 
                     break;
 
                 case WebImageBlock image:
-                    panel.AddControl(WebImageControlFor(image));
+                    panel.Add(WebImageControlFor(image));
                     break;
             }
         }
@@ -2870,10 +3232,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         {
             // An all-image page: the window still needs its own control in the tree.
             live.SetContent(new List<string>());
-            panel.AddControl(live);
+            panel.Add(live);
         }
 
-        return panel.Build();
+        // The same kept viewport the text-only page uses, so a page whose images arrive one at a time
+        // (every arrival rebuilds the pane) does not throw the reader back to the top each time.
+        return ScrollViewFor(WebWindowId, panel, autoScroll: false);
     }
 
     /// <summary>
@@ -2917,6 +3281,89 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         control.LinkClicked += (_, e) => OnLinkClicked(e.Url);
         _panes[id] = control;
         return control;
+    }
+
+    /// <summary>
+    /// A window's output as the pane actually shows it: its markup control inside a scroll viewport.
+    /// <para>
+    /// This is the fix for the defect that a pane could not scroll at all. A bare
+    /// <see cref="MarkupControl"/> paints its rows from index 0 down until it runs out of box
+    /// (<c>MarkupControl.PaintDOM</c>) — it has no scroll offset and no bottom anchoring — so a window
+    /// with more lines than rows showed its <em>oldest</em> screenful for ever and every new line landed
+    /// off the bottom of the box, invisible. Scrolling in SharpConsoleUI lives in
+    /// <see cref="ScrollablePanelControl"/>, whose <see cref="ScrollablePanelControl.AutoScroll"/> is
+    /// exactly terminal behaviour: it pins the viewport to the bottom on any repaint while enabled,
+    /// detaches when the reader scrolls up, and re-attaches when they come back down. Nothing here
+    /// reimplements any of that.
+    /// </para>
+    /// </summary>
+    private ScrollablePanelControl OutputViewFor(string id, string title) =>
+        ScrollViewFor(id, PaneContentFor(id, title));
+
+    /// <summary>
+    /// The scroll viewport for one output region, created on first use and kept for the life of the
+    /// window under <paramref name="key"/> — so the reader's scroll position survives the pane-area
+    /// rebuilds a split, a tab change or a freeze all trigger.
+    /// <para>
+    /// It refills itself rather than trusting that it still holds its child.
+    /// <see cref="RebuildPaneArea"/> hands the old workspace row to <c>Window.RemoveContent</c>, which
+    /// disposes it, and a disposed grid disposes its children all the way down — and
+    /// <c>ScrollablePanelControl.OnDisposing</c> <em>clears its child list</em>. The markup controls
+    /// themselves survive that (they hold nothing and override nothing, which is why
+    /// <see cref="PaneContentFor"/> can re-parent the same control for the life of the app), so the
+    /// repair is to put the child back, not to keep a second copy of it.
+    /// </para>
+    /// </summary>
+    /// <param name="autoScroll">
+    /// True for a live tail — output whose newest line is the interesting one. False for a document
+    /// whose top is where you start reading, which is what the web view is.
+    /// </param>
+    private ScrollablePanelControl ScrollViewFor(string key, IWindowControl content, bool autoScroll = true) =>
+        ScrollViewFor(key, new[] { content }, autoScroll);
+
+    /// <inheritdoc cref="ScrollViewFor(string, IWindowControl, bool)"/>
+    private ScrollablePanelControl ScrollViewFor(string key, IReadOnlyList<IWindowControl> content, bool autoScroll = true)
+    {
+        if (!_paneScrolls.TryGetValue(key, out var panel))
+        {
+            panel = new ScrollablePanelControl
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Fill,
+                VerticalScrollMode = ScrollMode.Scroll,
+
+                // The markup control wraps, so there is never anything to the right to reach.
+                HorizontalScrollMode = ScrollMode.None,
+
+                // No scrollbar. It would cost two columns of every output pane the moment the buffer
+                // passed one screenful — permanently, in a client whose entire job is columns of text —
+                // and it would cost them somewhere the app does not currently look: per-pane NAWS is
+                // derived from the pane's own rectangle (see PaneOutputRects), so a reserved gutter
+                // would silently make every server's reported width two columns too wide. The scroll
+                // position is reported on the status row instead (ScrollbackStatus), which is where
+                // this app puts transient state and which costs no output width at all.
+                ShowScrollbar = false,
+                AutoScroll = autoScroll,
+            };
+            panel.Scrolled += (_, _) => OnPaneScrolled();
+            _paneScrolls[key] = panel;
+        }
+
+        var children = panel.Children;
+        if (!children.SequenceEqual(content, ReferenceEqualityComparer.Instance))
+        {
+            foreach (var child in children)
+            {
+                panel.RemoveControl(child); // RemoveControl, not ClearContents: that one disposes them
+            }
+
+            foreach (var child in content)
+            {
+                panel.AddControl(child);
+            }
+        }
+
+        return panel;
     }
 
     /// <summary>
@@ -3182,14 +3629,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return BuildWebContent(window.Title);
         }
 
-        return PaneContentFor(windowId, window.Title);
+        return OutputViewFor(windowId, window.Title);
     }
 
     /// <summary>Wraps a spawn window's output under a dim capture line naming its trigger pattern.</summary>
     private IWindowControl BuildSpawnContent(string windowId, WorkspaceWindow window)
     {
         var header = new MarkupControl(new List<string> { CaptureLineRenderer.Line(window.CapturePattern!) });
-        var output = PaneContentFor(windowId, window.Title);
+        var output = OutputViewFor(windowId, window.Title);
 
         var grid = Controls.Grid()
             .WithAlignment(HorizontalAlignment.Stretch)
@@ -3204,19 +3651,35 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// Builds a frozen window's content: a vertical split of pinned scrollback (buffer up to the freeze
     /// point), the <c>▲ FROZEN ⌃F</c> bar, and the live tail (buffer since the freeze). The tail is the
     /// window's real control, so incoming lines keep landing below the bar while the top stays pinned.
+    /// <para>
+    /// <b>Both halves get their own scroll viewport.</b> The pinned half is the one a reader most wants
+    /// to move through — it is the history freeze exists to hold still — and before this it could show
+    /// only the oldest screenful of it, which made ⌃F a way of pinning text you could not read. The
+    /// live tail gets one too, for the same reason every other pane does: it is a tail, and a burst of
+    /// output past its few rows would otherwise vanish under the bar.
+    /// </para>
+    /// <para>
+    /// Both are ordinary <see cref="ScrollablePanelControl.AutoScroll"/> viewports, with no
+    /// freeze-specific rule. On the pinned half "the bottom" is the freeze point — the last line that was
+    /// on screen when ⌃F was pressed — so auto-scroll opens it exactly where the reader left off and
+    /// detaches the moment they scroll up, which is the behaviour a special case would have had to
+    /// reproduce. It also keeps the half honest when the scrollback cap trims the buffer and
+    /// <see cref="AppendWindowLine"/> walks the freeze point down: the pinned region shrinks and the
+    /// viewport re-clamps to its new end instead of drifting off the content.
+    /// </para>
     /// </summary>
     private IWindowControl BuildFrozenContent(string windowId, string title)
     {
         var buffer = _lines.TryGetValue(windowId, out var b) ? b : new List<string>();
         var split = _freezePoints.TryGetValue(windowId, out var p) ? Math.Clamp(p, 0, buffer.Count) : buffer.Count;
 
-        var frozen = new MarkupControl(buffer.Take(split).ToList());
-        frozen.LinkClicked += (_, e) => OnLinkClicked(e.Url);
+        var frozen = FrozenContentFor(windowId);
+        FeedRange(frozen, buffer, 0, split);
 
         var bar = new MarkupControl(new List<string> { FreezeBarRenderer.Bar(FrozenAccentHex()) });
 
         var live = PaneContentFor(windowId, title);
-        live.SetContent(buffer.Skip(split).ToList());
+        FeedRange(live, buffer, split, buffer.Count - split);
 
         // Pinned scrollback gets the lion's share; a single "❄ FROZEN ⌃F ───" line is both label and
         // border, with the live tail a few rows below it.
@@ -3224,10 +3687,27 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             .WithAlignment(HorizontalAlignment.Stretch)
             .WithVerticalAlignment(VerticalAlignment.Fill);
         grid.Rows(GridLength.Star(3), GridLength.Cells(1), GridLength.Star(1)).Columns(GridLength.Star(1));
-        grid.Place(frozen, 0, 0, 1, 1);
+        grid.Place(ScrollViewFor(FrozenRegionKey(windowId), frozen), 0, 0, 1, 1);
         grid.Place(bar, 1, 0, 1, 1);
-        grid.Place(live, 2, 0, 1, 1);
+        grid.Place(ScrollViewFor(windowId, live), 2, 0, 1, 1);
         return grid.Build();
+    }
+
+    /// <summary>The <see cref="_paneScrolls"/> key of a window's pinned-scrollback half while frozen.</summary>
+    private static string FrozenRegionKey(string windowId) => $"frozen:{windowId}";
+
+    /// <summary>A window's pinned-scrollback control, created (with link routing) on first freeze.</summary>
+    private MarkupControl FrozenContentFor(string windowId)
+    {
+        if (_frozenPanes.TryGetValue(windowId, out var existing))
+        {
+            return existing;
+        }
+
+        var control = new MarkupControl(new List<string>());
+        control.LinkClicked += (_, e) => OnLinkClicked(e.Url);
+        _frozenPanes[windowId] = control;
+        return control;
     }
 
     /// <summary>The frozen-split chrome colour (design token #c678dd / ANSI 5), resolved through the theme.</summary>
@@ -3385,6 +3865,59 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     internal (Color Armed, Color Idle) InputBandColors => (_input.BandColor, _input.IdleBandColor);
 
     /// <summary>
+    /// One output viewport's scroll state, as the framework reports it after a real frame. Internal so a
+    /// test can assert what the panel believes beside what the frame actually painted — the two together
+    /// are what say the pane scrolls, rather than either alone.
+    /// </summary>
+    /// <param name="ContentRows">Total rows of content in the viewport, which may far exceed <paramref name="ViewportRows"/>.</param>
+    /// <param name="ViewportRows">Rows the viewport shows at once.</param>
+    /// <param name="Offset">Content rows hidden above the viewport.</param>
+    /// <param name="AutoScroll">Whether the viewport is still pinned to the newest line.</param>
+    internal readonly record struct ScrollbackView(
+        int ContentRows, int ViewportRows, int Offset, bool AutoScroll, bool CanScrollUp, bool CanScrollDown);
+
+    /// <summary>A window's live-output viewport state, or null before one has been built.</summary>
+    internal ScrollbackView? ScrollbackOf(string windowId) => ViewOf(_paneScrolls.GetValueOrDefault(windowId));
+
+    /// <summary>A window's pinned-scrollback viewport state while its pane is frozen, or null.</summary>
+    internal ScrollbackView? FrozenScrollbackOf(string windowId) =>
+        ViewOf(_paneScrolls.GetValueOrDefault(FrozenRegionKey(windowId)));
+
+    /// <summary>The viewport the scrollback keys are currently aimed at, or null when no pane is realised.</summary>
+    internal ScrollbackView? ScrollTargetView => ViewOf(ScrollTarget());
+
+    private static ScrollbackView? ViewOf(ScrollablePanelControl? panel) => panel is null
+        ? null
+        : new ScrollbackView(
+            panel.TotalContentHeight, panel.ViewportHeight, panel.VerticalScrollOffset,
+            panel.AutoScroll, panel.CanScrollUp, panel.CanScrollDown);
+
+    /// <summary>
+    /// Where the framework actually arranged a window's output control, in desktop cells. This is the
+    /// reading that separates "the pane scrolls" from "the pane is showing the top and the numbers happen
+    /// to add up": a scrolled viewport arranges its child at its full content height and a
+    /// <em>negative</em> top, and clips it to the viewport. Null until a frame has laid the pane out.
+    /// </summary>
+    internal PaneRect? OutputContentBounds(string windowId)
+    {
+        if (_panes.GetValueOrDefault(windowId) is not { } control ||
+            _window.GetLayoutNode(control) is not { } node)
+        {
+            return null;
+        }
+
+        var origin = ContentOrigin();
+        var bounds = node.AbsoluteBounds;
+        return new PaneRect(origin.X + bounds.X, origin.Y + bounds.Y, bounds.Width, bounds.Height);
+    }
+
+    /// <summary>Feeds one key straight to the scrollback handler, reporting whether it was a scrollback key.</summary>
+    internal bool SimulateScrollKey(ConsoleKeyInfo key) => TryScrollKey(new KeyPressedEventArgs(key, false));
+
+    /// <summary>A window's unread badge count, as the tab strip and the rail render it.</summary>
+    internal int UnreadOf(string windowId) => _workspace.FindWindow(windowId)?.Unread ?? 0;
+
+    /// <summary>
     /// Hands a key to the armed command line and reports whether it took it. Focus is put back on that
     /// bar first: it is where the caret belongs, and where the framework delivers a paste.
     /// </summary>
@@ -3477,6 +4010,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             {
                 e.Handled = true;
                 return sent;
+            }
+
+            // Scrollback: PgUp/PgDn, Shift+↑/↓, ⌃Home/⌃End. After the macros for the same reason recall
+            // is — a key the user has explicitly bound to a command is theirs — and before recall,
+            // because Shift+↑ used to fall into it (TryRecallKey does not look at modifiers).
+            if (TryScrollKey(e))
+            {
+                return null;
             }
 
             // Draft-safe history recall on ↑/↓ — our own, so a half-typed draft survives (see InputHistory).
@@ -3836,6 +4377,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return;
         }
 
+        if (WheelLines(flags) is { } lines)
+        {
+            OnUiThread(() => ScrollPaneUnderPointer(point, lines));
+            return;
+        }
+
         var result = _paneDrag.Handle(flags, point.X, point.Y, PaneSnapshot);
         if (result.Action == PaneDragAction.None)
         {
@@ -3843,6 +4390,72 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         OnUiThread(() => ApplyDragResult(result));
+    }
+
+    /// <summary>
+    /// How many lines a mouse frame asks the scrollback to move, or null when it is not a wheel frame.
+    /// Three, the customary notch: one line makes a wheel useless on a transcript and a whole page makes
+    /// it unusable for reading one.
+    /// </summary>
+    private static int? WheelLines(List<MouseFlags> flags)
+    {
+        if (flags.Contains(MouseFlags.WheeledUp))
+        {
+            return -WheelNotchRows;
+        }
+
+        return flags.Contains(MouseFlags.WheeledDown) ? WheelNotchRows : null;
+    }
+
+    /// <summary>Lines one wheel notch moves the scrollback.</summary>
+    private const int WheelNotchRows = 3;
+
+    /// <summary>
+    /// Scrolls whichever pane the pointer is over.
+    /// <para>
+    /// Routed from the driver rather than left to the panel's own <c>IMouseAwareControl</c> handling, for
+    /// the reason the whole mouse layer of this app is: the framework delivers a mouse frame to the
+    /// control it hit-tests, and this app's hit-testing of the pane area already lives here because a
+    /// drag has to see every pane rather than only the one that was pressed
+    /// (<see cref="OnDriverMouseEvent"/>). Doing it here also means the wheel is a thing a headless frame
+    /// can prove, which a route through the framework's input pump — reachable only from inside
+    /// <c>Run()</c> — is not.
+    /// </para>
+    /// <para>
+    /// The pointer, not the focus: a wheel scrolls what it is over, which is the one mouse convention no
+    /// user checks first. That makes it the only scrollback route that reads a pane other than the
+    /// focused one, so the state sync is done against <em>that</em> pane's window.
+    /// </para>
+    /// </summary>
+    private void ScrollPaneUnderPointer(System.Drawing.Point point, int lines)
+    {
+        foreach (var (paneId, rect) in PaneOutputRects())
+        {
+            if (point.X < rect.X || point.X >= rect.X + rect.Width ||
+                point.Y < rect.Y || point.Y >= rect.Y + rect.Height)
+            {
+                continue;
+            }
+
+            if (_workspace.Layout.FindPane(paneId) is not { ActiveTab: { } windowId } pane)
+            {
+                return;
+            }
+
+            // A frozen pane is two regions in one rectangle; the wheel takes the one the pointer is in.
+            // The pinned half occupies the top of the pane, so its arranged height is the boundary.
+            var frozen = pane.Frozen ? _paneScrolls.GetValueOrDefault(FrozenRegionKey(windowId)) : null;
+            var overFrozen = frozen is { ActualHeight: > 0 } && point.Y < rect.Y + frozen.ActualHeight;
+
+            if ((overFrozen ? frozen : _paneScrolls.GetValueOrDefault(windowId)) is not { } over)
+            {
+                return;
+            }
+
+            over.ScrollVerticalBy(lines);
+            SyncScrollbackState(windowId);
+            return;
+        }
     }
 
     /// <summary>
@@ -4152,6 +4765,9 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         _panes.Remove(id);
+        _paneScrolls.Remove(id);              // and its scroll position: a reopened window starts live
+        _paneScrolls.Remove(FrozenRegionKey(id));
+        _frozenPanes.Remove(id);
         _drafts.Forget(id);        // both bars: a closed window keeps neither of its two drafts
         _secondBars.Forget(id);    // and a same-id window later starts from F8's default again
         _lines.Remove(id);         // don't resurrect old scrollback if a same-id spawn reopens
@@ -4592,8 +5208,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>The resting status row of a client with nothing connected.</summary>
-    private string NotConnectedMarkup() =>
-        $"[dim]not connected · Graphics {Escape(_capabilities.Protocol.ToString())} · ⌃P palette · ⌃Q quit[/]";
+    private string NotConnectedMarkup()
+    {
+        var scrollback = ScrollbackStatus();
+        var suffix = scrollback.Length == 0 ? string.Empty : $"   {scrollback}";
+        return $"[dim]not connected · Graphics {Escape(_capabilities.Protocol.ToString())} · ⌃P palette · ⌃Q quit[/]{suffix}";
+    }
 
     private void UpdateStatus()
     {
@@ -4731,6 +5351,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         var left = $"[{accent}]●[/] [bold]{Escape(character)}[/] [dim]{Escape(state)}[/]";
 
         var right = new List<string>();
+
+        // Leftmost of the right cluster while it is there at all: a pane that is not showing its newest
+        // line is the most important thing the row can say, because nothing else on screen says it.
+        if (ScrollbackStatus() is { Length: > 0 } scrollback)
+        {
+            right.Add(scrollback);
+        }
 
         // Keepalive latency sparkline + last ack (compact), per the design status bar.
         var spark = Meters.Sparkline(new[] { 38, 44, 41, 47, 40, 43 });

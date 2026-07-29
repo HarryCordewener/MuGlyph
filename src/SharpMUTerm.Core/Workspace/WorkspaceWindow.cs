@@ -40,8 +40,18 @@ public sealed class WorkspaceWindow
     /// <summary>The <c>world.character</c> session this window belongs to, or null if unowned.</summary>
     public string? SessionKey { get; }
 
-    /// <summary>Unread lines accumulated while the window was not visible.</summary>
+    /// <summary>Unread lines accumulated while the window was not showing its newest output.</summary>
     public int Unread { get; internal set; }
+
+    /// <summary>
+    /// Whether the viewer has scrolled this window's output back off its live tail, so newly arriving
+    /// lines land below what is on screen. A visible window in this state is <em>not</em> caught up:
+    /// <see cref="Workspace.NoteActivity"/> badges it exactly as it badges a window on a hidden tab,
+    /// because from the reader's point of view the two are the same situation — output has arrived where
+    /// they cannot see it. Set by the shell through <see cref="Workspace.SetScrolledBack"/>; scroll
+    /// position itself is the view's business and never lives here.
+    /// </summary>
+    public bool ScrolledBack { get; internal set; }
 
     /// <summary>Whether the window holds a typed-but-unsent input draft (the <c>✎</c> marker).</summary>
     public bool HasUnsentInput { get; internal set; }

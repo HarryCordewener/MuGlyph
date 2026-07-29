@@ -50,7 +50,9 @@ fallbacks) for inline images/maps.
   degrades a Sixel-only terminal to half-block explicitly rather than pretending.
 - **Scripting** — sandboxed MoonSharp `ScriptHost` (world/output/trigger/alias/timer/gmcp/log).
 - **Tui** — **SharpConsoleUI** app: a `TabControl` of output windows (main + trigger-routed **spawn
-  windows** + web view, with unread badges), each a `MarkupControl` fed StyledLine → Spectre-style
+  windows** + web view, with unread badges), each a `MarkupControl` in a `ScrollablePanelControl`
+  viewport (PgUp/PgDn, Shift+↑/↓, ⌃Home/⌃End, wheel; unread badges count output arriving below a
+  scrolled-back viewport), fed StyledLine → Spectre-style
   markup via `MarkupFormatter` (clickable `[link=…]` MXP/Pueblo/web spans); an `InputBarControl`
   command line (wrapping, auto-growing, per-window drafts, plus an optional per-window second bar),
   status line, `Ctrl+Q` quit, per-pane NAWS (every connected session is told its own pane's output
@@ -89,9 +91,13 @@ python3 tools/ansi_frame_to_image.py frame.ansi frame.html   # or .svg
   worlds — you end up checking your own data and calling it the demo.
 - **Views:** `worlds`/`settings`, `triggers`, `route`, `highlight`, `aliases`, `timers`, `keypad`,
   `set`, `textansi`, `input`, `logging`, `freeze`, `spawn`, `split`, `move`, `drag`, `history`,
-  `draft`, `draft2`, `menu`, `menu-split`, `messages`, `quit`, `web`, plus the default workspace
-  (no `--view`). Any settings screen also takes a `-edit` suffix, which opens it and drives real
-  keys in so the frame shows a field mid-edit. State toggles: `collapsed`, `prefix`, `timestamps`.
+  `draft`, `draft2`, `menu`, `menu-split`, `messages`, `quit`, `web`, `scrollback`, `scrollback-up`,
+  `freeze-scrollback`, plus the default workspace (no `--view`). Any settings screen also takes a
+  `-edit` suffix, which opens it and drives real keys in so the frame shows a field mid-edit. State
+  toggles: `collapsed`, `prefix`, `timestamps`.
+- **The three `scroll*` views are the only ones with more output than a pane holds.** Every other view
+  fits, which is exactly why no snapshot caught the panes being unable to scroll at all. Reach for one
+  of these (or `LoadLongScene`) whenever a change touches the output area.
 - **Send the user the `.svg`.** For your *own* inspection render the `.html` — Chromium clips the
   bottom of a bare `.svg` through aspect-ratio scaling, which will make you chase a layout bug that
   isn't there.
@@ -150,6 +156,29 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   those windows accepts paste — add a focusable `IPasteTarget` there and both paths will.
 - **The framework's own `ExitKey` defaults to Ctrl+Q** and calls `RequestExit` with nothing in
   between. Ours won only because application shortcuts are tried first. It is set to `null`.
+- **`MarkupControl` does not scroll and does not bottom-anchor.** `PaintDOM` paints rows from index 0
+  until the box runs out, with no offset of its own — so a control holding 100 lines in a 10-row box
+  renders lines 1–10 for ever and everything appended lands off-screen. Scrolling lives in
+  `ScrollablePanelControl`, and every output region in this app is now wrapped in one
+  (`SharpMUTermApp.ScrollViewFor`). Two things about it:
+  - **`AutoScroll` is not "on AddControl"**, whatever the property doc says: it re-pins to the bottom on
+    *any* repaint while enabled, detaches when the user scrolls up and re-attaches at the bottom
+    (`ScrollablePanelControl.Rendering.cs:125-133`, `.Scrolling.cs:145-152`). That is terminal
+    behaviour; don't reimplement it. But it moves the offset **during paint**, after the children were
+    arranged, so the frame that discovers new content is one frame stale — a headless snapshot or test
+    must render a settling frame (`SettleScroll` / `RenderWholeFrame`).
+  - **`ScrollToTop`/`ScrollToBottom` do not touch `AutoScroll`.** Only `ScrollVerticalBy` treats itself
+    as a user gesture. A jump-to-top that leaves auto-scroll armed is undone by the next repaint.
+  - **A disposed `ScrollablePanelControl` clears its children**, and `RebuildPaneArea` disposes the whole
+    old tree. The kept viewports therefore refill themselves; markup controls survive disposal (they
+    override nothing), which is why the same one is re-parented for the life of the app.
+- **Only `MarkupControl.AppendLine` and `FeedRange` hand pane content to a control** — the seam a
+  windowed feed replaces. Appending re-parses the whole control (the parse cache is keyed on a content
+  version), so never "refresh" a pane by re-`SetContent`-ing the full buffer on a scroll or a frame.
+- **The scrollback keys are routed from `PreviewKeyPressed`** (`TryScrollKey`), and the wheel from the
+  driver (`ScrollPaneUnderPointer`), for the same reason everything else in this window is: focus is
+  pinned to the armed bar, so `ScrollablePanelControl.ProcessKey` — which returns false unless it has
+  focus — would never see a key.
 
 ## Other dependency notes
 

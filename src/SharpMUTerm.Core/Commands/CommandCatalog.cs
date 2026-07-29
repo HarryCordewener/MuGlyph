@@ -14,12 +14,17 @@ public sealed record CharacterRef(string WorldName, string CharacterName, string
 /// Whether the active window is showing its second command line. Per window, not per app — the
 /// surface acts on the window you are in, the same way <c>Clear window</c> does.
 /// </param>
+/// <param name="ScrolledBack">
+/// Whether the focused pane is showing something other than its newest output, so
+/// <c>Back to live output</c> has somewhere to go.
+/// </param>
 public sealed record CommandContext(
     bool LoggingOn = false,
     bool Zoomed = false,
     bool Frozen = false,
     bool TimestampsOn = false,
-    bool SecondInputOn = false);
+    bool SecondInputOn = false,
+    bool ScrolledBack = false);
 
 /// <summary>
 /// A configuration screen the command surface can open: what it calls itself, the id the host
@@ -97,6 +102,18 @@ public static class CommandCatalog
             ? new CommandItem(CommandGroup.Terminal, "Resume scrollback", "term:unfreeze")
             : new CommandItem(CommandGroup.Terminal, "Freeze pane", "term:freeze"));
         items.Add(new CommandItem(CommandGroup.Terminal, "Clear window", "term:clear"));
+
+        // Scrollback position. Here as well as on the keyboard because this surface is where the client
+        // is discovered from — every other thing you can do to an output window is listed here — and the
+        // subtitles are how the keys get taught: a pane that scrolls and says so nowhere is a pane
+        // nobody scrolls. The "back" entry appears only when there is somewhere to come back from.
+        items.Add(new CommandItem(
+            CommandGroup.Terminal, "Scroll to oldest", "term:scroll-oldest", "⌃Home · PgUp pages back"));
+        if (context.ScrolledBack)
+        {
+            items.Add(new CommandItem(
+                CommandGroup.Terminal, "Back to live output", "term:scroll-live", "⌃End"));
+        }
 
         // The client's own messages — the status-line notices that dismiss themselves — kept out of the
         // output window (and so out of the session log) and readable here instead.

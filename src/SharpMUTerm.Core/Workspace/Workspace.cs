@@ -91,19 +91,22 @@ public sealed class Workspace
     public static string SpawnWindowId(string target) => $"spawn:{target}";
 
     /// <summary>
-    /// Records a line arriving in a window: increments its unread badge unless the window is visible
-    /// (the active tab of its host pane). Unknown ids are ignored.
+    /// Records a line arriving in a window: increments its unread badge unless the window is
+    /// <see cref="IsCaughtUp"/> — visible <em>and</em> showing its live tail. Unknown ids are ignored.
     /// </summary>
     public void NoteActivity(string windowId)
     {
-        if (_windows.TryGetValue(windowId, out var window) && !IsVisible(windowId))
+        if (_windows.TryGetValue(windowId, out var window) && !IsCaughtUp(windowId))
         {
             window.Unread++;
         }
     }
 
     /// <summary>
-    /// Makes a window the active tab of its pane, focuses that pane, and clears its unread badge.
+    /// Makes a window the active tab of its pane, focuses that pane, and clears its unread badge — but
+    /// only if the window is showing its live tail. A window the viewer had scrolled back keeps its
+    /// badge when its tab is picked, because the unread lines are still below the viewport; returning to
+    /// the bottom (<see cref="SetScrolledBack"/> with <c>false</c>) is what clears it.
     /// Returns false if the window is not placed in any pane.
     /// </summary>
     public bool ActivateWindow(string windowId)
@@ -116,7 +119,33 @@ public sealed class Workspace
 
         Layout.SetActiveTab(pane.Id, windowId);
         Layout.Focus(pane.Id);
-        _windows[windowId].Unread = 0;
+        if (!_windows[windowId].ScrolledBack)
+        {
+            _windows[windowId].Unread = 0;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Records whether the shell has this window's output scrolled back off its live tail. Returning to
+    /// the bottom of a <em>visible</em> window is the reader catching up, so it clears the unread badge
+    /// the same way picking the tab does. Unknown ids are ignored.
+    /// </summary>
+    /// <returns>True when the flag changed, so a caller can skip repainting badges that cannot have moved.</returns>
+    public bool SetScrolledBack(string windowId, bool scrolledBack)
+    {
+        if (!_windows.TryGetValue(windowId, out var window) || window.ScrolledBack == scrolledBack)
+        {
+            return false;
+        }
+
+        window.ScrolledBack = scrolledBack;
+        if (!scrolledBack && IsVisible(windowId))
+        {
+            window.Unread = 0;
+        }
+
         return true;
     }
 
@@ -144,4 +173,13 @@ public sealed class Workspace
     /// <summary>True when the window is the active tab of the pane that hosts it.</summary>
     public bool IsVisible(string windowId) =>
         Layout.FindWindow(windowId) is { } pane && pane.ActiveTab == windowId;
+
+    /// <summary>
+    /// True when a new line arriving in this window would land somewhere the reader can see it: the
+    /// window is the visible tab of its pane <em>and</em> its output is not scrolled back. This is the
+    /// condition unread badging turns on — <see cref="IsVisible"/> alone is not it, which is why a client
+    /// that only asked that question badged nothing while the reader sat in their scrollback.
+    /// </summary>
+    public bool IsCaughtUp(string windowId) =>
+        IsVisible(windowId) && _windows.TryGetValue(windowId, out var window) && !window.ScrolledBack;
 }
