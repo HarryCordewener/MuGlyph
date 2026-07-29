@@ -35,15 +35,41 @@ public sealed class TextSettings
 /// <para>
 /// Spellcheck used to live here (<c>CheckSpelling</c>, <c>Dictionary</c>) and was removed with its
 /// checkboxes: there is no speller in this client, so the two values described a feature that did not
-/// exist. So did <c>NewlineKey</c> — the command line is a single-line
-/// <c>PromptControl</c>, and no chord can put a newline into a control that has no second row.
+/// exist. There is still no <c>NewlineKey</c>, but for the opposite reason to the one that removed it:
+/// the command line wraps and grows now, so a newline <em>can</em> be typed — on one fixed chord this
+/// host can actually deliver. Making it configurable would offer a field whose interesting answers
+/// (Shift+⏎, Ctrl+⏎) no Unix terminal reports distinctly, which is the same empty promise again.
 /// </para>
 /// </summary>
 public sealed class InputSettings
 {
+    /// <summary>The shortest a command line may be, and the floor both row settings clamp to.</summary>
+    public const int MinRows = 1;
+
+    /// <summary>The tallest a command line may be, whatever the configuration asks for.</summary>
+    public const int MaxRowCeiling = 20;
+
     /// <summary>Echo typed commands into the output window.</summary>
     public bool LocalEcho { get; set; } = true;
 
     /// <summary>Keep an unsent draft per tab so switching windows doesn't lose typing.</summary>
     public bool KeepDrafts { get; set; } = true;
+
+    /// <summary>
+    /// How many lines tall the command line is before anything is typed into it. Three by default, so
+    /// a wrapped line has somewhere to wrap to without the input resizing on the first keystroke.
+    /// </summary>
+    public int Rows { get; set; } = 3;
+
+    /// <summary>
+    /// The most lines the command line grows to as it wraps. Past this it scrolls inside itself rather
+    /// than taking any more of the output window. Clamped to no less than <see cref="Rows"/>.
+    /// </summary>
+    public int MaxRows { get; set; } = 8;
+
+    /// <summary>
+    /// Whether a window starts with its second command line shown. The bar is toggled per window
+    /// (⌃B i) — this is only what a window that has never been told otherwise does.
+    /// </summary>
+    public bool SecondBar { get; set; }
 }

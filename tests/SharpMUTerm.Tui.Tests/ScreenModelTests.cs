@@ -344,9 +344,11 @@ public class ScreenModelTests
         var input = new InputSettings();
         var model = OptionsScreenRenderer.Model(OptionsScreenRenderer.InputScreen(input));
 
-        // Two rows, both checkboxes: spellcheck and the newline key went with the features they
-        // described, and neither survivor has a value to type.
-        await Assert.That(model.Sizes[0]).IsEqualTo(2);
+        // Five rows now, in two sections. The first two are the checkboxes this screen has always had
+        // and they keep their ordinals — spellcheck went with the feature it described, and nothing has
+        // been inserted above them. The COMMAND LINE section adds the two heights and the second bar's
+        // default; the heights are typed values, which is what makes this screen editable at all.
+        await Assert.That(model.Sizes[0]).IsEqualTo(5);
 
         model.ToggleAt(0, 0)!.Value.Flip();
         await Assert.That(input.LocalEcho).IsFalse();
@@ -354,7 +356,48 @@ public class ScreenModelTests
         model.ToggleAt(0, 1)!.Value.Flip();
         await Assert.That(input.KeepDrafts).IsFalse();
 
-        await Assert.That(model.HasEditableRow).IsFalse();
+        await Assert.That(model.HasEditableRow).IsTrue();
+    }
+
+    /// <summary>
+    /// The command-line rows write back the way the checkboxes do: the two heights through their
+    /// fields, the second bar's default through its toggle. Asserted here rather than only in the
+    /// renderer, because a row that draws a number and stores it nowhere is exactly what this screen's
+    /// removed spellcheck settings were.
+    /// </summary>
+    [Test]
+    public async Task Options_CommandLineRowsWriteBackToTheInputSettings()
+    {
+        var input = new InputSettings();
+        var model = OptionsScreenRenderer.Model(OptionsScreenRenderer.InputScreen(input));
+        var edits = new ScreenEdits();
+
+        await Assert.That(edits.Apply(model.FieldAt(0, 2, 0)!.Value, "6")).IsNull();
+        await Assert.That(input.Rows).IsEqualTo(6);
+
+        await Assert.That(edits.Apply(model.FieldAt(0, 3, 0)!.Value, "12")).IsNull();
+        await Assert.That(input.MaxRows).IsEqualTo(12);
+
+        model.ToggleAt(0, 4)!.Value.Flip();
+        await Assert.That(input.SecondBar).IsTrue();
+    }
+
+    /// <summary>
+    /// A height outside the range the input area can honour is refused rather than stored: the control
+    /// clamps whatever it is handed, so a field that accepted 0 would show a number the bar was quietly
+    /// ignoring.
+    /// </summary>
+    [Test]
+    public async Task Options_CommandLineHeightsRefuseValuesTheBarCannotHonour()
+    {
+        var input = new InputSettings();
+        var model = OptionsScreenRenderer.Model(OptionsScreenRenderer.InputScreen(input));
+        var height = model.FieldAt(0, 2, 0)!.Value;
+        var edits = new ScreenEdits();
+
+        await Assert.That(edits.Apply(height, "0")).IsNotNull();
+        await Assert.That(edits.Apply(height, "21")).IsNotNull();
+        await Assert.That(input.Rows).IsEqualTo(3);
     }
 
     /// <summary>
