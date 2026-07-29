@@ -135,9 +135,14 @@ public class TriggerSetManagementTests
     }
 
     /// <summary>
-    /// End to end through the keyboard, which is what the button is for: ⇥ ⇥ into the set pane, ↓ past
-    /// the two sets onto <c>[[+ set]]</c>, ⏎ to run it, and the next ⏎ opens the new set's name. The
+    /// End to end through the keyboard, which is what the button is for: ⇥ into the set pane, ↓ past
+    /// the two sets onto <c>[[+ set]]</c>, ⏎ to run it — which makes the set and opens its name. The
     /// cursor lands on the set that was made, not on the button that made it.
+    /// <para>
+    /// The set pane is the <em>fourth</em> ⇥ stop, not the third: ⇥ walks the panes in the order they
+    /// are drawn, and the security checkboxes are drawn above the characters list even though their
+    /// pane index is appended last. <see cref="ScreenPaneNavigationTests"/> pins that order itself.
+    /// </para>
     /// </summary>
     [Test]
     public async Task Enter_OnAddSetLeavesTheCursorOnTheNewSetReadyToNameIt()
@@ -145,6 +150,7 @@ public class TriggerSetManagementTests
         var sets = Sets();
         var session = WorldsSession(Worlds(), sets);
 
+        session.Handle(Key(ConsoleKey.Tab));
         session.Handle(Key(ConsoleKey.Tab));
         session.Handle(Key(ConsoleKey.Tab));
         await Assert.That(session.Focus().Pane).IsEqualTo(WorldsScreenRenderer.TriggerSetsPane);
@@ -156,8 +162,6 @@ public class TriggerSetManagementTests
         await Assert.That(session.Handle(Key(ConsoleKey.Enter))).IsEqualTo(ScreenAction.Redraw);
         await Assert.That(sets).Count().IsEqualTo(3);
         await Assert.That(session.Focus().Index).IsEqualTo(2);
-
-        session.Handle(Key(ConsoleKey.Enter));
         await Assert.That(session.Focus().Edit!.Value.Text).IsEqualTo(WorldsScreenRenderer.NewSetName);
     }
 

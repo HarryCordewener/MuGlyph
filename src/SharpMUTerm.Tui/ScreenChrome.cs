@@ -53,10 +53,17 @@ internal static class ScreenChrome
     /// <summary>
     /// The keyboard hints every screen with a list and a checkbox pane shares. Kept in one place so a
     /// screen can't advertise a key its <see cref="ScreenModel"/> doesn't actually offer.
+    /// <para>
+    /// It names ←→ as well as ⇥ because on a multi-pane screen both change pane, and ←→ was the one
+    /// movement these screens offered that nothing on them mentioned. The single-pane form below
+    /// deliberately does not: with one pane there is nowhere sideways to go, and a screen may not
+    /// advertise a key its model doesn't answer. <see cref="ScreenHintTests"/> pins the pair against
+    /// every screen's real pane count.
+    /// </para>
     /// </summary>
-    internal const string ListHints = "↑↓ select · ⇥ pane · Space toggle";
+    internal const string ListHints = "↑↓ select · ←→ ⇥ pane · Space toggle";
 
-    /// <summary>The hints for a screen that is a single list with no second pane to ⇥ into.</summary>
+    /// <summary>The hints for a screen that is a single list with no second pane to ⇥ or ←→ into.</summary>
     internal const string SingleListHints = "↑↓ select · Space toggle";
 
     /// <summary>

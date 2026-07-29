@@ -200,16 +200,61 @@ internal readonly record struct ScreenRow(
 internal sealed class ScreenModel
 {
     private readonly IReadOnlyList<ScreenRow>[] _panes;
+    private IReadOnlyList<ScreenPanePlace> _layout;
 
     internal ScreenModel(params IReadOnlyList<ScreenRow>[] panes)
     {
         ArgumentNullException.ThrowIfNull(panes);
         _panes = panes.Length == 0 ? new IReadOnlyList<ScreenRow>[] { Array.Empty<ScreenRow>() } : panes;
         Sizes = Array.ConvertAll(_panes, p => p.Count);
+        _layout = SideBySide(_panes.Length);
     }
 
     /// <summary>Row counts per pane, in pane order — what <see cref="ScreenSelection"/> navigates by.</summary>
     internal IReadOnlyList<int> Sizes { get; }
+
+    /// <summary>
+    /// Where each pane is drawn, which is what the arrow keys and ⇥ navigate by. It defaults to
+    /// <see cref="SideBySide"/> — one pane per column, in index order — because that is what every
+    /// screen but F5 actually is: a list beside an editor, or a single card. Under that default
+    /// reading order and index order are the same thing, so ⇥ walks exactly the panes it always did.
+    /// <para>
+    /// A screen states its own layout only when the two disagree. F5 is the one that does: its
+    /// security pane is <em>appended</em> (a pane index is a cursor coordinate, so inserting one would
+    /// renumber every stop the screen and its tests navigate by) while being <em>drawn</em> above the
+    /// characters list, in the same column. Left as index order, ⇥ went left-top → right-middle →
+    /// bottom-right and then jumped back up the screen, which is the awkwardness this coordinate
+    /// exists to fix.
+    /// </para>
+    /// <para>
+    /// A layout that doesn't name every pane is ignored rather than half-applied: a missing
+    /// coordinate is a pane the arrows could never reach, and silently dropping one stop is worse than
+    /// falling back to a rule that reaches them all.
+    /// </para>
+    /// </summary>
+    internal IReadOnlyList<ScreenPanePlace> Layout
+    {
+        get => _layout;
+        init
+        {
+            if (value is { } places && places.Count == _panes.Length)
+            {
+                _layout = places;
+            }
+        }
+    }
+
+    /// <summary>Panes drawn as columns, left to right in index order — the shape all but F5 have.</summary>
+    internal static IReadOnlyList<ScreenPanePlace> SideBySide(int panes)
+    {
+        var layout = new ScreenPanePlace[Math.Max(1, panes)];
+        for (var i = 0; i < layout.Length; i++)
+        {
+            layout[i] = new ScreenPanePlace(i, 0);
+        }
+
+        return layout;
+    }
 
     /// <summary>
     /// How many rows of each pane are *list* rows rather than the buttons appended after them. A pane

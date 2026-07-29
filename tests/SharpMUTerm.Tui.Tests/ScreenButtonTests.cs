@@ -229,8 +229,13 @@ public class ScreenButtonTests
     }
 
     /// <summary>
-    /// End to end through the keyboard: ⏎ on a button row runs it and leaves the cursor on the new row,
-    /// where the next ⏎ opens that row's name — which is the whole reason a new row is worth adding.
+    /// End to end through the keyboard: ⏎ on a button row runs it, leaves the cursor on the new row,
+    /// <em>and</em> opens that row's name — which is the whole reason a new row is worth adding.
+    /// <para>
+    /// The name used to want a second ⏎, and that ⏎ was never in doubt: what has just been made is
+    /// called <c>New World</c> and the only thing to do with it is say what it really is. The cursor
+    /// landing on the row is still asserted, unchanged, beside the buffer now being open on it.
+    /// </para>
     /// </summary>
     [Test]
     public async Task Enter_OnAButtonRowRunsItAndLeavesTheCursorOnTheNewRow()
@@ -247,11 +252,9 @@ public class ScreenButtonTests
 
         await Assert.That(worlds.Count).IsEqualTo(3);
         await Assert.That(session.Focus().Index).IsEqualTo(2);
-        await Assert.That(session.IsEditing).IsFalse();
-
-        session.Handle(Key(ConsoleKey.Enter));
         await Assert.That(session.IsEditing).IsTrue();
         await Assert.That(session.Focus().Edit!.Value.Text).IsEqualTo("New World");
+        await Assert.That(session.Focus().Edit!.Value.Field).IsEqualTo(WorldsScreenRenderer.WorldNameField);
 
         // Esc abandons the buffer, then Esc cancels the screen — and cancelling unmakes the world.
         session.Handle(Key(ConsoleKey.Escape));

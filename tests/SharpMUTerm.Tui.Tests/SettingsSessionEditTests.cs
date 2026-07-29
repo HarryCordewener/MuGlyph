@@ -383,10 +383,9 @@ public class SettingsSessionEditTests
             selection.SelectionIn(WorldsScreenRenderer.WorldsPane),
             selection.SelectionIn(WorldsScreenRenderer.CharactersPane)));
 
-        for (var hop = 0; hop < 3; hop++)
-        {
-            await Assert.That(session.Handle(Key(ConsoleKey.Tab))).IsEqualTo(ScreenAction.Redraw);
-        }
+        // One hop, not three: the checkboxes are drawn inside the WORLD block at the top of the detail
+        // column, and ⇥ follows the screen as it is drawn rather than as its panes are numbered.
+        await Assert.That(session.Handle(Key(ConsoleKey.Tab))).IsEqualTo(ScreenAction.Redraw);
 
         await Assert.That(session.Selection.Pane).IsEqualTo(WorldsScreenRenderer.SecurityPane);
 
@@ -428,7 +427,8 @@ public class SettingsSessionEditTests
             selection.SelectionIn(WorldsScreenRenderer.WorldsPane),
             selection.SelectionIn(WorldsScreenRenderer.CharactersPane)));
 
-        session.Handle(Key(ConsoleKey.Tab));
+        session.Handle(Key(ConsoleKey.Tab));   // the world's security checkboxes, drawn above the list
+        session.Handle(Key(ConsoleKey.Tab));   // the character's own row
         session.Handle(Key(ConsoleKey.Enter));
         await Assert.That(session.Focus().Edit!.Value.Field).IsEqualTo(WorldsScreenRenderer.CharacterNameField);
 

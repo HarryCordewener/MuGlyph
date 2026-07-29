@@ -668,7 +668,10 @@ What the framework actually provides (read at v2.5.14, not assumed):
   column; a timer's interval/command are the *timer row's*, drawn in the editor
   pane. That is deliberate: giving a value an editor must not renumber the cursor
   indices the panes already navigate by (and that the renderer tests pin).
-- **Keys.** ⏎ activates the focused row when it has a field, else it saves and
+- **Keys.** ↑↓ move a row, ←→ move a pane and ⇥/⇧⇥ cycle the panes — see *Panes say
+  where they are drawn* below for what each does at an edge, and why the arrows
+  cannot collide with the caret or the dropdown.
+  ⏎ activates the focused row when it has a field, else it saves and
   closes. ⌃S always saves (committing an open field first, and refusing if that
   field won't validate). Esc cancels the screen — except mid-edit, where it
   abandons the buffer and leaves the screen up. Inside an edit: typing inserts,
@@ -774,8 +777,87 @@ What the framework actually provides (read at v2.5.14, not assumed):
   undo. A toggle's snapshot captures the **value**, not the boolean — F5's
   trigger-set assignment is really a position in a list, and cancelling must put
   that whole list back, not merely "assigned".
-- Pane shape: F4/F7/F8 are single-pane (no ⇥); **F5 has four** (worlds → characters
-  → trigger sets → the world's security checkboxes); the rest have two.
+- Pane shape: F4/F7/F8 are single-pane (no ⇥, no ←→); **F5 has four**; the rest have
+  two. The pane *indices* are worlds, characters, trigger sets, security — the
+  order they were added in, which is not the order they are drawn in; see below.
+- **Panes say where they are drawn, and the arrows navigate by that.**
+  `ScreenModel.Layout` is a coarse `(Column, Row)` grid per pane, defaulting to
+  `ScreenPanes.SideBySide` — one pane per column, index order — which is what
+  every screen but F5 actually is. `ScreenPanes` holds the three pure rules and
+  `ScreenSelection` applies them.
+  - **⇥/⇧⇥ walk *reading* order** (down the rows, then across the columns) and
+    **wrap**. On F5 that is worlds → **security** → characters → trigger sets. The
+    security pane is *appended* (index 3) because a pane index is a cursor
+    coordinate, but it is *drawn* inside the WORLD block above the characters
+    list — so index-order ⇥ went left-top → right-middle → bottom-right and then
+    jumped back **up** the screen. That fourth hop was the whole of "the tabbing
+    feels a bit awkward".
+  - **←→ move to the pane beside this one** and deliberately **do not wrap** —
+    they park at the edge, the way ↑ parks on a list's first row. ⇥ stays the
+    cycle, and is therefore the only movement guaranteed to reach a pane standing
+    alone in its column (F5's WORLDS list).
+  - **↑↓ move a row, and spill** into a pane stacked directly under (or over) this
+    one in the same column, landing on the row nearest the boundary crossed. Only
+    F5 stacks anything, so on every other screen ↑↓ are unchanged — including
+    their refusal to wrap. On F5 it makes the detail column one continuous run:
+    TLS → certificates → the characters → their buttons → the trigger sets.
+  - **Inside an open field none of this applies.** `HandleEdit` is checked first,
+    so ←→ stay caret movement and ↑↓ stay the dropdown's candidates; the screens'
+    one modal state is the one bit that decides which meaning the arrows have.
+    `ScreenPaneNavigationTests` pins both halves, and that the arrows reach every
+    pane of all eight screens.
+  - **The hints moved with it**: `ListHints` is now
+    `↑↓ select · ←→ ⇥ pane · Space toggle` and `SingleListHints` still names
+    neither ⇥ nor ←→. `ScreenHintTests` pins the *iff* against each screen's real
+    `PaneCount` — the honesty rule the ⏎/Del hints already live under, applied to
+    the movement keys, which had failed it in the other direction: ←→ now change
+    pane on five screens, and before this nothing said so anywhere.
+
+  Four tests' ⇥ counts moved with the order (`ScreenDeleteKeyTests`
+  ×3, `SettingsSessionEditTests` ×2, `TriggerSetManagementTests`). None of them
+  asserted the order — each asserted "after N ⇥ I am in pane X" as scaffolding for
+  something else, and every one of those `Focus().Pane` assertions still stands at
+  its new N. The order itself is now asserted outright, forwards and backwards, in
+  `ScreenPaneNavigationTests.Tab_WalksF5sPanesInTheOrderTheyAreDrawn`, so it is a
+  pinned fact rather than an implication of six scattered loops.
+- **A row you have just made opens its own name.** `SettingsSession.Activate`
+  follows an `Add`-kind button by opening the new row's first field, on all five
+  list screens. The cursor already landed there; the next key was never in doubt,
+  because what was just made is called `New Trigger`. A `Remove` deliberately
+  opens nothing — the row under the cursor afterwards is a survivor.
+  <br>
+  It matters most on F5, and is half the answer to the discoverability bug below:
+  `[+ add character]` now *puts* you in the CHARACTER form, which is the one route
+  on that screen nothing else pointed at. Two pinned assertions inverted for it,
+  both `IsEditing` false → **true** immediately after the add
+  (`ScreenButtonTests.Enter_OnAButtonRowRunsItAndLeavesTheCursorOnTheNewRow`,
+  `ScreenListButtonTests.Enter_OnAddLeavesTheCursorOnTheNewRowReadyToNameIt`), plus
+  the same reading inside `TriggerSetManagementTests
+  .Enter_OnAddSetLeavesTheCursorOnTheNewSetReadyToNameIt`. Each kept its old
+  assertion — the cursor lands on the *new row*, which on the flattened screens is
+  the hard part — and gained the buffer's contents and field ordinal beside it, so
+  all three assert strictly more than they did.
+- **Reachable is not findable — F5's character fields.** Every one of them was
+  editable all along (⇥ to the CHARACTERS pane, ⏎ opens the name, ⇥ steps
+  on-connect → log → log folder) and a maintainer who uses the screen daily still
+  had to hunt for the way in. The cause is a **displaced affordance**: the four
+  wells are drawn in the CHARACTER form at the foot of the screen, and the cursor
+  stop that opens them is the character's row in the CHARACTERS list — a column and
+  a band away, and drawn as a *bare selector with no well*, which by this project's
+  own rule reads as "nothing to type into here". So the wells said "editable" and
+  said nothing about being editable *from somewhere else*, and pressing ⏎ put the
+  caret forty rows from the cursor bar. The header's `⏎ edit` named the key and
+  never the destination.
+  <br>
+  The fix is a **derived door**, `WorldsScreenRenderer.FormDoor`, on the blank row
+  under the CHARACTER heading (its own row, so a long character name cannot push it
+  out of the form's 48-cell column): `⏎ on the character in the list above` while
+  the cursor is elsewhere, `⏎ opens these` **in the accent** the moment the cursor
+  is on that character's own row — which also lights the link between the two
+  regions — and **nothing at all** mid-edit, where the header hints have already
+  swapped to `⏎ commit · Esc revert`. On a `[+ add character]` button row it says
+  the closed form, because ⏎ adds there rather than opening. `--view logging` is
+  the frame of the lit state; `ScreenReachabilityTests` pins all four.
 
 ### Managing trigger sets
 

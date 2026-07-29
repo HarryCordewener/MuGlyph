@@ -406,7 +406,12 @@ public class ScreenListButtonTests
 
     /// <summary>
     /// End to end through the keyboard, which is the whole reason a new row is worth adding: ⏎ on the
-    /// add button runs it and leaves the cursor on the new row, where the next ⏎ opens that row's name.
+    /// add button runs it, leaves the cursor on the new row, and opens that row's name on it.
+    /// <para>
+    /// "Ready to name it" used to mean one more ⏎ away; it now means the buffer is up. Where the cursor
+    /// lands — the pane row the new rule took inside its own set, which is the difficult part on a
+    /// flattened screen — is asserted exactly as before, and the open buffer is asserted beside it.
+    /// </para>
     /// </summary>
     [Test]
     public async Task Enter_OnAddLeavesTheCursorOnTheNewRowReadyToNameIt()
@@ -425,13 +430,12 @@ public class ScreenListButtonTests
         await Assert.That(session.Handle(Key(ConsoleKey.Enter))).IsEqualTo(ScreenAction.Redraw);
         await Assert.That(sets[1].Triggers.Select(t => t.Name)).IsEquivalentTo(new[] { "Offer", "New Trigger" });
 
-        // The cursor is on the row the new rule took up, not on the button it was added from.
+        // The cursor is on the row the new rule took up, not on the button it was added from — with
+        // that row's name already open on it.
         await Assert.That(session.Focus().Index).IsEqualTo(3);
-        await Assert.That(session.IsEditing).IsFalse();
-
-        session.Handle(Key(ConsoleKey.Enter));
         await Assert.That(session.IsEditing).IsTrue();
         await Assert.That(session.Focus().Edit!.Value.Text).IsEqualTo("New Trigger");
+        await Assert.That(session.Focus().Edit!.Value.Field).IsEqualTo(TriggersScreenRenderer.NameField);
 
         session.Handle(Key(ConsoleKey.Escape));
         await Assert.That(session.Handle(Key(ConsoleKey.Escape))).IsEqualTo(ScreenAction.Cancel);
