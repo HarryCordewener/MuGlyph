@@ -1,3 +1,4 @@
+using System.Globalization;
 using SharpConsoleUI;
 using SharpConsoleUI.Builders;
 using SharpConsoleUI.Controls;
@@ -108,10 +109,18 @@ internal static class ScreenChrome
         focused ? $"[on {ScreenPalette.CursorBg}]{MarkupText.PadVisible(row, width)}[/]" : row;
 
     /// <summary>
-    /// Draws a row's editable value: its committed text when nothing is being typed, or — when
-    /// <paramref name="edit"/> is the open edit for that field — the buffer, a block caret sitting
-    /// inside it, and the reason the last commit was refused. Every screen draws fields, so the
-    /// affordance lives here rather than being re-invented (and drifting) per renderer.
+    /// Draws a row's editable value: its committed text in a field well when nothing is being typed,
+    /// or — when <paramref name="edit"/> is the open edit for that field — the buffer in that same
+    /// well, a block caret sitting inside it, and the reason the last commit was refused. Every screen
+    /// draws fields, so the affordance lives here rather than being re-invented (and drifting) per
+    /// renderer.
+    /// <para>
+    /// The resting well is the whole point of <see cref="ReadOnly"/>'s existence: until it was drawn,
+    /// <c>host  aetherfall.mux</c> and <c>security  TLS on · certs strict</c> were the same row to look
+    /// at, and the only way to find out which one the keyboard could change was to walk the cursor into
+    /// it. A screen may not advertise a key its model doesn't offer; a row may not advertise an editor
+    /// it hasn't got, which is the same rule one level down.
+    /// </para>
     /// <para>
     /// <paramref name="display"/> is already markup, because a screen decides for itself how a
     /// committed value reads (a null log directory shows as <c>(default)</c>); the buffer is escaped
@@ -122,7 +131,7 @@ internal static class ScreenChrome
     {
         if (edit is not { } open)
         {
-            return display;
+            return Well(display);
         }
 
         var caret = Math.Clamp(open.Caret, 0, open.Text.Length);
@@ -137,6 +146,51 @@ internal static class ScreenChrome
         return open.Error is { } error
             ? $"{buffer}  [{ScreenPalette.Warn}]▲ {MarkupText.Escape(error)}[/]"
             : buffer;
+    }
+
+    /// <summary>
+    /// The resting field well: a value's own markup on the recessed input background, with a trailing
+    /// cell so the well is a visible box rather than a tint hugging the glyphs. The trailing cell is
+    /// where the caret goes the moment ⏎ opens the field, so the well doesn't jump sideways under it.
+    /// </summary>
+    private static string Well(string display) => $"[on {ScreenPalette.FieldBg}]{display} [/]";
+
+    /// <summary>
+    /// Draws a value the keyboard cannot change where it is drawn — a world's TLS/certificate line, a
+    /// character's password or session state, a numpad cell mirroring a binding elsewhere. It gets the
+    /// muted ink and, decisively, *no* field well, which is what tells it apart from an editable value
+    /// at rest and without focus. The pair of them is one rule with one implementation: a well means
+    /// "you can change this here", its absence means "you cannot".
+    /// <para>
+    /// The rule is scoped to rows that read <c>label   value</c>, which is where the ambiguity lives. A
+    /// checkbox and a radio group already carry an affordance of their own and are left alone.
+    /// </para>
+    /// </summary>
+    internal static string ReadOnly(string text) => $"[{ScreenPalette.Muted}]{MarkupText.Escape(text)}[/]";
+
+    /// <summary>
+    /// Where the cursor is within one of a screen's lists — <c>trigger 1/4</c>, <c>world 2/2</c>. Every
+    /// footer's context line opens with one of these, so the eight screens answer the same question in
+    /// the same words instead of each reporting whatever its author found interesting (F9 used to count
+    /// its own section headers).
+    /// </summary>
+    internal static string Position(string noun, int index, int count) =>
+        $"{noun} {(index + 1).ToString(CultureInfo.InvariantCulture)}"
+        + $"/{count.ToString(CultureInfo.InvariantCulture)}";
+
+    /// <summary>
+    /// A footer's context line: a <see cref="Position"/>, then whatever identifies the thing it points
+    /// at (the set a trigger belongs to, the section an option sits under, the name a binding carries).
+    /// Null and empty parts are dropped, so a screen with nothing selected renders an empty context
+    /// rather than a stranded separator.
+    /// </summary>
+    internal static string Context(params string?[] parts)
+    {
+        ArgumentNullException.ThrowIfNull(parts);
+
+        var present = parts.Where(p => !string.IsNullOrEmpty(p));
+        var joined = string.Join("  ·  ", present);
+        return joined.Length == 0 ? string.Empty : $"[{ScreenPalette.Label}]{joined}[/]";
     }
 
     /// <summary>A full-width one-row band — the header or the footer.</summary>

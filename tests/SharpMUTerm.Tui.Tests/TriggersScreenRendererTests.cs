@@ -107,12 +107,22 @@ public class TriggersScreenRendererTests
         await Assert.That(notGagged.Any(l => l.Contains("[dim][[ ]] gag line[/]"))).IsTrue();
     }
 
+    /// <summary>
+    /// The swatches show the colours, and the section heading above them says what they add up to. That
+    /// summary used to be drawn as <c>[[x]] highlight line</c> — a checkbox the cursor cannot reach and
+    /// Space does nothing to, sitting *below* the two rows it was derived from. The assertion is kept
+    /// pointed the other way so it cannot come back as a checkbox.
+    /// </summary>
     [Test]
-    public async Task Render_HighlightToggleAndSwatchAppearWhenColourSet()
+    public async Task Render_HighlightCaptionAndSwatchAppearWhenColourSet()
     {
         var lines = TriggersScreenRenderer.Render(Scene(), selectedTrigger: 0, spawnTargets: Array.Empty<string>());
 
-        await Assert.That(lines.Any(l => l.Contains("highlight line") && l.Contains("[[x]]"))).IsTrue();
+        var heading = lines.Single(l => l.Contains("highlight") && !l.Contains("fg") && !l.Contains("bg"));
+        await Assert.That(heading).Contains("recoloured");
+        await Assert.That(heading).DoesNotContain("[[x]]");
+        await Assert.That(heading).DoesNotContain("[[ ]]");
+
         await Assert.That(lines.Any(l => l.Contains("████") && l.Contains("fg"))).IsTrue();
         await Assert.That(lines.Any(l => l.Contains("#ffd700"))).IsTrue();
     }

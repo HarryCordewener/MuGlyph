@@ -1,4 +1,3 @@
-using System.Globalization;
 using SharpMUTerm.Core.Automation;
 using SharpMUTerm.Core.Configuration;
 using static SharpMUTerm.Tui.MarkupText;
@@ -103,9 +102,9 @@ internal static class AliasesScreenRenderer
         var context = string.Empty;
         if (entries.Count > 0 && selected >= 0 && selected < entries.Count)
         {
-            var count = entries.Count.ToString(CultureInfo.InvariantCulture);
-            context = $"[{Label}]alias {(selected + 1).ToString(CultureInfo.InvariantCulture)}/{count}[/]"
-                + $"[{Label}]  ·  set {Escape(entries[selected].SetName)}[/]";
+            context = ScreenChrome.Context(
+                ScreenChrome.Position("alias", selected, entries.Count),
+                "set " + Escape(entries[selected].SetName));
         }
 
         var actions = ScreenChrome.Actions(focus: focus);
@@ -197,10 +196,11 @@ internal static class AliasesScreenRenderer
         }
         else
         {
-            foreach (var line in alias.Substitution.Split('\n'))
-            {
-                lines.Add($"  {Escape(line)}");
-            }
+            // Listed, the expansion is still one editable value, so it still gets one field well —
+            // every row padded to the longest, or the well would be ragged and read as several.
+            var commands = alias.Substitution.Split('\n').Select(Escape).ToList();
+            var width = commands.Count == 0 ? 0 : commands.Max(c => VisibleLength(c));
+            lines.AddRange(commands.Select(c => "  " + ScreenChrome.Field(PadVisible(c, width), null)));
         }
 
         lines.Add(string.Empty);

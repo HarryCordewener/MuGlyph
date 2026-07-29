@@ -240,13 +240,18 @@ public class ScreenModelTests
         await Assert.That(input.CheckSpelling).IsFalse();
     }
 
+    /// <summary>
+    /// F9's auto-start checkbox lives on the <c>format</c> row itself (row 0) rather than on a third
+    /// row of its own: it and the format are one stored value, so Space and ⏎ act on one row. Its
+    /// snapshot still restores the format, not the boolean.
+    /// </summary>
     [Test]
     public async Task Options_LoggingAutoStartTogglesTheFormat_AndUndoRestoresTheOriginalOne()
     {
         var logging = new LoggingSettings { Format = LogFormat.Html };
         var edits = new ScreenEdits();
 
-        edits.Apply(OptionsScreenRenderer.Model(OptionsScreenRenderer.LoggingScreen(logging)).ToggleAt(0, 2)!.Value);
+        edits.Apply(OptionsScreenRenderer.Model(OptionsScreenRenderer.LoggingScreen(logging)).ToggleAt(0, 0)!.Value);
         await Assert.That(logging.Format).IsEqualTo(LogFormat.None);
 
         edits.Revert();
@@ -259,8 +264,24 @@ public class ScreenModelTests
     {
         var logging = new LoggingSettings { Format = LogFormat.None };
 
-        OptionsScreenRenderer.Model(OptionsScreenRenderer.LoggingScreen(logging)).ToggleAt(0, 2)!.Value.Flip();
+        OptionsScreenRenderer.Model(OptionsScreenRenderer.LoggingScreen(logging)).ToggleAt(0, 0)!.Value.Flip();
 
         await Assert.That(logging.Format).IsEqualTo(LogFormat.Plain);
+    }
+
+    /// <summary>
+    /// The same row carries both, which is what makes it one setting rather than two: ⏎ opens the
+    /// format on the row Space starts and stops logging from.
+    /// </summary>
+    [Test]
+    public async Task Options_LoggingFormatAndAutoStartAreOneRow()
+    {
+        var model = OptionsScreenRenderer.Model(
+            OptionsScreenRenderer.LoggingScreen(new LoggingSettings { Format = LogFormat.Html }));
+
+        await Assert.That(model.Sizes[0]).IsEqualTo(2);
+        await Assert.That(model.RowAt(0, 0).Toggle).IsNotNull();
+        await Assert.That(model.RowAt(0, 0).FieldCount).IsEqualTo(1);
+        await Assert.That(model.FieldAt(0, 0, 0)!.Value.Get()).IsEqualTo("Html");
     }
 }

@@ -244,10 +244,12 @@ public class TriggersScreenEditingTests
         var editor = TriggersScreenRenderer.EditorColumn(sets, 1, Targets);
 
         // Trigger 1 has no highlight at all — the rows are still there, because they are now where a
-        // colour is turned on rather than a report that one already is.
+        // colour is turned on rather than a report that one already is, and the section heading says
+        // as much in words rather than in a checkbox nothing can press.
         await Assert.That(editor.Any(l => l.Contains("fg") && l.Contains("none"))).IsTrue();
         await Assert.That(editor.Any(l => l.Contains("bg") && l.Contains("none"))).IsTrue();
-        await Assert.That(editor.Any(l => l.Contains("[dim][[ ]] highlight line[/]"))).IsTrue();
+        await Assert.That(editor.Any(l => l.Contains("highlight") && l.Contains("left alone"))).IsTrue();
+        await Assert.That(editor.Any(l => l.Contains("highlight") && l.Contains("[[ ]]"))).IsFalse();
     }
 
     [Test]

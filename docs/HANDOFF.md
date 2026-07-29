@@ -4,9 +4,8 @@ Context for whoever (human or agent) picks up this work next.
 
 - **Repository:** `SharpMUSH/SharpMUTerm`
 - **Start from:** a fresh branch off `main`
-- **Tests:** 844 across the solution (330 Core / 83 Graphics / 42 Scripting /
-  28 Web / 361 Tui). **Two fail on purpose** — see backlog item 1; they are the
-  pinned row counts the F5 button rows change, left for a human to renumber; `dotnet build SharpMUTerm.slnx` clean (0 warnings
+- **Tests:** 857 across the solution (330 Core / 83 Graphics / 42 Scripting /
+  28 Web / 374 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
   from this repo; building against a local SharpConsoleUI clone surfaces 2 upstream
   NuGet advisory warnings for AngleSharp, which are the framework's, not ours)
 
@@ -19,18 +18,15 @@ polish/feature backlog.
 
 ### 1. Field editing on the config screens
 
-**Done**, apart from one decision that needs a human — see *Settings screens*
-under Critical Gotchas for how the whole thing works.
+**Done** — see *Settings screens* under Critical Gotchas for how the whole thing
+works.
 
 - **Add/remove rows** are live. `[+ world]` / `[- del]` and `[+ add character]` /
   `[⧉ duplicate]` / `[- remove]` are `ScreenRow`s carrying a `ScreenButton`; ⏎
-  runs one. **BLOCKED ON A DECISION:** giving the two F5 list panes button rows
-  necessarily changes two pinned row-count assertions in `ScreenModelTests` —
-  `Worlds_HasWorldsThenCharactersThenTriggerSets` (`{2,2,1}` → `{4,5,1}`) and
-  `Worlds_CharacterAndTriggerSetPanesAreEmptyForAWorldWithNoCharacters`
-  (`{2,0,0}` → `{4,1,0}`). Those two assertions are **deliberately left failing**
-  rather than quietly renumbered; update them (or reject the shape) and the item
-  closes.
+  runs one. The button rows changed two pinned row-count assertions in
+  `ScreenModelTests` (`Worlds_HasWorldsThenCharactersThenTriggerSets` `{2,2,1}` →
+  `{4,5,1}`, `Worlds_CharacterAndTriggerSetPanesAreEmptyForAWorldWithNoCharacters`
+  `{2,0,0}` → `{4,1,0}`); the shape was accepted and the counts renumbered.
 - **F2's route-to radios and highlight-colour picker** are live, as `Choice` and
   `Colour` fields on the *rule's own list row* (ordinals: pattern, route,
   highlight fg, highlight bg). ↑↓ cycle them, which is exactly radio and palette
@@ -39,7 +35,8 @@ under Critical Gotchas for how the whole thing works.
   key-capture mode, not a text buffer), a character's password (it is
   `[JsonIgnore]` and belongs in a credential store), a world's TLS/certificate
   "security" line (two booleans, so checkboxes, not a field), and everything
-  derived (the numpad grid, the session/state readouts).
+  derived (the numpad grid, the session/state readouts). **All of them now say
+  so on screen** — see *Editable vs read-only rows* under Critical Gotchas.
 
 ### 2. Real-terminal verification still owed
 
@@ -314,6 +311,29 @@ What the framework actually provides (read at v2.5.14, not assumed):
   ⏎/⇥/⌃S validate. A rejected value keeps the edit open, marks the field with the
   reason, and writes nothing — `ScreenEdits.Apply(field, value)` is the only path
   from a buffer into config, which is what keeps an invalid one out.
+- **Editable vs read-only rows: the well is the rule.** An editable value is drawn
+  in a **field well** (`ScreenPalette.FieldBg`, applied by `ScreenChrome.Field` —
+  at rest, not only mid-edit); a value the keyboard cannot change *there* is drawn
+  by `ScreenChrome.ReadOnly` in the muted ink with **no** well. Opening a field
+  keeps the same well and adds the accent block caret, so ⏎ deepens the affordance
+  already on screen instead of conjuring one. The rule is scoped to rows that read
+  `label   value` — a checkbox and a radio group already carry an affordance of
+  their own, so F2's route radios and F5's list rows are left alone.
+  `ScreenReadOnlyTests` pins both halves; add a read-only row and it must go
+  through `ReadOnly`, or the well/no-well counts stop matching.
+- **A derived indicator is never a checkbox.** A checkbox promises Space does
+  something. F2's highlight summary is a **caption on the `highlight` section**
+  (above the two swatch rows it derives from, not below them); F9's auto-start is
+  now the `format` row's *own* toggle — one row, one stored value, Space for
+  on/off and ⏎ for which format — rather than a second row mirroring the first.
+  `OptionRow` carrying both a `Bind` and an `Edit` is what makes that one row.
+- **Footer context lines all answer "where is the cursor".**
+  `ScreenChrome.Position`/`Context` build them: `<noun> i/n`, then whatever
+  identifies the selection (`set Comms`, `character 1/2`, the option's section,
+  the binding's name). F4 and F7–F9 used to report an inventory instead
+  (`9 bindings · 8 of 9 numpad keys bound`, `3 options · 1 section`).
+- **There is no `‹ back`.** F7/F8/F9 drew one; nothing else did, and there is no
+  navigation stack behind a settings screen — Esc closes it.
 - **Header hints are derived, not written.** `HeaderLine(width, model, focus)`
   reads `model.HasEditableRow`, so a screen physically cannot advertise `⏎ edit`
   without offering one; `ScreenCursorTests` asserts the *if and only if* both ways.

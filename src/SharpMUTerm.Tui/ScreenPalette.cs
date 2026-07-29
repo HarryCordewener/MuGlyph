@@ -33,6 +33,14 @@ internal static class ScreenPalette
     /// <summary>Primary text: titles and field values.</summary>
     internal const string Value = "#d7deec";
 
+    /// <summary>
+    /// A value that is reported rather than offered — a world's TLS line, a character's password, a
+    /// session's state. Deliberately between <see cref="Label"/> and <see cref="Value"/>: a readout is
+    /// not its own label, but it must not sit at the same weight as something the keyboard can change.
+    /// See <see cref="ScreenChrome.ReadOnly"/>, which is the only place it is applied.
+    /// </summary>
+    internal const string Muted = "#9aa4b8";
+
     /// <summary>Hairlines — column rules and separators.</summary>
     internal const string Rule = "#3a4257";
 
@@ -47,10 +55,14 @@ internal static class ScreenPalette
     internal const string Ink = "#0f1620";
 
     /// <summary>
-    /// The well behind a field being typed into. Darker than every panel it can appear on, so an open
-    /// edit reads as a recessed input whichever screen it lands on rather than as another cursor bar.
+    /// The well behind an editable value — whether or not it is being typed into. Clearly darker than
+    /// every panel it can appear on (and than <see cref="CursorBg"/>), so a field reads as a recessed
+    /// input on any of them, at rest and without focus. The well *is* the affordance: a value drawn in
+    /// one can be changed, a value drawn without one cannot. An open edit is the same well plus the
+    /// accent block caret, so pressing ⏎ deepens the affordance already there instead of conjuring a
+    /// new one.
     /// </summary>
-    internal const string FieldBg = "#0f1420";
+    internal const string FieldBg = "#0a0e18";
 
     /// <summary>A refused value's marker — the one place these screens raise their voice.</summary>
     internal const string Warn = "#ff6b6b";

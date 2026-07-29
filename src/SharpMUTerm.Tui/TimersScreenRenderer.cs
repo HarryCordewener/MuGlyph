@@ -119,9 +119,9 @@ internal static class TimersScreenRenderer
         var context = string.Empty;
         if (entries.Count > 0 && selected >= 0 && selected < entries.Count)
         {
-            var count = entries.Count.ToString(CultureInfo.InvariantCulture);
-            context = $"[{Label}]timer {(selected + 1).ToString(CultureInfo.InvariantCulture)}/{count}[/]"
-                + $"[{Label}]  ·  set {Escape(entries[selected].SetName)}[/]";
+            context = ScreenChrome.Context(
+                ScreenChrome.Position("timer", selected, entries.Count),
+                "set " + Escape(entries[selected].SetName));
         }
 
         var actions = ScreenChrome.Actions(focus: focus);

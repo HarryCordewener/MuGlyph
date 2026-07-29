@@ -1,4 +1,3 @@
-using System.Globalization;
 using SharpMUTerm.Core.Automation;
 using SharpMUTerm.Core.Configuration;
 using SharpMUTerm.Core.Text;
@@ -178,9 +177,9 @@ internal static class TriggersScreenRenderer
         var context = string.Empty;
         if (flattened.Count > 0 && selectedTrigger >= 0 && selectedTrigger < flattened.Count)
         {
-            var count = flattened.Count.ToString(CultureInfo.InvariantCulture);
-            context = $"[{Label}]trigger {(selectedTrigger + 1).ToString(CultureInfo.InvariantCulture)}/{count}[/]"
-                + $"[{Label}]  ·  set {Escape(flattened[selectedTrigger].SetName)}[/]";
+            context = ScreenChrome.Context(
+                ScreenChrome.Position("trigger", selectedTrigger, flattened.Count),
+                "set " + Escape(flattened[selectedTrigger].SetName));
         }
 
         var actions = ScreenChrome.Actions(focus: focus);
@@ -329,17 +328,19 @@ internal static class TriggersScreenRenderer
         var fg = trigger.Actions.HighlightForeground;
         var bg = trigger.Actions.HighlightBackground;
 
+        // What the two swatch rows add up to is a caption on the section that owns them, not a fourth
+        // checkbox under it. It was drawn as one, which made it look like a fourth thing to press: the
+        // cursor cannot land on it, Space does nothing to it, and it sat *below* the two rows it is
+        // derived from, so it read as a cause rather than the effect it is. The caption says the same
+        // thing, above the rows that decide it, in a shape nothing offers to press.
         lines.Add(string.Empty);
-        lines.Add(Heading("highlight", foreground ?? background));
+        lines.Add(Heading("highlight", foreground ?? background, HighlightCaption(fg, bg)));
         lines.Add(HighlightRow("fg", fg, foreground));
         lines.Add(HighlightRow("bg", bg, background));
         lines.Add(string.Empty);
 
-        // The highlight checkbox stays a derived indicator — it reports whether either colour is set,
-        // which the two swatch rows above it are now what changes. The two rows below it are real
-        // booleans on the trigger, and are the editor pane's navigable rows in this order.
-        var hasHighlight = fg is not null || bg is not null;
-        lines.Add(hasHighlight ? $"[{Accent}][[x]][/] highlight line" : "[dim][[ ]] highlight line[/]");
+        // The two rows below are real booleans on the trigger, and are the editor pane's navigable rows
+        // in this order.
         lines.Add(ScreenChrome.Cursor(Checkbox("gag line", trigger.Actions.Gag), cursor.IsOn(1, 0), ColumnWidth));
         lines.Add(ScreenChrome.Cursor(
             Checkbox("stop processing", trigger.StopProcessing), cursor.IsOn(1, 1), ColumnWidth));
@@ -352,14 +353,32 @@ internal static class TriggersScreenRenderer
         value ? $"[{Accent}][[x]][/] {Escape(label)}" : $"[dim][[ ]] {Escape(label)}[/]";
 
     /// <summary>
-    /// A section label, carrying the open field's rejection message when there is one. A radio group
-    /// and a pair of swatches have nowhere sensible to put an error inline, so it hangs off the
-    /// heading the group belongs to.
+    /// A section label, carrying the open field's rejection message when there is one — and otherwise
+    /// an optional caption summarising what the rows beneath it come to. A radio group and a pair of
+    /// swatches have nowhere sensible to put an error inline, so it hangs off the heading the group
+    /// belongs to; an error displaces the caption, because a refused value is the more urgent of the
+    /// two and they occupy the same cells.
     /// </summary>
-    private static string Heading(string label, ScreenFieldEdit? edit) =>
-        edit?.Error is { } error
-            ? $"[dim]{label}[/]  [{Warn}]▲ {Escape(error)}[/]"
-            : $"[dim]{label}[/]";
+    private static string Heading(string label, ScreenFieldEdit? edit, string? caption = null)
+    {
+        if (edit?.Error is { } error)
+        {
+            return $"[dim]{label}[/]  [{Warn}]▲ {Escape(error)}[/]";
+        }
+
+        return caption is null ? $"[dim]{label}[/]" : $"[dim]{label}[/]  {caption}";
+    }
+
+    /// <summary>
+    /// What the two swatch rows amount to, read out beside the section heading: whether a matching line
+    /// gets recoloured at all. Muted rather than accented, because it reports the state of the two rows
+    /// below it and cannot itself be changed — the same treatment every other readout on these screens
+    /// gets (see <see cref="ScreenChrome.ReadOnly"/>).
+    /// </summary>
+    private static string HighlightCaption(TerminalColor? foreground, TerminalColor? background) =>
+        foreground is not null || background is not null
+            ? ScreenChrome.ReadOnly("· matching lines are recoloured")
+            : "[dim]· matching lines are left alone[/]";
 
     /// <summary>
     /// One radio of the route group. <paramref name="editing"/> wells the whole group so it reads as

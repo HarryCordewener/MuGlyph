@@ -1,4 +1,3 @@
-using System.Globalization;
 using SharpMUTerm.Core.Automation;
 using static SharpMUTerm.Tui.MarkupText;
 using static SharpMUTerm.Tui.ScreenPalette;
@@ -88,26 +87,31 @@ internal static class KeypadScreenRenderer
             ScreenField.Text("command", () => macro.Command, v => macro.Command = v))));
     }
 
-    /// <summary>The action bar: how much of the keypad is bound on the left, cancel/save on the right.</summary>
+    /// <summary>
+    /// The action bar: where the cursor is in the binding list on the left, cancel/save on the right.
+    /// It used to report the screen's inventory instead (<c>9 bindings · 8 of 9 numpad keys bound</c>),
+    /// which the numpad grid two columns over already shows cell by cell; every other screen answers
+    /// "where am I", so this one does too. The selected binding comes from <paramref name="focus"/>
+    /// rather than a parameter of its own, because the cursor is the only thing that decides it.
+    /// <para>
+    /// The qualifier is the macro's <em>name</em>, which is the one thing about a binding this screen
+    /// doesn't otherwise show — its rows are key → command. A macro that has never been named falls
+    /// back to its key, because an empty qualifier would leave the footer saying less than it could.
+    /// </para>
+    /// </summary>
     internal static string FooterLine(IReadOnlyList<Macro> macros, int width, ScreenFocus? focus = null)
     {
         ArgumentNullException.ThrowIfNull(macros);
 
-        var bound = 0;
-        foreach (var row in NumpadRows)
+        var context = string.Empty;
+        if (macros.Count > 0)
         {
-            foreach (var digit in row)
-            {
-                if (FindByKey(macros, $"Num{digit}") is not null)
-                {
-                    bound++;
-                }
-            }
+            var selected = Math.Clamp(focus?.Pane == 0 ? focus.Value.Index : 0, 0, macros.Count - 1);
+            var macro = macros[selected];
+            var names = string.IsNullOrWhiteSpace(macro.Name) ? macro.Key : macro.Name;
+            context = ScreenChrome.Context(
+                ScreenChrome.Position("binding", selected, macros.Count), Escape(names));
         }
-
-        var total = macros.Count.ToString(CultureInfo.InvariantCulture);
-        var context = $"[{Label}]{total} bindings[/]"
-            + $"[{Label}]  ·  {bound.ToString(CultureInfo.InvariantCulture)} of 9 numpad keys bound[/]";
 
         var actions = ScreenChrome.Actions(focus: focus);
         return SpreadLR(" " + context, actions, width);
@@ -165,10 +169,17 @@ internal static class KeypadScreenRenderer
         return string.Join(NumpadCellGap, cells);
     }
 
+    /// <summary>
+    /// One cell of the numpad diagram. The command is drawn as a readout, not a field: the grid mirrors
+    /// the binding list beside it and has no cursor of its own, so a cell is somewhere a command is
+    /// *shown*, never somewhere one is typed. See <see cref="ScreenChrome.ReadOnly"/>.
+    /// </summary>
     private static string NumpadCell(int digit, IReadOnlyList<Macro> macros)
     {
         var macro = FindByKey(macros, $"Num{digit}");
-        var command = macro is null ? "[dim]—[/]" : Escape(Truncate(macro.Command, NumpadCommandWidth));
+        var command = macro is null
+            ? "[dim]—[/]"
+            : ScreenChrome.ReadOnly(Truncate(macro.Command, NumpadCommandWidth));
         return $"[bold {Accent}][[{digit}]][/] {command}";
     }
 

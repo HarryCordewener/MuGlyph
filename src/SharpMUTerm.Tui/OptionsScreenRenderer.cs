@@ -1,4 +1,3 @@
-using System.Globalization;
 using SharpMUTerm.Core.Configuration;
 using static SharpMUTerm.Tui.MarkupText;
 using static SharpMUTerm.Tui.ScreenPalette;
@@ -16,13 +15,28 @@ namespace SharpMUTerm.Tui;
 /// </summary>
 internal static class OptionsScreenRenderer
 {
+    /// <summary>Where a row's value starts, measured from the left edge of the list.</summary>
     private const int LabelWidth = 28;
 
     /// <summary>
-    /// A single options-list row: a toggle, a value row, a section header, or a spacer.
+    /// The checkbox column every row reserves, whether or not it has one: <c>"[[x]] "</c>. A value row
+    /// indents past it rather than starting at the margin, so the labels of the two kinds of row line
+    /// up in one column and the checkboxes read as a column of their own instead of as a ragged edge.
+    /// </summary>
+    private const int AffordanceWidth = 4;
+
+    /// <summary>
+    /// A single options-list row: a toggle, a value row, both at once, a section header, or a spacer.
     /// <paramref name="Bind"/> is the config the checkbox writes to; <paramref name="Edit"/> is the
     /// config the value writes to, which is what makes a value row activatable with ⏎. A row with
     /// neither still takes the cursor but nothing happens there.
+    /// <para>
+    /// A row carrying both is F9's log format: Space starts and stops logging, ⏎ picks the format it
+    /// writes. They were two rows — a <c>format</c> value and an <c>auto-start on connect</c> checkbox
+    /// whose state was simply <c>format != None</c> — which is two controls over one stored value, and
+    /// nothing on screen said they were the same setting. The keypad's bindings are the same shape
+    /// (Space enables the macro, ⏎ edits its command), so <see cref="ScreenRow"/> already supports it.
+    /// </para>
     /// </summary>
     public readonly record struct OptionRow(
         string Label,
@@ -55,15 +69,20 @@ internal static class OptionsScreenRenderer
     internal static List<string> Render(OptionsScreen screen) => Render(screen.Title, screen.FKey, screen.Rows);
 
     /// <summary>
-    /// The back affordance and screen title on the left, the keyboard hints right-aligned to
-    /// <paramref name="width"/>. The hints are derived from <paramref name="model"/> and
-    /// <paramref name="focus"/> rather than written here, so the header cannot advertise an edit the
-    /// screen doesn't offer; called without them it describes a screen that only navigates.
+    /// The screen title on the left, the keyboard hints right-aligned to <paramref name="width"/>. The
+    /// hints are derived from <paramref name="model"/> and <paramref name="focus"/> rather than written
+    /// here, so the header cannot advertise an edit the screen doesn't offer; called without them it
+    /// describes a screen that only navigates.
+    /// <para>
+    /// There is deliberately no <c>‹ back</c> affordance. These three screens were the only ones that
+    /// drew one, and it pointed nowhere: there is no navigation stack behind a settings screen, Esc
+    /// closes it, and the header already says so two columns to the right.
+    /// </para>
     /// </summary>
     internal static string HeaderLine(
         string title, string fkey, int width, ScreenModel? model = null, ScreenFocus? focus = null)
     {
-        var heading = $"[{Label}]‹ back[/]   [bold {Value}]{Escape(title)}[/]";
+        var heading = $"[bold {Value}]{Escape(title)}[/]";
         var hints = ScreenChrome.Hints(
             ScreenChrome.SingleListHints,
             Escape(fkey),
@@ -72,20 +91,58 @@ internal static class OptionsScreenRenderer
         return SpreadLR(" " + heading, hints, width);
     }
 
-    /// <summary>The action bar: how much the screen holds on the left, cancel/save on the right.</summary>
+    /// <summary>
+    /// The action bar: where the cursor is in the options list on the left, cancel/save on the right.
+    /// It used to be an inventory (<c>5 options · 2 sections</c>); the section count was noise — the
+    /// headings are on screen and counting them tells nobody anything — and the option count answered a
+    /// different question from every other screen's footer. It now names the cursor's position and the
+    /// section it is standing in, which is F2's <c>trigger 1/4 · set Comms</c> in this screen's nouns.
+    /// The selected row comes from <paramref name="focus"/>, the only thing that knows it.
+    /// </summary>
     internal static string FooterLine(IReadOnlyList<OptionRow> rows, int width, ScreenFocus? focus = null)
     {
         ArgumentNullException.ThrowIfNull(rows);
 
         var options = rows.Count(r => !IsSpacer(r) && !IsSection(r));
-        var sections = rows.Count(IsSection);
-        var context = $"[{Label}]{Plural(options, "option")}[/]";
-        if (sections > 0)
+        var context = string.Empty;
+        if (options > 0)
         {
-            context += $"[{Label}]  ·  {Plural(sections, "section")}[/]";
+            var selected = Math.Clamp(focus?.Pane == 0 ? focus.Value.Index : 0, 0, options - 1);
+            context = ScreenChrome.Context(
+                ScreenChrome.Position("option", selected, options), SectionOf(rows, selected));
         }
 
         return SpreadLR(" " + context, ScreenChrome.Actions(focus: focus), width);
+    }
+
+    /// <summary>
+    /// The section heading the nth navigable row sits under, without the branch glyph that marks it as
+    /// one — or null on a screen whose rows aren't grouped.
+    /// </summary>
+    private static string? SectionOf(IReadOnlyList<OptionRow> rows, int selected)
+    {
+        string? section = null;
+        var navigable = 0;
+        foreach (var row in rows)
+        {
+            if (IsSection(row))
+            {
+                section = Escape(row.Label[2..]);
+                continue;
+            }
+
+            if (IsSpacer(row))
+            {
+                continue;
+            }
+
+            if (navigable++ == selected)
+            {
+                return section;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -131,6 +188,11 @@ internal static class OptionsScreenRenderer
         return new ScreenModel(rows);
     }
 
+    /// <summary>
+    /// One row: its checkbox column (a box, or the blank that keeps the labels in one column), its
+    /// label, the value it holds if it holds one, and its hint. A row can carry both a checkbox and a
+    /// value, which is how F9 draws one setting as one row.
+    /// </summary>
     private static string RenderRow(OptionRow row, ScreenFieldEdit? edit)
     {
         if (IsSpacer(row))
@@ -143,17 +205,25 @@ internal static class OptionsScreenRenderer
             return $"[dim]{Escape(row.Label)}[/]";
         }
 
-        var hint = row.Hint is null ? string.Empty : $"[dim] — {Escape(row.Hint)}[/]";
-
-        if (row.Toggle is { } toggle)
+        var box = row.Toggle switch
         {
-            var box = toggle ? $"[{Accent}][[x]][/]" : "[dim][[ ]][/]";
-            return $"{box} {Escape(row.Label)}{hint}";
+            true => $"[{Accent}][[x]][/] ",
+            false => "[dim][[ ]][/] ",
+            null => new string(' ', AffordanceWidth),
+        };
+
+        var hint = row.Hint is null ? string.Empty : $"[dim] — {Escape(row.Hint)}[/]";
+        var hasValue = row.Value is not null || edit is not null;
+        var label = Escape(row.Label);
+        // A checkbox row's label *is* its content, so it keeps the primary ink; a label/value row's
+        // label is the secondary half of a pair, so it dims and lets the value carry the weight.
+        if (!hasValue)
+        {
+            return $"{box}{label}{hint}";
         }
 
-        var label = Escape(row.Label).PadRight(LabelWidth);
         var value = ScreenChrome.Field(Escape(row.Value ?? string.Empty), edit);
-        return $"[dim]{label}[/] {value}{hint}";
+        return $"{box}[dim]{label.PadRight(LabelWidth - AffordanceWidth)}[/] {value}{hint}";
     }
 
     /// <summary>A blank separator carrying no label, value, or toggle.</summary>
@@ -226,14 +296,24 @@ internal static class OptionsScreenRenderer
         });
     }
 
-    /// <summary>The F9 "Logging" screen, reflecting a character's <see cref="LoggingSettings"/>.</summary>
+    /// <summary>
+    /// The F9 "Logging" screen, reflecting a character's <see cref="LoggingSettings"/>. Its two rows
+    /// are its two settings: the log format — whose checkbox starts and stops logging, because
+    /// <see cref="LogFormat.None"/> *is* "off" — and where the file goes.
+    /// <para>
+    /// The format and the auto-start checkbox used to be separate rows over the same stored value, and
+    /// nothing said so: setting the format to <c>None</c> silently unchecked a box three lines down.
+    /// One row, one value, two keys — Space for on/off, ⏎ for which format — leaves nothing derived to
+    /// keep in sync.
+    /// </para>
+    /// </summary>
     internal static OptionsScreen LoggingScreen(LoggingSettings logging)
     {
         ArgumentNullException.ThrowIfNull(logging);
 
-        // "Auto-start" is really the log format: off means None, on means whatever format was last
-        // chosen (Plain when there isn't one). The binding's snapshot restores the *format*, not the
-        // boolean, so cancelling a toggle-off puts Html back rather than downgrading it to Plain.
+        // Off means None, on means whatever format was last chosen (Plain when there isn't one). The
+        // binding's snapshot restores the *format*, not the boolean, so cancelling a toggle-off puts
+        // Html back rather than downgrading it to Plain.
         var chosen = logging.Format == LogFormat.None ? LogFormat.Plain : logging.Format;
         var autoStart = new ScreenToggle(
             () => logging.Format != LogFormat.None,
@@ -247,11 +327,12 @@ internal static class OptionsScreenRenderer
         return new OptionsScreen("Logging", "F9", new List<OptionRow>
         {
             new("├ SESSION LOG", null, null),
-            new("format", logging.Format.ToString(), null, null, null,
+            new("format", logging.Format.ToString(), logging.Format != LogFormat.None,
+                "auto-start on connect",
+                autoStart,
                 ScreenField.Enumeration("format", () => logging.Format, v => logging.Format = v)),
             new("directory", logging.Directory ?? "(default)", null, null, null,
                 ScreenField.Optional("directory", () => logging.Directory, v => logging.Directory = v)),
-            new("auto-start on connect", null, logging.Format != LogFormat.None, null, autoStart),
         });
     }
 
@@ -263,11 +344,4 @@ internal static class OptionsScreenRenderer
 
     /// <summary>The F9 "Logging" screen body, reflecting a character's <see cref="LoggingSettings"/>.</summary>
     public static List<string> Logging(LoggingSettings logging) => Render(LoggingScreen(logging));
-
-    /// <summary>Counts a noun for the footer: <c>1 option</c>, <c>3 options</c>.</summary>
-    private static string Plural(int count, string noun)
-    {
-        var n = count.ToString(CultureInfo.InvariantCulture);
-        return count == 1 ? $"{n} {noun}" : $"{n} {noun}s";
-    }
 }

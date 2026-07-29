@@ -32,8 +32,7 @@ fallbacks) for inline images/maps.
 ## Repository state
 
 **M1 delivered, plus substantial M2–M4 work.** `SharpMUTerm.slnx` builds all ten projects on
-`net10.0`; the solution has **844 tests** (842 passing — see `docs/HANDOFF.md`
-backlog item 1 for the two that are failing on purpose). In place:
+`net10.0`; the solution has **857 tests**, all passing. In place:
 
 - **Core** — `AnsiParser` (SGR 16/256/truecolor), styled-line + `ScrollbackBuffer` model,
   `TcpTransport` (TLS + IPv6), `TelnetSession` (wraps TelnetNegotiationCore **2.5.3**),

@@ -54,11 +54,17 @@ public class OptionsScreenRendererTests
         await Assert.That(lines[3]).IsEqualTo(string.Empty);
     }
 
+    /// <summary>
+    /// The header names the screen and how to leave it, and nothing else. It used to open with a
+    /// <c>‹ back</c> affordance — on these three screens only, pointing at a navigation stack that does
+    /// not exist. The assertion is kept pointed the other way rather than dropped, so it cannot come
+    /// back by accident.
+    /// </summary>
     [Test]
     public async Task Render_HeaderAndFooter_MatchPattern()
     {
         var lines = OptionsScreenRenderer.Render("Logging", "F9", Array.Empty<OptionsScreenRenderer.OptionRow>());
-        await Assert.That(lines[0]).Contains("‹ back");
+        await Assert.That(lines[0]).DoesNotContain("‹ back");
         await Assert.That(lines[0]).Contains("Logging");
         await Assert.That(lines[0]).Contains("F9");
         await Assert.That(lines[^1]).Contains("Cancel");

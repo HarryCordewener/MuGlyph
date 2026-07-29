@@ -326,12 +326,12 @@ internal static class WorldsScreenRenderer
         var context = string.Empty;
         if (worlds.Count > 0 && selectedWorld >= 0)
         {
-            context = $"[{Label}]world {selectedWorld + 1}/{worlds.Count}[/]";
             var chars = worlds[selectedWorld].Characters.Count;
-            if (chars > 0 && selectedCharacter >= 0)
-            {
-                context += $"[{Label}]  ·  character {selectedCharacter + 1}/{chars}[/]";
-            }
+            context = ScreenChrome.Context(
+                ScreenChrome.Position("world", selectedWorld, worlds.Count),
+                chars > 0 && selectedCharacter >= 0
+                    ? ScreenChrome.Position("character", selectedCharacter, chars)
+                    : null);
         }
 
         var actions = ScreenChrome.Actions(accent, focus);
@@ -409,7 +409,7 @@ internal static class WorldsScreenRenderer
             WorldField("host", Field($"[{Value}]{Escape(world.Host)}[/]", cursor, selectedWorld, 1)),
             WorldField("port", Field(
                 $"[{Value}]{world.Port.ToString(CultureInfo.InvariantCulture)}[/]", cursor, selectedWorld, 2)),
-            WorldField("security", $"[{Value}]{Security(world)}[/]"),
+            WorldField("security", ScreenChrome.ReadOnly(Security(world))),
             WorldField("encoding", Field($"[{Value}]{Escape(world.Encoding)}[/]", cursor, selectedWorld, 3)),
             WorldField("keepalive", Field(
                 world.KeepaliveSeconds > 0
@@ -454,8 +454,11 @@ internal static class WorldsScreenRenderer
 
     /// <summary>
     /// The character form — labels left-aligned with their values, one field per row. The editable
-    /// ones are the character row's own fields (name, then on-connect); the password is deliberately
-    /// not among them, and the session line is a report, not a setting.
+    /// ones are the character row's own fields (name, then on-connect) and are the only two drawn in a
+    /// field well. The other three deliberately are not: the password is
+    /// <see cref="System.Text.Json.Serialization.JsonIgnoreAttribute"/>d and belongs in a credential
+    /// store, auto-login is a readout of the character row's own checkbox, and the session line is a
+    /// report of what the connection is doing rather than a setting at all.
     /// </summary>
     internal static List<string> FormColumn(
         CharacterDefinition character, string accent, ScreenFocus? focus = null, int selectedCharacter = -1)
@@ -467,11 +470,11 @@ internal static class WorldsScreenRenderer
             string.Empty,
             CharField("name", Field(
                 $"[{Value}]{Escape(character.Name)}[/]", cursor, selectedCharacter, 0, pane: 1)),
-            CharField("password", $"[{Value}]••••••••[/] [{Label}]keychain[/]"),
+            CharField("password", $"{ScreenChrome.ReadOnly("••••••••")} [{Label}]keychain[/]"),
             CharField("on connect", Field(
                 $"[{Value}]{Escape(character.OnConnect ?? "—")}[/]", cursor, selectedCharacter, 1, pane: 1)),
-            CharField("auto-login", character.AutoLogin ? $"[{accent}]yes[/]" : $"[{Label}]no[/]"),
-            CharField("session", $"[{Label}]offline[/]"),
+            CharField("auto-login", ScreenChrome.ReadOnly(character.AutoLogin ? "yes" : "no")),
+            CharField("session", ScreenChrome.ReadOnly("offline")),
         };
     }
 
