@@ -33,8 +33,11 @@ internal enum ScreenAction
 /// field it is typing into out of each fresh model.
 /// </para>
 /// <para>
-/// The keys, in one place: ↑↓ move a row and Home/End jump to a pane's first and last — End is how a
-/// pane's trailing buttons are reached without walking the selection to the end of its list; Delete on
+/// The keys, in one place: ↑↓ move a row (and, where a screen stacks two panes in one column, carry on
+/// into the next one) and ←→ move to the pane drawn beside this one; ⇥/⇧⇥ cycle the panes in the order
+/// they are drawn, which is the only movement that wraps and so the only one guaranteed to reach a pane
+/// standing alone in its column; Home/End jump to a pane's first and last row — End is how a pane's
+/// trailing buttons are reached without walking the selection to the end of its list; Delete on
 /// a list row runs that pane's remove button, so the common case never needs End at all; ⏎
 /// activates the focused row when it has something to activate (a field → open an edit, a button →
 /// run it) and otherwise saves and closes; ⌃S saves from anywhere; Esc cancels the screen,
@@ -42,6 +45,13 @@ internal enum ScreenAction
 /// typing inserts, Backspace/Delete remove, ←→/Home/End move the caret, ↑↓ move through the drawn
 /// candidate list (narrowing it is what typing does), ⇥ commits and steps to the row's next field, ⏎
 /// commits, and Esc reverts.
+/// </para>
+/// <para>
+/// The arrows therefore mean two different things, and which one is decided by exactly one bit of
+/// state: an open edit takes the whole keyboard, so ←→ are caret movement and ↑↓ walk the dropdown for
+/// as long as one is up, and are navigation the rest of the time. That is the same split ⇥ already
+/// lived under — pane, or next field of the row — and it is checked first, before any navigation key is
+/// looked at.
 /// </para>
 /// <para>
 /// One field kind takes the keyboard whole: a <see cref="ScreenField.Key"/> capture (F4's binding), where
@@ -108,8 +118,8 @@ internal sealed class SettingsSession
     }
 
     /// <summary>
-    /// Interprets a keystroke. With no edit open: ↑↓ move within the focused pane, ⇥ / Shift+⇥ change
-    /// pane, Space toggles the checkbox under the cursor, ⏎ opens the focused row's first field or —
+    /// Interprets a keystroke. With no edit open: ↑↓ move within the focused pane, ←→ and ⇥ / Shift+⇥
+    /// change pane, Space toggles the checkbox under the cursor, ⏎ opens the focused row's first field or —
     /// when the row has none — saves, ⌃S saves, Esc cancels. With an edit open the whole keyboard
     /// belongs to the buffer instead; see the type summary. Anything else is not ours.
     /// </summary>
@@ -146,15 +156,21 @@ internal sealed class SettingsSession
                 return Activate(model);
 
             case ConsoleKey.UpArrow:
-                return Changed(Selection.Move(-1, model.Sizes));
+                return Changed(Selection.MoveVertically(-1, model.Sizes, model.Layout));
 
             case ConsoleKey.DownArrow:
-                return Changed(Selection.Move(1, model.Sizes));
+                return Changed(Selection.MoveVertically(1, model.Sizes, model.Layout));
+
+            case ConsoleKey.LeftArrow:
+                return Changed(Selection.MoveBeside(-1, model.Sizes, model.Layout));
+
+            case ConsoleKey.RightArrow:
+                return Changed(Selection.MoveBeside(1, model.Sizes, model.Layout));
 
             case ConsoleKey.Tab:
                 return Changed(key.Modifiers.HasFlag(ConsoleModifiers.Shift)
-                    ? Selection.PreviousPane(model.Sizes)
-                    : Selection.NextPane(model.Sizes));
+                    ? Selection.PreviousPane(model.Sizes, model.Layout)
+                    : Selection.NextPane(model.Sizes, model.Layout));
 
             case ConsoleKey.Home:
                 return Changed(Selection.MoveTo(0, model.Sizes));
@@ -216,6 +232,16 @@ internal sealed class SettingsSession
     /// ⏎ on a row that has something to activate: a button runs, a record of fields opens its first.
     /// A row that is neither is not activatable, and ⏎ keeps its old meaning there — the footer's
     /// <c>[[⏎]] Save</c>.
+    /// <para>
+    /// A button that <em>built</em> something goes one step further and opens the new row's first
+    /// field, which on every list screen is its name. Leaving the cursor on the row was already the
+    /// rule and was one keystroke short of useful: the thing you have just made is unnamed, so the very
+    /// next key was always going to be ⏎ again. It matters most on F5, where a character's editable
+    /// values are drawn in the CHARACTER form at the foot of the screen rather than on the list row the
+    /// cursor sits on — pressing <c>[[+ add character]]</c> now <em>puts</em> you in that form, which
+    /// teaches the one route on this screen that nothing else pointed at. A removal deliberately opens
+    /// nothing: the row under the cursor afterwards is a survivor, not something anybody asked to edit.
+    /// </para>
     /// </summary>
     private ScreenAction Activate(ScreenModel model)
     {
@@ -228,6 +254,12 @@ internal sealed class SettingsSession
             if (Edits.Apply(button) is { } select)
             {
                 Selection.Seed(Selection.Pane, select);
+                if (button.Kind == ScreenButtonKind.Add)
+                {
+                    // Re-projected first: the list the button just changed is the one this reads the
+                    // new row's fields out of. Open() no-ops on a row that hasn't any.
+                    Open(_model(Selection), 0);
+                }
             }
 
             return ScreenAction.Redraw;

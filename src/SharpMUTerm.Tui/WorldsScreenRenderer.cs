@@ -305,7 +305,10 @@ internal static class WorldsScreenRenderer
 
         if (!HasCharacter(worlds, selectedWorld, selectedCharacter))
         {
-            return new ScreenModel(worldRows, characterRows, Array.Empty<ScreenRow>(), securityRows);
+            return new ScreenModel(worldRows, characterRows, Array.Empty<ScreenRow>(), securityRows)
+            {
+                Layout = PaneLayout,
+            };
         }
 
         var character = worlds[selectedWorld].Characters[selectedCharacter];
@@ -320,8 +323,34 @@ internal static class WorldsScreenRenderer
             .Concat(SetButtons(worlds, triggerSets, selectedSet))
             .ToArray();
 
-        return new ScreenModel(worldRows, characterRows, setRows, securityRows);
+        return new ScreenModel(worldRows, characterRows, setRows, securityRows) { Layout = PaneLayout };
     }
+
+    /// <summary>
+    /// Where the four panes actually sit, which is not the order they are numbered in. The WORLDS list
+    /// is the left column on its own; the detail column beside it runs security → characters →
+    /// trigger sets down the screen, with the sets drawn in the editing band across the bottom.
+    /// <para>
+    /// The mismatch is deliberate and predates this: <see cref="SecurityPane"/> is <em>appended</em>,
+    /// because a pane index is a cursor coordinate and slotting one in beside the world it describes
+    /// would renumber every stop the screen and its tests navigate by. Numbering and drawing therefore
+    /// disagree, and until the panes said where they were, ⇥ believed the numbering: it went WORLDS →
+    /// CHARACTERS → TRIGGER SETS and then jumped back <em>up</em> the screen to the security
+    /// checkboxes. Three hops forward and one backwards is what "the tabbing feels awkward" was.
+    /// </para>
+    /// <para>
+    /// Stacking the three detail panes in one column is also what lets ↓ run from the TLS checkbox
+    /// straight through the characters list and on into the trigger sets, which is how the character's
+    /// own row is now arrived at rather than hunted for.
+    /// </para>
+    /// </summary>
+    private static readonly ScreenPanePlace[] PaneLayout =
+    {
+        new(Column: 0, Row: 0), // WORLDS — the left column, alone
+        new(Column: 1, Row: 1), // CHARACTERS — under the world's fields
+        new(Column: 1, Row: 2), // TRIGGER SETS — the editing band at the foot of the screen
+        new(Column: 1, Row: 0), // the world's security checkboxes, drawn inside the WORLD block
+    };
 
     /// <summary>
     /// A character's opt-in to one set. Assignment is list membership, and the character's own order
@@ -755,7 +784,7 @@ internal static class WorldsScreenRenderer
         var form = new List<string>
         {
             $"[bold {accent}]└ CHARACTER · {Escape(character.Name)}[/]",
-            string.Empty,
+            FormDoor(cursor, selectedCharacter),
             CharField("name", Field(
                 $"[{Value}]{Escape(character.Name)}[/]",
                 cursor,
@@ -798,6 +827,45 @@ internal static class WorldsScreenRenderer
     /// an empty well that would look like a value someone had blanked.
     /// </summary>
     internal const string DefaultDirectory = "(default)";
+
+    /// <summary>What the CHARACTER form says while the cursor is somewhere else on the screen.</summary>
+    internal const string FormClosed = "⏎ on the character in the list above";
+
+    /// <summary>And while it is on that character's own row, one keystroke from opening these.</summary>
+    internal const string FormOpen = "⏎ opens these";
+
+    /// <summary>
+    /// The one line on this screen that says how to get into it. The CHARACTER form draws four field
+    /// wells — the affordance these screens use to mean "the keyboard can change this here" — but the
+    /// cursor stop that opens them is the character's row in the CHARACTERS list, a column and a band
+    /// away. So the wells were honest about being editable and silent about being editable
+    /// <em>from somewhere else</em>, and the way in was reachable, correct and unguessable: the row you
+    /// arrive on by ⇥ is a bare selector with no well of its own, which by this project's own rule reads
+    /// as "nothing to type into here".
+    /// <para>
+    /// It is derived from the cursor rather than written once, so it names the key at the moment the key
+    /// would work: <c>⏎ opens these</c> while the cursor is on that character's row, and where to go
+    /// otherwise. Mid-edit it says nothing at all — the header hints have already swapped wholesale to
+    /// <c>⏎ commit · Esc revert</c>, and a second, staler claim beside them would be the disagreement
+    /// those hints exist to prevent.
+    /// </para>
+    /// <para>
+    /// It takes the blank row under the heading rather than sitting beside it, so it costs no row and
+    /// cannot be pushed off the form's 48-cell column by a long character name — the heading already
+    /// spends that width on the name itself. It still reads as a separator when it is empty.
+    /// </para>
+    /// </summary>
+    private static string FormDoor(ScreenFocus cursor, int selectedCharacter)
+    {
+        if (cursor.IsEditing)
+        {
+            return string.Empty;
+        }
+
+        return cursor.IsOn(CharactersPane, selectedCharacter)
+            ? $"  [{Accent}]{FormOpen}[/]"
+            : $"  [{Label}]{FormClosed}[/]";
+    }
 
     /// <summary>Draws a value as a field, showing the buffer and caret when its edit is the open one.</summary>
     private static string Field(string display, ScreenFocus cursor, int index, int field, int pane = 0) =>

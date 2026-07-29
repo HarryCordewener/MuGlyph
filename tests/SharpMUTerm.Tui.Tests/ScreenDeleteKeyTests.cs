@@ -108,7 +108,8 @@ public class ScreenDeleteKeyTests
         var session = new SettingsSession(selection => WorldsScreenRenderer.Model(
             worlds, sets, selection.SelectionIn(0), selection.SelectionIn(1)));
 
-        session.Handle(Key(ConsoleKey.Tab));          // into the character pane
+        session.Handle(Key(ConsoleKey.Tab));          // the world's security checkboxes, drawn first
+        session.Handle(Key(ConsoleKey.Tab));          // into the character pane below them
         session.Handle(Key(ConsoleKey.DownArrow));    // onto the second character
         session.Handle(Key(ConsoleKey.Delete));
 
@@ -157,10 +158,10 @@ public class ScreenDeleteKeyTests
         var session = new SettingsSession(selection => WorldsScreenRenderer.Model(
             worlds, sets, selection.SelectionIn(0), selection.SelectionIn(1), selection.SelectionIn(2)));
 
-        for (var i = 0; i < 3; i++)
-        {
-            session.Handle(Key(ConsoleKey.Tab)); // worlds → characters → trigger sets → security
-        }
+        // ⇥ walks the panes in the order they are drawn, and the security checkboxes are drawn inside
+        // the WORLD block at the top of the detail column — so they are the first stop out of the
+        // WORLDS list, not the last.
+        session.Handle(Key(ConsoleKey.Tab));
 
         await Assert.That(session.Focus().Pane).IsEqualTo(WorldsScreenRenderer.SecurityPane);
         await Assert.That(session.Handle(Key(ConsoleKey.Delete))).IsEqualTo(ScreenAction.None);
@@ -183,7 +184,8 @@ public class ScreenDeleteKeyTests
             worlds, sets, selection.SelectionIn(0), selection.SelectionIn(1), selection.SelectionIn(2)));
 
         session.Handle(Key(ConsoleKey.Tab));
-        session.Handle(Key(ConsoleKey.Tab)); // into the trigger-set pane
+        session.Handle(Key(ConsoleKey.Tab));
+        session.Handle(Key(ConsoleKey.Tab)); // security → characters → the trigger-set pane
 
         await Assert.That(session.Focus().Pane).IsEqualTo(WorldsScreenRenderer.TriggerSetsPane);
         await Assert.That(session.Handle(Key(ConsoleKey.Delete))).IsEqualTo(ScreenAction.Redraw);

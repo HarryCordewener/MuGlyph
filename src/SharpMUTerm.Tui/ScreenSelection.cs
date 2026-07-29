@@ -150,11 +150,88 @@ internal sealed class ScreenSelection
     /// Moves focus to the next pane that has rows, wrapping past the last. Empty panes are skipped so
     /// ⇥ never lands somewhere with no cursor (a world with no characters, an editor with no
     /// toggles). Returns false when no other pane can take focus.
+    /// <para>
+    /// With no layout the panes are walked in index order, which is what a caller holding nothing but
+    /// row counts can honestly do. The overload taking one walks them in <em>reading</em> order
+    /// instead; on every screen whose panes are drawn side by side the two are the same walk.
+    /// </para>
     /// </summary>
     internal bool NextPane(IReadOnlyList<int> paneSizes) => Step(1, paneSizes);
 
     /// <summary>The mirror of <see cref="NextPane"/>, for Shift+⇥.</summary>
     internal bool PreviousPane(IReadOnlyList<int> paneSizes) => Step(-1, paneSizes);
+
+    /// <summary>⇥ through the panes in the order they are drawn (see <see cref="ScreenPanes.Step"/>).</summary>
+    internal bool NextPane(IReadOnlyList<int> paneSizes, IReadOnlyList<ScreenPanePlace> layout) =>
+        Land(ScreenPanes.Step(layout, paneSizes, Pane, 1), paneSizes);
+
+    /// <summary>⇧⇥ through them backwards — the exact reverse of <see cref="NextPane"/>.</summary>
+    internal bool PreviousPane(IReadOnlyList<int> paneSizes, IReadOnlyList<ScreenPanePlace> layout) =>
+        Land(ScreenPanes.Step(layout, paneSizes, Pane, -1), paneSizes);
+
+    /// <summary>
+    /// ←/→: focus the pane drawn beside this one, keeping the cursor that pane was last left on. It is
+    /// a <em>move</em> and not a cycle — at the edge of the layout it parks, exactly as ↑ parks on the
+    /// first row of a list — because a key that wrapped the screen sideways would make the two ways of
+    /// changing pane indistinguishable, and ⇥ is already the one that goes everywhere.
+    /// </summary>
+    internal bool MoveBeside(int direction, IReadOnlyList<int> paneSizes, IReadOnlyList<ScreenPanePlace> layout)
+    {
+        Clamp(paneSizes);
+        return Land(ScreenPanes.Beside(layout, paneSizes, Pane, direction), paneSizes);
+    }
+
+    /// <summary>
+    /// ↑/↓: move a row within the focused pane, and — only when the pane runs out and another is drawn
+    /// directly under (or over) it in the same column — carry on into that one, landing on the row
+    /// nearest the boundary just crossed. That is what makes F5's detail column one continuous run
+    /// under the cursor rather than three lists that happen to be stacked.
+    /// <para>
+    /// The spill is the whole of the difference from <see cref="Move"/>, and it can only happen where a
+    /// screen has said two panes share a column. Under the default side-by-side layout no pane has a
+    /// neighbour above or below, so this is <see cref="Move"/> exactly — including its refusal to wrap
+    /// at the ends of a list.
+    /// </para>
+    /// </summary>
+    internal bool MoveVertically(int delta, IReadOnlyList<int> paneSizes, IReadOnlyList<ScreenPanePlace> layout)
+    {
+        ArgumentNullException.ThrowIfNull(layout);
+
+        if (Move(delta, paneSizes))
+        {
+            return true;
+        }
+
+        var direction = Math.Sign(delta);
+        var next = direction == 0 ? -1 : ScreenPanes.Stacked(layout, paneSizes, Pane, direction);
+        if (next < 0)
+        {
+            return false;
+        }
+
+        Pane = next;
+        var size = SizeOf(next, paneSizes);
+        _cursors[next] = direction > 0 ? 0 : Math.Max(0, size - 1);
+        return true;
+    }
+
+    /// <summary>
+    /// Puts the keyboard in <paramref name="pane"/>, pulling that pane's remembered cursor back inside
+    /// it. -1 means "there was nowhere to go", which is how every layout rule spells a refusal.
+    /// </summary>
+    private bool Land(int pane, IReadOnlyList<int> paneSizes)
+    {
+        ArgumentNullException.ThrowIfNull(paneSizes);
+
+        if (pane < 0 || pane >= _cursors.Length || pane == Pane)
+        {
+            return false;
+        }
+
+        Pane = pane;
+        _cursors[pane] = Math.Max(0, Math.Min(_cursors[pane], SizeOf(pane, paneSizes) - 1));
+        return true;
+    }
 
     /// <summary>
     /// Pulls every cursor back inside its pane and moves focus off a pane that has emptied, so a
