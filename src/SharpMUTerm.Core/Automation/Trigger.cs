@@ -42,6 +42,24 @@ public sealed class TriggerActions
 
     /// <summary>Invoke this named script callback (resolved by the scripting layer).</summary>
     public string? ScriptCallback { get; init; }
+
+    /// <summary>
+    /// A copy of these actions. Every field is a value or an immutable string, so a member-wise copy
+    /// really is a deep one — but it has to be written out rather than shared, because
+    /// <see cref="Trigger.Actions"/> is <c>init</c>-only and two triggers holding the same instance
+    /// would silently share a gag flag and a route.
+    /// </summary>
+    public TriggerActions Clone() => new()
+    {
+        Gag = Gag,
+        HighlightForeground = HighlightForeground,
+        HighlightBackground = HighlightBackground,
+        AddAttributes = AddAttributes,
+        Rewrite = Rewrite,
+        SendResponse = SendResponse,
+        SpawnTarget = SpawnTarget,
+        ScriptCallback = ScriptCallback,
+    };
 }
 
 /// <summary>
@@ -53,7 +71,12 @@ public sealed class Trigger
     private Regex? _compiled;
     private string _pattern = string.Empty;
 
-    public string Name { get; init; } = string.Empty;
+    /// <summary>
+    /// What the rule is called, for the lists that show it. Settable so the F2 screen can rename a rule
+    /// live; unlike <see cref="Pattern"/> and <see cref="CaseSensitive"/> nothing is derived from it —
+    /// the engines match on the pattern and never look a rule up by name — so there is no cache to drop.
+    /// </summary>
+    public string Name { get; set; } = string.Empty;
 
     /// <summary>
     /// The .NET regular expression matched against a line's plain text. Settable so the F2 settings
@@ -93,4 +116,21 @@ public sealed class Trigger
         Pattern,
         RegexOptions.Compiled | (CaseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase),
         AutomationDefaults.RegexMatchTimeout);
+
+    /// <summary>
+    /// A deep copy of this rule — the F2 screen's <c>duplicate</c> button is the caller. The
+    /// <see cref="Actions"/> are copied rather than shared: an aliased copy would look right and then
+    /// follow every later edit of its original's gag, route and highlight around. The compiled
+    /// <see cref="Regex"/> is deliberately not carried over; the copy builds its own on first use, so a
+    /// later pattern edit on either rule cannot be seen by the other.
+    /// </summary>
+    public Trigger Clone() => new()
+    {
+        Name = Name,
+        Pattern = Pattern,
+        Enabled = Enabled,
+        CaseSensitive = CaseSensitive,
+        StopProcessing = StopProcessing,
+        Actions = Actions.Clone(),
+    };
 }

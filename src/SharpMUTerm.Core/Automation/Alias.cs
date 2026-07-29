@@ -14,7 +14,13 @@ public sealed class Alias
     private bool _caseSensitive;
     private string _pattern = string.Empty;
 
-    public string Name { get; init; } = string.Empty;
+    /// <summary>
+    /// What the alias is called, for the lists that show it. Settable so the F3 screen can rename one
+    /// live; unlike <see cref="Pattern"/> and <see cref="CaseSensitive"/> nothing is derived from it —
+    /// expansion matches on the pattern and never looks an alias up by name — so there is no cache to
+    /// drop.
+    /// </summary>
+    public string Name { get; set; } = string.Empty;
 
     /// <summary>
     /// The .NET regular expression matched against typed input. Settable so the F3 settings screen can
@@ -73,4 +79,20 @@ public sealed class Alias
         Pattern,
         RegexOptions.Compiled | (CaseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase),
         AutomationDefaults.RegexMatchTimeout);
+
+    /// <summary>
+    /// A copy of this alias — the F3 screen's <c>duplicate</c> button is the caller. Every part is a
+    /// value or an immutable string, so nothing is shared; the compiled <see cref="Regex"/> is
+    /// deliberately not carried over, so the copy builds its own on first use and a later pattern or
+    /// casing edit on either alias cannot be seen by the other.
+    /// </summary>
+    public Alias Clone() => new()
+    {
+        Name = Name,
+        Pattern = Pattern,
+        Enabled = Enabled,
+        CaseSensitive = CaseSensitive,
+        Substitution = Substitution,
+        ScriptCallback = ScriptCallback,
+    };
 }

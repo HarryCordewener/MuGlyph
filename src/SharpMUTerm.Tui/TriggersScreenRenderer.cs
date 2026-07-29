@@ -30,11 +30,40 @@ internal static class TriggersScreenRenderer
     /// </summary>
     internal const string MainWindow = "main";
 
-    /// <summary>The rule row's field ordinals, in the order ⇥ steps through them.</summary>
-    private const int PatternField = 0;
-    private const int RouteField = 1;
-    private const int ForegroundField = 2;
-    private const int BackgroundField = 3;
+    /// <summary>
+    /// The rule row's field ordinals, in the order ⇥ steps through them. The name leads, as it does on
+    /// every list screen: it is what the row is *called*, so ⏎ on a rule — and on a rule that was just
+    /// created — opens the one value that tells it apart from its neighbours. They are named constants
+    /// rather than literals because the renderer, the model and the tests all address the same
+    /// ordinals, and a screen that grew a field would otherwise silently draw the caret on the wrong row.
+    /// </summary>
+    internal const int NameField = 0;
+
+    internal const int PatternField = 1;
+
+    internal const int RouteField = 2;
+
+    internal const int ForegroundField = 3;
+
+    internal const int BackgroundField = 4;
+
+    /// <summary>The labels the rule list's buttons carry, in the order they are drawn.</summary>
+    internal const string AddTriggerLabel = "+ trigger";
+
+    internal const string DuplicateTriggerLabel = "⧉ duplicate";
+
+    internal const string RemoveTriggerLabel = "- del";
+
+    /// <summary>
+    /// What a brand-new rule is called and matches. The pattern is a placeholder rather than blank
+    /// because <see cref="ScreenField.Pattern"/> refuses an empty regex, so a blank one could not be
+    /// committed — and a rule created with no actions at all does nothing to the stream whatever it
+    /// matches, which is why a new trigger is left enabled while a new timer is not (a timer fires
+    /// without being provoked; a trigger with nothing to do does not).
+    /// </summary>
+    private const string NewTriggerName = "New Trigger";
+
+    private const string NewTriggerPattern = "text to match";
 
     /// <summary>The window a rule routes to, as the route field reads and writes it.</summary>
     private static string Route(Trigger trigger) => trigger.Actions.SpawnTarget ?? MainWindow;
@@ -106,7 +135,7 @@ internal static class TriggersScreenRenderer
     {
         var title = $"[bold {Value}] Triggers & spawn routing[/]";
         var hints = ScreenChrome.Hints(
-            ScreenChrome.ListHints, "F2", model?.HasEditableRow ?? false, focus);
+            ScreenChrome.ListHints, "F2", model?.HasEditableRow ?? false, focus, model?.HasRemovableRow ?? false);
         return SpreadLR(" " + title, hints, width);
     }
 
@@ -138,6 +167,7 @@ internal static class TriggersScreenRenderer
         var flattened = Flatten(sets);
         var rules = ScreenModel.Rows(flattened, entry => ScreenRow.Of(
             ScreenToggle.Bind(() => entry.Trigger.Enabled, v => entry.Trigger.Enabled = v),
+            ScreenField.Name("name", () => entry.Trigger.Name, v => entry.Trigger.Name = v),
             ScreenField.Pattern(
                 "match pattern", () => entry.Trigger.Pattern, v => entry.Trigger.Pattern = v),
             ScreenField.WindowName(
@@ -152,7 +182,9 @@ internal static class TriggersScreenRenderer
             ScreenField.Colour(
                 "highlight bg",
                 () => entry.Trigger.Actions.HighlightBackground,
-                v => entry.Trigger.Actions.HighlightBackground = v)));
+                v => entry.Trigger.Actions.HighlightBackground = v)))
+            .Concat(Buttons(sets, selectedTrigger))
+            .ToArray();
 
         if (selectedTrigger < 0 || selectedTrigger >= flattened.Count)
         {
@@ -167,6 +199,57 @@ internal static class TriggersScreenRenderer
         };
 
         return new ScreenModel(rules, editor);
+    }
+
+    /// <summary>
+    /// The rule list's buttons. A rule is added to the set that owns the selection rather than to some
+    /// fixed one, because the list is flattened across every set and a rule appearing in a set the user
+    /// wasn't looking at would be a change they never asked for; with nothing selected it goes to the
+    /// first set, and with no sets at all there is nowhere to put one, so the button isn't drawn.
+    /// <para>
+    /// <c>duplicate</c> earns its place here more than anywhere else on these screens: a rule is a
+    /// regex, a route, two colours and three flags, and the way people actually build a rule set is to
+    /// get one right and then copy it per channel. It deep-copies through
+    /// <see cref="Trigger.Clone"/> — an aliased copy would share its actions with the original, so
+    /// gagging one would gag both — and the copy is renamed so it can be told from its source in the
+    /// list it lands in.
+    /// </para>
+    /// </summary>
+    private static List<ScreenRow> Buttons(IReadOnlyList<TriggerSet> sets, int selected)
+    {
+        var rows = new List<ScreenRow>();
+        if (ScreenLists.Target(sets, s => s.Triggers, selected) is not { } target)
+        {
+            return rows;
+        }
+
+        rows.Add(ScreenRow.Of(ScreenButton.Add(
+            AddTriggerLabel,
+            target.Items,
+            () => new Trigger { Name = NewTriggerName, Pattern = NewTriggerPattern },
+            target.Offset)));
+
+        if (ScreenLists.Locate(sets, s => s.Triggers, selected) is not { } slot)
+        {
+            return rows;
+        }
+
+        var source = slot.Items[slot.Index];
+        rows.Add(ScreenRow.Of(ScreenButton.Add(
+            DuplicateTriggerLabel,
+            slot.Items,
+            () =>
+            {
+                var copy = source.Clone();
+                copy.Name = ScreenLists.Unique(sets.SelectMany(s => s.Triggers).Select(t => t.Name), source.Name);
+                return copy;
+            },
+            slot.Offset,
+            source.Name)));
+        rows.Add(ScreenRow.Of(ScreenButton.Remove(
+            RemoveTriggerLabel, slot.Items, slot.Index, slot.Offset, source.Name)));
+
+        return rows;
     }
 
     /// <summary>The action bar: which rule is selected on the left, cancel/save on the right.</summary>
@@ -199,7 +282,6 @@ internal static class TriggersScreenRenderer
         if (flattened.Count == 0)
         {
             left.Add("[dim]no triggers[/]");
-            return left;
         }
 
         for (var i = 0; i < flattened.Count; i++)
@@ -209,6 +291,9 @@ internal static class TriggersScreenRenderer
             left.Add(RuleSub(setName, trigger.Actions));
         }
 
+        left.Add(string.Empty);
+        left.AddRange(ScreenChrome.Buttons(
+            Buttons(sets, selectedTrigger), cursor, 0, flattened.Count, ColumnWidth));
         return left;
     }
 
@@ -292,6 +377,7 @@ internal static class TriggersScreenRenderer
     private static List<string> BuildEditor(
         Trigger trigger, IReadOnlyList<string> spawnTargets, ScreenFocus cursor, int index)
     {
+        var name = cursor.EditOn(0, index, NameField);
         var pattern = cursor.EditOn(0, index, PatternField);
         var route = cursor.EditOn(0, index, RouteField);
         var foreground = cursor.EditOn(0, index, ForegroundField);
@@ -301,8 +387,13 @@ internal static class TriggersScreenRenderer
         // the dot before anything is committed — the buffer is what ⏎ would write.
         var currentRoute = route?.Text ?? Route(trigger);
 
+        // The name leads the editor because it leads the row's fields: ⏎ on a rule opens it here, which
+        // is also where a rule created by [+ trigger] lands ready to be called something.
         var lines = new List<string>
         {
+            "[dim]name[/]",
+            $"  {ScreenChrome.Field(Escape(trigger.Name), name)}",
+            string.Empty,
             "[dim]match pattern (regex)[/]",
             $"  {ScreenChrome.Field(Escape(trigger.Pattern), pattern)}",
             string.Empty,

@@ -24,7 +24,8 @@ internal static class ScreenChrome
     /// buffer, and saying otherwise would be the same lie in the other direction.
     /// </para>
     /// </summary>
-    internal static string Hints(string verbs, string fkey, bool editable = false, ScreenFocus? focus = null)
+    internal static string Hints(
+        string verbs, string fkey, bool editable = false, ScreenFocus? focus = null, bool removable = false)
     {
         if (focus?.Edit is { } edit)
         {
@@ -35,7 +36,7 @@ internal static class ScreenChrome
                 + $"[{ScreenPalette.Label}] close [/]";
         }
 
-        var all = editable ? verbs + EditHint : verbs;
+        var all = (editable ? verbs + EditHint : verbs) + (removable ? DeleteHint : string.Empty);
         return $"[{ScreenPalette.Label}]{all} · [/][{ScreenPalette.Accent}]{fkey}[/][{ScreenPalette.Label}]/[/]"
             + $"[{ScreenPalette.Accent}]Esc[/][{ScreenPalette.Label}] close [/]";
     }
@@ -53,6 +54,14 @@ internal static class ScreenChrome
     /// What a screen adds to its hints when — and only when — its model offers a row ⏎ can open.
     /// </summary>
     internal const string EditHint = " · ⏎ edit";
+
+    /// <summary>
+    /// What a screen adds to its hints when — and only when — a pane offers a way to remove a row. It
+    /// exists because reaching a <c>[[- del]]</c> row with ↑↓ means walking the cursor past the whole
+    /// list, and the only key that stepped over it (End) was advertised nowhere. Delete acts on the row
+    /// the cursor is already on, which is the row the eye is on, and this is where the screen says so.
+    /// </summary>
+    internal const string DeleteHint = " · Del remove";
 
     /// <summary>The hints that replace a screen's own while a field edit is open.</summary>
     internal const string EditingHints = "⏎ commit · Esc revert";
@@ -167,6 +176,49 @@ internal static class ScreenChrome
     /// </para>
     /// </summary>
     internal static string ReadOnly(string text) => $"[{ScreenPalette.Muted}]{MarkupText.Escape(text)}[/]";
+
+    /// <summary>
+    /// Draws a pane's button rows, appended after its list. The rows come *from* the pane's own
+    /// <see cref="ScreenButton"/>s rather than being written out again per screen, so the label the
+    /// cursor lands on and the command ⏎ runs cannot drift apart — and every screen paints them the
+    /// same, which is the whole reason this lives here rather than in five renderers.
+    /// <para>
+    /// A button that builds gets the accent and stands alone; one that acts on the selected row is drawn
+    /// in the label ink and *names its victim* (<c>[[- del]] Aetherfall</c>), because the cursor has to
+    /// leave the list to reach the button and a destructive key whose target is off-screen is exactly
+    /// the surprise these screens must not spring.
+    /// </para>
+    /// </summary>
+    /// <param name="buttons">The pane's button rows, in the order the model appends them.</param>
+    /// <param name="cursor">Where the keyboard is, so the focused button gets the cursor bar.</param>
+    /// <param name="pane">Which pane these belong to.</param>
+    /// <param name="firstIndex">The pane row index of the first button — i.e. the list's length.</param>
+    /// <param name="width">How wide the cursor bar runs, matching the pane's other rows.</param>
+    internal static List<string> Buttons(
+        IReadOnlyList<ScreenRow> buttons, ScreenFocus cursor, int pane, int firstIndex, int width)
+    {
+        ArgumentNullException.ThrowIfNull(buttons);
+
+        var lines = new List<string>(buttons.Count);
+        for (var i = 0; i < buttons.Count; i++)
+        {
+            if (buttons[i].Button is not { } button)
+            {
+                continue;
+            }
+
+            var ink = button.Kind == ScreenButtonKind.Add ? ScreenPalette.Accent : ScreenPalette.Label;
+            var row = $"[{ink}][[{MarkupText.Escape(button.Label)}]][/]";
+            if (button.Target is { } target)
+            {
+                row += $" [{ScreenPalette.Value}]{MarkupText.Escape(target)}[/]";
+            }
+
+            lines.Add(Cursor(row, cursor.IsOn(pane, firstIndex + i), width));
+        }
+
+        return lines;
+    }
 
     /// <summary>
     /// Where the cursor is within one of a screen's lists — <c>trigger 1/4</c>, <c>world 2/2</c>. Every

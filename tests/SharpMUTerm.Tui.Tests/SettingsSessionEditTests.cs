@@ -371,7 +371,9 @@ public class SettingsSessionEditTests
         var trigger = sets[0].Triggers[0];
         await Assert.That(trigger.Regex.IsMatch("she tells you hi")).IsTrue();
 
-        new ScreenEdits().Apply(TriggersScreenRenderer.Model(sets, 0).FieldAt(0, 0, 0)!.Value, "pages you");
+        new ScreenEdits().Apply(
+            TriggersScreenRenderer.Model(sets, 0).FieldAt(0, 0, TriggersScreenRenderer.PatternField)!.Value,
+            "pages you");
 
         await Assert.That(trigger.Regex.IsMatch("she tells you hi")).IsFalse();
         await Assert.That(trigger.Regex.IsMatch("she pages you")).IsTrue();
@@ -387,7 +389,8 @@ public class SettingsSessionEditTests
         var alias = sets[0].Aliases[0];
         await Assert.That(alias.Regex.IsMatch("k")).IsTrue();
 
-        new ScreenEdits().Apply(AliasesScreenRenderer.Model(sets, 0).FieldAt(0, 0, 0)!.Value, "^kk$");
+        new ScreenEdits().Apply(
+            AliasesScreenRenderer.Model(sets, 0).FieldAt(0, 0, AliasesScreenRenderer.PatternField)!.Value, "^kk$");
 
         await Assert.That(alias.Regex.IsMatch("k")).IsFalse();
         await Assert.That(alias.Regex.IsMatch("kk")).IsTrue();

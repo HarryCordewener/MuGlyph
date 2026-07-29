@@ -122,7 +122,7 @@ internal static class WorldsScreenRenderer
     {
         var title = $"[bold {Value}] Worlds & Characters[/]";
         var hints = ScreenChrome.Hints(
-            ScreenChrome.ListHints, "F5", model?.HasEditableRow ?? false, focus);
+            ScreenChrome.ListHints, "F5", model?.HasEditableRow ?? false, focus, model?.HasRemovableRow ?? false);
         return SpreadLR(" " + title, hints, width);
     }
 
@@ -173,7 +173,7 @@ internal static class WorldsScreenRenderer
         (selectedWorld, selectedCharacter) = Resolve(worlds, selectedWorld, selectedCharacter);
 
         var worldRows = ScreenModel.Rows(worlds, w => ScreenRow.Of(
-            ScreenField.Text("name", () => w.Name, v => w.Name = v),
+            ScreenField.Name("name", () => w.Name, v => w.Name = v),
             ScreenField.Text("host", () => w.Host, v => w.Host = v),
             ScreenField.Integer("port", () => w.Port, v => w.Port = v, 1, 65535),
             ScreenField.Choice("encoding", () => w.Encoding, v => w.Encoding = v, Encodings),
@@ -186,7 +186,7 @@ internal static class WorldsScreenRenderer
             ? Array.Empty<ScreenRow>()
             : ScreenModel.Rows(world.Characters, c => ScreenRow.Of(
                 ScreenToggle.Bind(() => c.AutoLogin, v => c.AutoLogin = v),
-                ScreenField.Text("name", () => c.Name, v => c.Name = v),
+                ScreenField.Name("name", () => c.Name, v => c.Name = v),
                 ScreenField.Optional("on connect", () => c.OnConnect, v => c.OnConnect = v)))
                 .Concat(CharacterButtons(world, selectedCharacter))
                 .ToArray();
@@ -246,7 +246,8 @@ internal static class WorldsScreenRenderer
         rows.Add(ScreenRow.Of(ScreenButton.Add(AddWorldLabel, list, () => new WorldDefinition())));
         if (selectedWorld >= 0 && selectedWorld < list.Count)
         {
-            rows.Add(ScreenRow.Of(ScreenButton.Remove(RemoveWorldLabel, list, selectedWorld)));
+            rows.Add(ScreenRow.Of(ScreenButton.Remove(
+                RemoveWorldLabel, list, selectedWorld, target: list[selectedWorld].Name)));
         }
 
         return rows;
@@ -276,42 +277,15 @@ internal static class WorldsScreenRenderer
                 () =>
                 {
                     var copy = source.Clone();
-                    copy.Name = UniqueName(characters, source.Name);
+                    copy.Name = ScreenLists.Unique(characters.Select(c => c.Name), source.Name);
                     return copy;
-                })));
-            rows.Add(ScreenRow.Of(ScreenButton.Remove(RemoveCharacterLabel, characters, selectedCharacter)));
+                },
+                target: source.Name)));
+            rows.Add(ScreenRow.Of(ScreenButton.Remove(
+                RemoveCharacterLabel, characters, selectedCharacter, target: source.Name)));
         }
 
         return rows;
-    }
-
-    /// <summary>
-    /// A name no character in <paramref name="characters"/> already holds: <c>Kaz copy</c>, then
-    /// <c>Kaz copy 2</c>. Matching is case-insensitive because the session key is, so two names that
-    /// differ only in case would still collide.
-    /// </summary>
-    private static string UniqueName(IReadOnlyList<CharacterDefinition> characters, string name)
-    {
-        var candidate = name + " copy";
-        for (var n = 2; Taken(characters, candidate); n++)
-        {
-            candidate = $"{name} copy {n.ToString(CultureInfo.InvariantCulture)}";
-        }
-
-        return candidate;
-    }
-
-    private static bool Taken(IReadOnlyList<CharacterDefinition> characters, string name)
-    {
-        foreach (var character in characters)
-        {
-            if (string.Equals(character.Name, name, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     internal static string FooterLine(
@@ -369,14 +343,8 @@ internal static class WorldsScreenRenderer
         }
 
         left.Add(string.Empty);
-        AppendButtons(
-            left,
-            WorldButtons(worlds, selectedWorld),
-            cursor,
-            0,
-            worlds.Count,
-            LeftColumnWidth,
-            selectedWorld >= 0 && selectedWorld < worlds.Count ? worlds[selectedWorld].Name : null);
+        left.AddRange(ScreenChrome.Buttons(
+            WorldButtons(worlds, selectedWorld), cursor, 0, worlds.Count, LeftColumnWidth));
         return left;
     }
 
@@ -439,16 +407,8 @@ internal static class WorldsScreenRenderer
         }
 
         right.Add(string.Empty);
-        AppendButtons(
-            right,
-            CharacterButtons(world, selectedCharacter),
-            cursor,
-            1,
-            world.Characters.Count,
-            CharacterRowWidth,
-            selectedCharacter >= 0 && selectedCharacter < world.Characters.Count
-                ? world.Characters[selectedCharacter].Name
-                : null);
+        right.AddRange(ScreenChrome.Buttons(
+            CharacterButtons(world, selectedCharacter), cursor, 1, world.Characters.Count, CharacterRowWidth));
         return right;
     }
 
@@ -476,42 +436,6 @@ internal static class WorldsScreenRenderer
             CharField("auto-login", ScreenChrome.ReadOnly(character.AutoLogin ? "yes" : "no")),
             CharField("session", ScreenChrome.ReadOnly("offline")),
         };
-    }
-
-    /// <summary>
-    /// Draws a pane's button rows, in the same order and under the same conditions the model builds
-    /// them — the rows come *from* the model's own buttons rather than being written out again here,
-    /// so the label the cursor lands on and the command ⏎ runs cannot drift apart.
-    /// </summary>
-    private static void AppendButtons(
-        List<string> lines,
-        IReadOnlyList<ScreenRow> buttons,
-        ScreenFocus cursor,
-        int pane,
-        int firstIndex,
-        int barWidth,
-        string? target)
-    {
-        for (var i = 0; i < buttons.Count; i++)
-        {
-            if (buttons[i].Button is not { } button)
-            {
-                continue;
-            }
-
-            // A button that adds needs no target and gets the accent; one that acts on the selected row
-            // names it, because the cursor has to leave the list to reach the button and a destructive
-            // key whose victim is off-screen is exactly the kind of surprise these screens must not
-            // spring.
-            var adds = button.Label == AddWorldLabel || button.Label == AddCharacterLabel;
-            var row = $"[{(adds ? Accent : Label)}][[{Escape(button.Label)}]][/]";
-            if (!adds && target is not null)
-            {
-                row += $" [{Value}]{Escape(target)}[/]";
-            }
-
-            lines.Add(ScreenChrome.Cursor(row, cursor.IsOn(pane, firstIndex + i), barWidth));
-        }
     }
 
     /// <summary>Draws a value as a field, showing the buffer and caret when its edit is the open one.</summary>

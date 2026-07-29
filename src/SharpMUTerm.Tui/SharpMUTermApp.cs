@@ -985,15 +985,20 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             session.Focus()));
     }
 
-    /// <summary>Opens the F2 Triggers &amp; spawn routing screen: the rule list, then the rule's toggles.</summary>
+    /// <summary>
+    /// Opens the F2 Triggers &amp; spawn routing screen: the rule list, then the rule's toggles.
+    /// <see cref="ScreenSelection.SelectionIn"/>, not <c>CursorIn</c> — the list pane ends in its own
+    /// buttons, and the cursor has to leave the list to press one. The selection is what the editor
+    /// pane and the <c>[[- del]]</c> row are about, and it stays on the rule the user was looking at.
+    /// </summary>
     private ScreenBinding TriggersScreen()
     {
         var session = new SettingsSession(selection =>
-            TriggersScreenRenderer.Model(_config.TriggerSets, selection.CursorIn(0), SpawnTargets()));
+            TriggersScreenRenderer.Model(_config.TriggerSets, selection.SelectionIn(0), SpawnTargets()));
 
         return new ScreenBinding(session, () => TriggersScreenView.Build(
             _config.TriggerSets,
-            session.Selection.CursorIn(0),
+            session.Selection.SelectionIn(0),
             SpawnTargets(),
             _system.DesktopDimensions.Width,
             session.Focus()));
@@ -1003,28 +1008,38 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private ScreenBinding AliasesScreen()
     {
         var session = new SettingsSession(selection =>
-            AliasesScreenRenderer.Model(_config.TriggerSets, selection.CursorIn(0)));
+            AliasesScreenRenderer.Model(_config.TriggerSets, selection.SelectionIn(0)));
 
         return new ScreenBinding(session, () => AliasesScreenView.Build(
-            _config.TriggerSets, session.Selection.CursorIn(0), _system.DesktopDimensions.Width, session.Focus()));
+            _config.TriggerSets, session.Selection.SelectionIn(0), _system.DesktopDimensions.Width, session.Focus()));
     }
 
-    /// <summary>Opens the F4 Keypad &amp; hotkeys screen: one pane, the binding list.</summary>
+    /// <summary>
+    /// Opens the F4 Keypad &amp; hotkeys screen: one pane, the binding list. The trigger sets go in
+    /// alongside the flattened macro list because a binding's home is a set — the flattened list alone
+    /// cannot say which one <c>[[+ binding]]</c> should add to.
+    /// </summary>
     private ScreenBinding KeypadScreen()
     {
-        var session = new SettingsSession(_ => KeypadScreenRenderer.Model(Macros()));
+        var session = new SettingsSession(selection =>
+            KeypadScreenRenderer.Model(Macros(), _config.TriggerSets, selection.SelectionIn(0)));
+
         return new ScreenBinding(session, () => KeypadScreenView.Build(
-            Macros(), _system.DesktopDimensions.Width, session.Focus()));
+            Macros(),
+            _config.TriggerSets,
+            session.Selection.SelectionIn(0),
+            _system.DesktopDimensions.Width,
+            session.Focus()));
     }
 
     /// <summary>Opens the F6 Timers screen: the timer list, then the timer's toggles.</summary>
     private ScreenBinding TimersScreen()
     {
         var session = new SettingsSession(selection =>
-            TimersScreenRenderer.Model(_config.TriggerSets, selection.CursorIn(0)));
+            TimersScreenRenderer.Model(_config.TriggerSets, selection.SelectionIn(0)));
 
         return new ScreenBinding(session, () => TimersScreenView.Build(
-            _config.TriggerSets, session.Selection.CursorIn(0), _system.DesktopDimensions.Width, session.Focus()));
+            _config.TriggerSets, session.Selection.SelectionIn(0), _system.DesktopDimensions.Width, session.Focus()));
     }
 
     /// <summary>Opens the F7 Text &amp; ANSI screen, bound to the app's text preferences.</summary>
@@ -1063,11 +1078,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
     /// <summary>
     /// The keys a <c>&lt;name&gt;-edit</c> snapshot drives into a freshly opened screen. ⏎ opens the
-    /// focused row's first field; ⇥ commits it and steps to the next; the rest is typing. Two screens
-    /// walk further than the first field, because a still frame should land on the thing that screen's
-    /// editing actually added: F5 rewrites a host's suffix ("no way to change a host" is the gap the
-    /// whole mode closes), and F2 steps on to its route group and moves the dot, which is the only way
-    /// to see that a radio list is live rather than a report.
+    /// focused row's first field — which on every list screen is now its <em>name</em> — ⇥ commits it
+    /// and steps to the next, and the rest is typing. Two screens walk further than the first field,
+    /// because a still frame should land on the thing that screen's editing actually added: F5 rewrites
+    /// a host's suffix ("no way to change a host" is the gap the whole mode closes), and F2 steps on to
+    /// its route group and moves the dot, which is the only way to see that a radio list is live rather
+    /// than a report.
     /// </summary>
     private static IEnumerable<ConsoleKeyInfo> EditSnapshotKeys(string view)
     {
@@ -1075,6 +1091,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
         if (string.Equals(view, "triggers", StringComparison.OrdinalIgnoreCase))
         {
+            // name → pattern → route: two steps, because the name now leads the row's fields.
+            yield return Stroke('\t', ConsoleKey.Tab);
             yield return Stroke('\t', ConsoleKey.Tab);
             yield return Stroke('\0', ConsoleKey.DownArrow);
             yield break;

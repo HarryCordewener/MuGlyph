@@ -27,9 +27,12 @@ internal static class Program
             // the snapshot is deterministic however it's launched (terminal, pipe, or CI redirect).
             Console.SetIn(TextReader.Null);
 
-            // With no real config on disk, drive the snapshot off the demo configuration — worlds,
-            // trigger sets, and a saved LastSession the app resumes exactly like a returning user's.
-            if (config.Worlds.Count == 0)
+            // Snapshots always render the demo configuration, never whatever happens to be on this
+            // machine. They exist for docs images and golden files, and a golden file that changes
+            // with the developer's own worlds isn't one — the same command has to produce the same
+            // frame everywhere. `--snapshot --live-config` opts into the real config for debugging
+            // something only your own setup reproduces.
+            if (!args.Contains("--live-config"))
             {
                 config = DemoScene.Build();
             }
@@ -155,6 +158,7 @@ internal static class Program
         Console.WriteLine("  --size <WxH>         Snapshot size in cells (default 160x48).");
         Console.WriteLine("  --view <name>        Snapshot an overlay (e.g. 'settings') over the workspace.");
         Console.WriteLine("                       '<name>-edit' opens that settings screen mid field edit.");
+        Console.WriteLine("  --live-config        Snapshot your own config instead of the demo worlds.");
         Console.WriteLine("  --out <file>         Write the snapshot to a file instead of stdout.");
         Console.WriteLine("  -h, --help           Show this help.");
         Console.WriteLine();

@@ -25,6 +25,36 @@ internal static class TimersScreenRenderer
     internal const int ColumnWidth = 56;
 
     /// <summary>
+    /// The timer row's field ordinals, in the order ⇥ steps through them. The name leads, as it does on
+    /// every list screen: ⏎ on a timer — including one just created — opens the value that tells it
+    /// apart from its neighbours. Named rather than written as literals because the renderer, the model
+    /// and the tests all address the same ordinals.
+    /// </summary>
+    internal const int NameField = 0;
+
+    internal const int IntervalField = 1;
+
+    internal const int CommandField = 2;
+
+    /// <summary>The labels the timer list's buttons carry, in the order they are drawn.</summary>
+    internal const string AddTimerLabel = "+ timer";
+
+    internal const string RemoveTimerLabel = "- del";
+
+    /// <summary>
+    /// What a brand-new timer is called, waits and sends. It is created <b>disabled</b>, alone among
+    /// the four list screens: a timer is the only thing here that acts without being provoked, so a new
+    /// one left running would start sending a placeholder command at the server a minute later, which
+    /// nobody asked for. A new trigger only reacts to output and a new binding only to a keypress, so
+    /// those stay live.
+    /// </summary>
+    private const string NewTimerName = "New Timer";
+
+    private const double NewTimerIntervalSeconds = 60;
+
+    private const string NewTimerCommand = "look";
+
+    /// <summary>
     /// Merges every sub-block into one line list (header, timer list | editor, footer). Used by the
     /// unit tests and as a width-agnostic fallback; the live view composes the same blocks into
     /// panels instead.
@@ -61,7 +91,7 @@ internal static class TimersScreenRenderer
     {
         var title = $"[bold {Value}] Timers[/]";
         var hints = ScreenChrome.Hints(
-            ScreenChrome.ListHints, "F6", model?.HasEditableRow ?? false, focus);
+            ScreenChrome.ListHints, "F6", model?.HasEditableRow ?? false, focus, model?.HasRemovableRow ?? false);
         return SpreadLR(" " + title, hints, width);
     }
 
@@ -78,13 +108,16 @@ internal static class TimersScreenRenderer
         var entries = Flatten(sets);
         var list = ScreenModel.Rows(entries, entry => ScreenRow.Of(
             ScreenToggle.Bind(() => entry.Timer.Enabled, v => entry.Timer.Enabled = v),
+            ScreenField.Name("name", () => entry.Timer.Name, v => entry.Timer.Name = v),
             ScreenField.Number(
                 "interval",
                 () => entry.Timer.IntervalSeconds,
                 v => entry.Timer.IntervalSeconds = v,
                 MinIntervalSeconds,
                 MaxIntervalSeconds),
-            ScreenField.Text("command", () => entry.Timer.Command, v => entry.Timer.Command = v)));
+            ScreenField.Text("command", () => entry.Timer.Command, v => entry.Timer.Command = v)))
+            .Concat(Buttons(sets, selected))
+            .ToArray();
 
         if (selected < 0 || selected >= entries.Count)
         {
@@ -110,6 +143,45 @@ internal static class TimersScreenRenderer
 
     /// <summary>A day; past this the value is far likelier to be a typo than a schedule.</summary>
     private const double MaxIntervalSeconds = 86400;
+
+    /// <summary>
+    /// The timer list's buttons. A timer is added to the set that owns the selection, so a new one
+    /// appears in the set the user is looking at rather than wherever the configuration ends.
+    /// <para>
+    /// There is deliberately no <c>duplicate</c> here, unlike F2 and F3. A timer is three values
+    /// (interval, command, one-shot), and two of them are exactly what you would change in the copy —
+    /// so <c>[[+ timer]]</c> and typing is no slower than duplicating and retyping, and the screen is
+    /// one row shorter for it. A button that saves nobody anything is still a cursor stop.
+    /// </para>
+    /// </summary>
+    private static List<ScreenRow> Buttons(IReadOnlyList<TriggerSet> sets, int selected)
+    {
+        var rows = new List<ScreenRow>();
+        if (ScreenLists.Target(sets, s => s.Timers, selected) is not { } target)
+        {
+            return rows;
+        }
+
+        rows.Add(ScreenRow.Of(ScreenButton.Add(
+            AddTimerLabel,
+            target.Items,
+            () => new TimerDefinition
+            {
+                Name = NewTimerName,
+                IntervalSeconds = NewTimerIntervalSeconds,
+                Command = NewTimerCommand,
+                Enabled = false,
+            },
+            target.Offset)));
+
+        if (ScreenLists.Locate(sets, s => s.Timers, selected) is { } slot)
+        {
+            rows.Add(ScreenRow.Of(ScreenButton.Remove(
+                RemoveTimerLabel, slot.Items, slot.Index, slot.Offset, slot.Items[slot.Index].Name)));
+        }
+
+        return rows;
+    }
 
     /// <summary>The action bar: which timer is selected on the left, cancel/save on the right.</summary>
     internal static string FooterLine(
@@ -141,7 +213,6 @@ internal static class TimersScreenRenderer
         if (entries.Count == 0)
         {
             lines.Add("[dim]no timers[/]");
-            return lines;
         }
 
         for (var i = 0; i < entries.Count; i++)
@@ -150,6 +221,8 @@ internal static class TimersScreenRenderer
             lines.Add(ScreenChrome.Cursor(row, cursor.IsOn(0, i), ColumnWidth));
         }
 
+        lines.Add(string.Empty);
+        lines.AddRange(ScreenChrome.Buttons(Buttons(sets, selected), cursor, 0, entries.Count, ColumnWidth));
         return lines;
     }
 
@@ -194,13 +267,20 @@ internal static class TimersScreenRenderer
         return $"{check} {marker} [bold]{name}[/] {schedule} [dim]▪ {Escape(setName)}[/] → {command}";
     }
 
+    /// <summary>
+    /// The editor rows for one timer. The name leads because it leads the row's fields: ⏎ on a timer
+    /// opens it here, which is also where one created by <c>[[+ timer]]</c> lands ready to be named.
+    /// </summary>
     private static List<string> BuildEditor(TimerDefinition timer, ScreenFocus cursor, int selected) => new()
     {
+        "[dim]name[/]",
+        $"  {ScreenChrome.Field(Escape(timer.Name), cursor.EditOn(0, selected, NameField))}",
+        string.Empty,
         "[dim]interval (seconds)[/]",
-        $"  {ScreenChrome.Field(Seconds(timer), cursor.EditOn(0, selected, 0))}",
+        $"  {ScreenChrome.Field(Seconds(timer), cursor.EditOn(0, selected, IntervalField))}",
         string.Empty,
         "[dim]command[/]",
-        $"  {ScreenChrome.Field(Escape(timer.Command), cursor.EditOn(0, selected, 1))}",
+        $"  {ScreenChrome.Field(Escape(timer.Command), cursor.EditOn(0, selected, CommandField))}",
         string.Empty,
         ScreenChrome.Cursor(Checkbox("one-shot", timer.OneShot), cursor.IsOn(1, 0), ColumnWidth),
         ScreenChrome.Cursor(Checkbox("enabled", timer.Enabled), cursor.IsOn(1, 1), ColumnWidth),

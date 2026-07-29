@@ -34,7 +34,8 @@ internal enum ScreenAction
 /// </para>
 /// <para>
 /// The keys, in one place: ↑↓ move a row and Home/End jump to a pane's first and last — End is how a
-/// pane's trailing buttons are reached without walking the selection to the end of its list; ⏎
+/// pane's trailing buttons are reached without walking the selection to the end of its list; Delete on
+/// a list row runs that pane's remove button, so the common case never needs End at all; ⏎
 /// activates the focused row when it has something to activate (a field → open an edit, a button →
 /// run it) and otherwise saves and closes; ⌃S saves from anywhere; Esc cancels the screen,
 /// except while an edit is open, where it abandons the edit and leaves the screen up. Inside an edit,
@@ -153,12 +154,43 @@ internal sealed class SettingsSession
             case ConsoleKey.End:
                 return Changed(Selection.MoveTo(int.MaxValue, model.Sizes));
 
+            case ConsoleKey.Delete:
+                return Remove(model);
+
             case ConsoleKey.Spacebar:
                 return Toggle(model);
 
             default:
                 return ScreenAction.None;
         }
+    }
+
+    /// <summary>
+    /// Delete on one of a pane's list rows runs that pane's own remove button — the same command,
+    /// the same undo, the same conditions. It exists because the drawn <c>[[- del]]</c> row sits past
+    /// the end of the list, so reaching it with ↑↓ walks the cursor over every row on the way; End
+    /// steps over them without dragging the selection along, but End is a key nothing on screen names.
+    /// Delete acts on the row the cursor is already on, which is the row the user is looking at, and
+    /// the header hint says so because <see cref="ScreenModel.HasRemovableRow"/> derives it.
+    /// <para>
+    /// It deliberately does nothing on a button row: the cursor there already has ⏎, and the row it
+    /// would delete is somewhere else on screen.
+    /// </para>
+    /// </summary>
+    private ScreenAction Remove(ScreenModel model)
+    {
+        if (!model.IsListRow(Selection.Pane, Selection.Index)
+            || model.RemoveIn(Selection.Pane) is not { } button)
+        {
+            return ScreenAction.None;
+        }
+
+        if (Edits.Apply(button) is { } select)
+        {
+            Selection.Seed(Selection.Pane, select);
+        }
+
+        return ScreenAction.Redraw;
     }
 
     private ScreenAction Toggle(ScreenModel model)

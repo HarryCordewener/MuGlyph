@@ -8,7 +8,12 @@ namespace SharpMUTerm.Core.Automation;
 /// </summary>
 public sealed class TimerDefinition
 {
-    public string Name { get; init; } = string.Empty;
+    /// <summary>
+    /// What the timer is called, for the lists that show it. Settable so the F6 screen can rename one
+    /// live; nothing is derived from it — the <see cref="IntervalScheduler"/> is handed a callback and
+    /// an interval, and never looks a timer up by name — so there is no cache to drop.
+    /// </summary>
+    public string Name { get; set; } = string.Empty;
 
     /// <summary>
     /// Seconds between firings. Values ≤ 0 are treated as disabled. Settable so the F6 screen can edit

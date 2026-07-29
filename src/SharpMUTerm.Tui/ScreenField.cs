@@ -96,6 +96,33 @@ internal readonly record struct ScreenField(
     }
 
     /// <summary>
+    /// What an item is called: the primary identifier every list screen draws in its leftmost column.
+    /// Free text, trimmed, rejected when blank or when it carries control characters — a name is drawn
+    /// into a single row of a fixed-width list, and a tab or a newline inside one would break the
+    /// column it is drawn in, exactly as it would in a tab title (see <see cref="WindowName"/>).
+    /// <para>
+    /// Deliberately <em>not</em> unique: nothing keys off these names (the engines match on patterns and
+    /// are keyed by <see cref="SharpMUTerm.Core.Automation.Macro.Key"/>), and two sets may each
+    /// legitimately hold a rule called <c>Tell</c>. Only the <c>duplicate</c> buttons name their copies
+    /// apart, and only so a fresh copy is findable in the list it lands in.
+    /// </para>
+    /// </summary>
+    internal static ScreenField Name(string label, Func<string> get, Action<string> set)
+    {
+        ArgumentNullException.ThrowIfNull(get);
+        ArgumentNullException.ThrowIfNull(set);
+
+        return new ScreenField(
+            label,
+            get,
+            value => string.IsNullOrWhiteSpace(value)
+                ? $"{label} cannot be empty"
+                : value.Any(char.IsControl) ? $"{label} cannot contain control characters" : null,
+            value => set(value.Trim()),
+            Restore(get, set));
+    }
+
+    /// <summary>
     /// Free text that may be blank, held as null when it is — the "unset, use the default" fields
     /// (a log directory, an on-connect command).
     /// </summary>

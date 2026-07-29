@@ -55,46 +55,91 @@ internal readonly record struct ScreenPress(Action Undo, int? Select = null);
 /// </summary>
 /// <param name="Label">What the button is called, for the row the renderer draws.</param>
 /// <param name="Run">Performs the change and returns the undo plus where to leave the cursor.</param>
-internal readonly record struct ScreenButton(string Label, Func<ScreenPress> Run)
+/// <param name="Kind">
+/// Whether the button builds or destroys, which is what decides how the row is drawn and whether
+/// Delete runs it. It is carried here rather than inferred from <paramref name="Label"/>, because a
+/// renderer comparing label strings to decide how to paint a row is one rename away from painting a
+/// deletion in the "add" accent.
+/// </param>
+/// <param name="Target">
+/// The row this button would act on, named on the button's own row so the screen says what is about to
+/// happen. Null for a button that acts on nothing in particular.
+/// </param>
+internal readonly record struct ScreenButton(
+    string Label,
+    Func<ScreenPress> Run,
+    ScreenButtonKind Kind = ScreenButtonKind.Add,
+    string? Target = null)
 {
     /// <summary>
     /// Appends a new item and leaves the cursor on it — a new row is worth nothing if the next
     /// keystroke has to go and find it.
+    /// <para>
+    /// <paramref name="offset"/> is how many of the pane's list rows precede <paramref name="list"/>.
+    /// It is zero when the pane <em>is</em> the list (F5's worlds), and non-zero when the pane flattens
+    /// several lists into one (F2/F3/F4/F6 show every set's rules in one column, but a rule is added to
+    /// one particular set), because the cursor is asked for a row of the pane, not an index into the
+    /// list that happens to hold the new item.
+    /// </para>
     /// </summary>
-    internal static ScreenButton Add<T>(string label, IList<T> list, Func<T> create)
+    internal static ScreenButton Add<T>(
+        string label, IList<T> list, Func<T> create, int offset = 0, string? target = null)
     {
         ArgumentNullException.ThrowIfNull(list);
         ArgumentNullException.ThrowIfNull(create);
 
-        return new ScreenButton(label, () =>
-        {
-            list.Add(create());
-            var at = list.Count - 1;
-            return new ScreenPress(() => list.RemoveAt(at), at);
-        });
+        return new ScreenButton(
+            label,
+            () =>
+            {
+                list.Add(create());
+                var at = list.Count - 1;
+                return new ScreenPress(() => list.RemoveAt(at), offset + at);
+            },
+            ScreenButtonKind.Add,
+            target);
     }
 
     /// <summary>
     /// Removes the item at <paramref name="index"/>, restoring it *at that index* on undo. The cursor
     /// stays on the same ordinal, which is now whatever followed the deleted row — the same place the
-    /// eye is.
+    /// eye is. <paramref name="offset"/> means what it does on <see cref="Add"/>.
     /// </summary>
-    internal static ScreenButton Remove<T>(string label, IList<T> list, int index)
+    internal static ScreenButton Remove<T>(
+        string label, IList<T> list, int index, int offset = 0, string? target = null)
     {
         ArgumentNullException.ThrowIfNull(list);
 
-        return new ScreenButton(label, () =>
-        {
-            if (index < 0 || index >= list.Count)
+        return new ScreenButton(
+            label,
+            () =>
             {
-                return new ScreenPress(() => { });
-            }
+                if (index < 0 || index >= list.Count)
+                {
+                    return new ScreenPress(() => { });
+                }
 
-            var removed = list[index];
-            list.RemoveAt(index);
-            return new ScreenPress(() => list.Insert(index, removed), index);
-        });
+                var removed = list[index];
+                list.RemoveAt(index);
+                return new ScreenPress(() => list.Insert(index, removed), offset + index);
+            },
+            ScreenButtonKind.Remove,
+            target);
     }
+}
+
+/// <summary>
+/// What a <see cref="ScreenButton"/> does to the list it sits under. It decides two things a screen
+/// must not get wrong: how the row is painted (a build in the accent, a destruction in the muted ink
+/// beside the name of its victim), and which button the Delete key runs.
+/// </summary>
+internal enum ScreenButtonKind
+{
+    /// <summary>Puts a row into the list — <c>[+ world]</c>, <c>[⧉ duplicate]</c>.</summary>
+    Add,
+
+    /// <summary>Takes the selected row out of it — <c>[- del]</c>, <c>[- remove]</c>.</summary>
+    Remove,
 }
 
 /// <summary>
@@ -225,6 +270,60 @@ internal sealed class ScreenModel
             return false;
         }
     }
+
+    /// <summary>
+    /// Whether any pane offers a way to take a row out. The <c>Del remove</c> hint is derived from this
+    /// the way <c>⏎ edit</c> is derived from <see cref="HasEditableRow"/>: a screen physically cannot
+    /// advertise the key without offering it.
+    /// </summary>
+    internal bool HasRemovableRow
+    {
+        get
+        {
+            for (var pane = 0; pane < _panes.Length; pane++)
+            {
+                if (RemoveIn(pane) is not null)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// A pane's destructive button, or null when it has none — what Delete runs while the cursor is on
+    /// one of that pane's list rows. Delete acts through the button rather than around it, so the key
+    /// and the drawn <c>[[- del]]</c> row are the same command with the same undo and the same
+    /// conditions: a pane that doesn't offer the button doesn't answer the key either.
+    /// </summary>
+    internal ScreenButton? RemoveIn(int pane)
+    {
+        if (pane < 0 || pane >= _panes.Length)
+        {
+            return null;
+        }
+
+        foreach (var row in _panes[pane])
+        {
+            if (row.Button is { Kind: ScreenButtonKind.Remove } button)
+            {
+                return button;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Whether a pane position is one of its *list* rows rather than one of the buttons appended after
+    /// them. Delete asks this before acting: on a button row the cursor already has ⏎, and deleting the
+    /// selection from under a row that isn't it would be the surprise the whole selection anchor exists
+    /// to prevent.
+    /// </summary>
+    internal bool IsListRow(int pane, int index) =>
+        pane >= 0 && pane < _panes.Length && index >= 0 && index < ListSizes[pane];
 
     /// <summary>The row at a cursor position, or a plain stop when that position holds nothing.</summary>
     internal ScreenRow RowAt(int pane, int index) =>

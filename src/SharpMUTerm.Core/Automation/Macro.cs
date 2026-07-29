@@ -7,7 +7,13 @@ namespace SharpMUTerm.Core.Automation;
 /// </summary>
 public sealed class Macro
 {
-    public string Name { get; init; } = string.Empty;
+    /// <summary>
+    /// What the binding is called, for the lists that show it. Settable so the F4 screen can rename one
+    /// live; nothing is derived from it — <see cref="MacroEngine"/> is keyed by <see cref="Key"/>, never
+    /// by name — so there is no cache to drop. <see cref="Key"/> deliberately stays <c>init</c>: it
+    /// <em>is</em> the engine's key, and rebinding it needs a key-capture mode rather than a text field.
+    /// </summary>
+    public string Name { get; set; } = string.Empty;
 
     /// <summary>The normalised key descriptor that triggers this macro.</summary>
     public required string Key { get; init; }

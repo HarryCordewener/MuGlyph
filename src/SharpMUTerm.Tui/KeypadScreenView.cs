@@ -1,4 +1,5 @@
 using SharpMUTerm.Core.Automation;
+using SharpMUTerm.Core.Configuration;
 using SharpConsoleUI;
 using SharpConsoleUI.Builders;
 using SharpConsoleUI.Controls;
@@ -18,17 +19,23 @@ internal static class KeypadScreenView
 {
     private const int NumpadColumnWidth = 50;
 
-    public static IWindowControl Build(IReadOnlyList<Macro> macros, int width, ScreenFocus? focus = null)
+    public static IWindowControl Build(
+        IReadOnlyList<Macro> macros,
+        IReadOnlyList<TriggerSet> sets,
+        int selected,
+        int width,
+        ScreenFocus? focus = null)
     {
         var header = ScreenChrome.Band(
-            KeypadScreenRenderer.HeaderLine(width, KeypadScreenRenderer.Model(macros), focus),
+            KeypadScreenRenderer.HeaderLine(width, KeypadScreenRenderer.Model(macros, sets, selected), focus),
             ScreenPalette.HeaderBg);
-        var footer = ScreenChrome.Band(KeypadScreenRenderer.FooterLine(macros, width, focus), ScreenPalette.FooterBg);
+        var footer = ScreenChrome.Band(
+            KeypadScreenRenderer.FooterLine(macros, width, focus, selected), ScreenPalette.FooterBg);
 
         // Body: numpad grid │ hotkey list, as two real columns.
         var numpadCol = ScreenChrome.Stretch(new MarkupControl(KeypadScreenRenderer.NumpadColumn(macros)));
-        var hotkeysCol = ScreenChrome.Stretch(
-            new MarkupControl(ScreenChrome.Indent(KeypadScreenRenderer.HotkeysColumn(macros, focus))));
+        var hotkeysCol = ScreenChrome.Stretch(new MarkupControl(
+            ScreenChrome.Indent(KeypadScreenRenderer.HotkeysColumn(macros, focus, sets, selected))));
         var body = Controls.HorizontalGrid()
             .WithAlignment(HorizontalAlignment.Stretch)
             .WithVerticalAlignment(VerticalAlignment.Fill)

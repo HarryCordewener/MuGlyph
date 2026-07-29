@@ -53,7 +53,11 @@ public class ScreenModelTests
         var model = TriggersScreenRenderer.Model(sets, selectedTrigger: 0);
 
         await Assert.That(model.PaneCount).IsEqualTo(2);
-        await Assert.That(model.Sizes[0]).IsEqualTo(2);
+
+        // Two rules, then the pane's own [+ trigger] / [⧉ duplicate] / [- del]. The list count is what
+        // every index below addresses and is unchanged; the buttons are appended after it.
+        await Assert.That(model.ListSizes[0]).IsEqualTo(2);
+        await Assert.That(model.Sizes[0]).IsEqualTo(5);
         await Assert.That(model.Sizes[1]).IsEqualTo(2);
 
         model.ToggleAt(0, 1)!.Value.Flip();
@@ -81,7 +85,10 @@ public class ScreenModelTests
         var model = AliasesScreenRenderer.Model(sets, selected: 0);
 
         await Assert.That(model.PaneCount).IsEqualTo(2);
-        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 1, 1 });
+
+        // One alias, then [+ alias] / [⧉ duplicate] / [- del].
+        await Assert.That(model.ListSizes).IsEquivalentTo(new[] { 1, 1 });
+        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 4, 1 });
 
         model.ToggleAt(0, 0)!.Value.Flip();
         await Assert.That(sets[0].Aliases[0].Enabled).IsFalse();
@@ -109,7 +116,9 @@ public class ScreenModelTests
         var sets = Sets();
         var model = TimersScreenRenderer.Model(sets, selected: 0);
 
-        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 1, 2 });
+        // One timer, then [+ timer] / [- del] — no duplicate, deliberately (see TimersScreenRenderer).
+        await Assert.That(model.ListSizes).IsEquivalentTo(new[] { 1, 2 });
+        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 3, 2 });
 
         model.ToggleAt(1, 0)!.Value.Flip();
         await Assert.That(sets[0].Timers[0].OneShot).IsTrue();
@@ -125,10 +134,30 @@ public class ScreenModelTests
         var model = KeypadScreenRenderer.Model(macros);
 
         await Assert.That(model.PaneCount).IsEqualTo(1);
+
+        // Handed no sets, the screen is the list and nothing else: a macro's home is a set, and without
+        // one there is nowhere to add a binding to and no list to remove one from.
         await Assert.That(model.Sizes[0]).IsEqualTo(1);
 
         model.ToggleAt(0, 0)!.Value.Flip();
         await Assert.That(macros[0].Enabled).IsFalse();
+    }
+
+    /// <summary>
+    /// Handed the sets the bindings live in, the pane grows the same buttons every other list screen
+    /// has: one binding, then <c>[+ binding]</c> and <c>[- del]</c>. There is no duplicate — a copy
+    /// would land on the key its original already holds, and the second macro on a key never fires.
+    /// </summary>
+    [Test]
+    public async Task Keypad_GrowsItsButtonsOnceItKnowsWhichSetsTheBindingsLiveIn()
+    {
+        var sets = Sets();
+        var model = KeypadScreenRenderer.Model(sets[0].Macros, sets, selected: 0);
+
+        await Assert.That(model.ListSizes[0]).IsEqualTo(1);
+        await Assert.That(model.Sizes[0]).IsEqualTo(3);
+        await Assert.That(model.ButtonAt(0, 1)!.Value.Label).IsEqualTo(KeypadScreenRenderer.AddBindingLabel);
+        await Assert.That(model.ButtonAt(0, 2)!.Value.Label).IsEqualTo(KeypadScreenRenderer.RemoveBindingLabel);
     }
 
     [Test]

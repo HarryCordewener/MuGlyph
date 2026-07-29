@@ -102,15 +102,15 @@ internal static class DemoScene
             // the 3x3 grid doing its job (and one command long enough to be ellipsised).
             Macros =
             {
-                new Macro { Key = "Num7", Command = "northwest" },
-                new Macro { Key = "Num8", Command = "north" },
-                new Macro { Key = "Num9", Command = "northeast" },
-                new Macro { Key = "Num4", Command = "west" },
-                new Macro { Key = "Num5", Command = "look" },
-                new Macro { Key = "Num6", Command = "east" },
-                new Macro { Key = "Num1", Command = "look at altar" },
-                new Macro { Key = "Num2", Command = "south" },
-                new Macro { Key = "Ctrl+F1", Command = "score" },
+                new Macro { Name = "walk NW", Key = "Num7", Command = "northwest" },
+                new Macro { Name = "walk N", Key = "Num8", Command = "north" },
+                new Macro { Name = "walk NE", Key = "Num9", Command = "northeast" },
+                new Macro { Name = "walk W", Key = "Num4", Command = "west" },
+                new Macro { Name = "look", Key = "Num5", Command = "look" },
+                new Macro { Name = "walk E", Key = "Num6", Command = "east" },
+                new Macro { Name = "altar", Key = "Num1", Command = "look at altar" },
+                new Macro { Name = "walk S", Key = "Num2", Command = "south" },
+                new Macro { Name = "score", Key = "Ctrl+F1", Command = "score" },
             },
             Timers = { new TimerDefinition { Name = "keepalive", IntervalSeconds = 60, Command = "@@idle" } },
         });

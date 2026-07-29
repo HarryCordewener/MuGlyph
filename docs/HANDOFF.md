@@ -4,8 +4,8 @@ Context for whoever (human or agent) picks up this work next.
 
 - **Repository:** `SharpMUSH/SharpMUTerm`
 - **Start from:** a fresh branch off `main`
-- **Tests:** 857 across the solution (330 Core / 83 Graphics / 42 Scripting /
-  28 Web / 374 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
+- **Tests:** 894 across the solution (336 Core / 83 Graphics / 42 Scripting /
+  28 Web / 405 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
   from this repo; building against a local SharpConsoleUI clone surfaces 2 upstream
   NuGet advisory warnings for AngleSharp, which are the framework's, not ours)
 
@@ -21,16 +21,43 @@ polish/feature backlog.
 **Done** — see *Settings screens* under Critical Gotchas for how the whole thing
 works.
 
-- **Add/remove rows** are live. `[+ world]` / `[- del]` and `[+ add character]` /
-  `[⧉ duplicate]` / `[- remove]` are `ScreenRow`s carrying a `ScreenButton`; ⏎
-  runs one. The button rows changed two pinned row-count assertions in
-  `ScreenModelTests` (`Worlds_HasWorldsThenCharactersThenTriggerSets` `{2,2,1}` →
-  `{4,5,1}`, `Worlds_CharacterAndTriggerSetPanesAreEmptyForAWorldWithNoCharacters`
-  `{2,0,0}` → `{4,1,0}`); the shape was accepted and the counts renumbered.
+- **Add/remove rows** are live **on all five list screens**. `[+ world]` / `[- del]`
+  and `[+ add character]` / `[⧉ duplicate]` / `[- remove]` on F5; `[+ trigger]` /
+  `[⧉ duplicate]` / `[- del]` on F2; `[+ alias]` / `[⧉ duplicate]` / `[- del]` on
+  F3; `[+ timer]` / `[- del]` on F6; `[+ binding] Num<n>` / `[- del]` on F4. All
+  are `ScreenRow`s carrying a `ScreenButton`; ⏎ runs one, and Delete on a list row
+  runs that pane's remove button. The button rows changed pinned row counts in
+  `ScreenModelTests`, twice: F5's (`{2,2,1}` → `{4,5,1}` and `{2,0,0}` → `{4,1,0}`),
+  then F2/F3/F6's when they grew the same buttons (`Sizes[0]` 2 → 5, `{1,1}` →
+  `{4,1}`, `{1,2}` → `{3,2}`). The second round asserts `ListSizes` *as well*, so
+  the original pinned meaning ("this pane holds two rules") is still asserted and
+  the total is asserted separately.
+- **No `duplicate` on F6 or F4, deliberately.** A timer is three values, two of
+  which you would change in the copy, so `[+ timer]` and typing is no slower. A
+  macro is identified by its `Key`, which this screen cannot edit — a copy would
+  land on the key its original already holds, and the second macro on a key never
+  fires (`MacroEngine` is a dictionary), so the button's only possible result is a
+  dead row.
+- **F4's add button claims a numpad key and says which** (`[+ binding] Num3`),
+  because a binding created on an unnamed key would be unfixable from this screen.
+  Once all ten digits are bound the button isn't drawn at all.
+- **New items:** trigger and alias arrive enabled, timer arrives **disabled**. A
+  timer is the only one of the four that acts without being provoked; the others
+  wait for output or for a keypress.
 - **F2's route-to radios and highlight-colour picker** are live, as `Choice` and
   `Colour` fields on the *rule's own list row* (ordinals: pattern, route,
   highlight fg, highlight bg). ↑↓ cycle them, which is exactly radio and palette
   semantics, and the editor pane keeps the two checkbox rows it always had.
+- **Every item's name is editable**, and is the **first** field of its list row on
+  all five screens, so ⏎ on a row — and on a row `[+ …]` just created — opens the
+  one value that tells it apart. `ScreenField.Name` is the shared validator: not
+  blank, no control characters (a name is drawn into one row of a fixed-width
+  list), trimmed, and deliberately **not** unique — nothing keys off these names,
+  and two sets may each hold a rule called `Tell`. Only `duplicate` renames its
+  copy, and only so it is findable. `Trigger`/`Alias`/`TimerDefinition`/`Macro`
+  `Name` went `init` → `set`; none of them has cached derived state (checked:
+  the engines match on patterns and `MacroEngine` is keyed by `Macro.Key`), which
+  `AutomationCloneTests.RenamingLeavesTheCompiledMatcherAlone` pins.
 - **Rows still not editable** (deliberately): a macro's *key* (rebinding needs a
   key-capture mode, not a text buffer), a character's password (it is
   `[JsonIgnore]` and belongs in a credential store), a world's TLS/certificate
@@ -43,10 +70,14 @@ works.
 All three are covered by headless snapshots only. Nobody has looked at them in a
 real terminal.
 
-- **The F5 button rows** — `End` is what reaches a pane's buttons without
-  dragging the selection to the end of its list, and nothing on screen says so.
-  Watch someone try to delete a world and see whether they find it; if not, the
-  fix is a hint or a `Delete`-on-the-row binding, not a bigger button.
+- **The button rows** — this was "`End` reaches a pane's buttons and nothing on
+  screen says so". The fix landed: **Delete on a list row runs that pane's remove
+  button**, and the header advertises `Del remove` (derived from
+  `ScreenModel.HasRemovableRow`, so it cannot claim the key without offering it).
+  End still exists and still doesn't re-anchor — it is how you reach `[+ …]`,
+  which has no key of its own. What is still owed is watching someone use it:
+  does `Del remove` in the hint strip actually get read, and is reaching `[+ …]`
+  by ↑↓ (which does drag the selection) tolerable?
 - **Full-width input band** — confirm it holds across resizes. The width is
   pinned imperatively (`SyncInputWidth`), so a resize is the risky case.
 - **Mouse drag-to-split** — nobody has done it with an actual mouse. What is
@@ -294,8 +325,21 @@ What the framework actually provides (read at v2.5.14, not assumed):
   leaves the detail column (and `[- del]`) pointed where it was. Screens must
   read `SelectionIn(pane)`, **not** `CursorIn(pane)`, for "what is selected".
   **End** jumps to a pane's last row without re-anchoring, which is the only way
-  to reach a button without walking the selection down the whole list; the
-  targeted buttons also name their victim (`[- del] Grapevine`).
+  to reach `[[+ …]]` without walking the selection down the whole list; the
+  targeted buttons also name their victim (`[- del] Grapevine`), which they carry
+  themselves (`ScreenButton.Target`) rather than the renderer guessing from the
+  label. **Delete** on a list row runs that pane's `Remove`-kind button — the same
+  command, the same undo, the same conditions — which is the discoverable path to
+  the common case; on a button row it does nothing, and mid-edit it belongs to the
+  buffer. Panes flattened across trigger sets (F2/F3/F4/F6) go through
+  `ScreenLists.Locate`/`Target` to translate between an index into the owning set's
+  list and a row of the pane; `ScreenButton`'s `offset` is that translation.
+- **A row's fields lead with its name.** Ordinal 0 is the name on all five list
+  screens, and the ordinals are `internal const`s on each renderer
+  (`TriggersScreenRenderer.PatternField`, …) rather than literals, because the
+  renderer, the model and the tests all address the same numbers — inserting a
+  field otherwise silently draws the caret on the wrong row. The `-edit` snapshot
+  key scripts step through them too, so they move when the ordinals do.
 - **Fields hang off existing rows, never off new ones.** A world's name/host/port/
   encoding/keepalive are the *WORLDS-list row's* fields, drawn in the detail
   column; a timer's interval/command are the *timer row's*, drawn in the editor

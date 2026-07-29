@@ -24,6 +24,37 @@ internal static class AliasesScreenRenderer
     internal const int ColumnWidth = 56;
 
     /// <summary>
+    /// The alias row's field ordinals, in the order ⇥ steps through them. The name leads, as it does on
+    /// every list screen: ⏎ on an alias — including one just created — opens the value that tells it
+    /// apart from its neighbours. Named rather than written as literals because the renderer, the model
+    /// and the tests all address the same ordinals.
+    /// </summary>
+    internal const int NameField = 0;
+
+    internal const int PatternField = 1;
+
+    internal const int ExpansionField = 2;
+
+    /// <summary>The labels the alias list's buttons carry, in the order they are drawn.</summary>
+    internal const string AddAliasLabel = "+ alias";
+
+    internal const string DuplicateAliasLabel = "⧉ duplicate";
+
+    internal const string RemoveAliasLabel = "- del";
+
+    /// <summary>
+    /// What a brand-new alias is called, matches and expands to. None of the three may be blank —
+    /// <see cref="ScreenField.Pattern"/> refuses an empty regex and <see cref="ScreenField.Lines"/> an
+    /// empty expansion — so a new alias is a working placeholder rather than an empty shell that
+    /// couldn't be committed. It is left enabled because an alias only acts on input the user types.
+    /// </summary>
+    private const string NewAliasName = "New Alias";
+
+    private const string NewAliasPattern = "^alias$";
+
+    private const string NewAliasSubstitution = "look";
+
+    /// <summary>
     /// Merges every sub-block into one line list (header, alias list | editor, footer). Used by the
     /// unit tests and as a width-agnostic fallback; the live view composes the same blocks into
     /// panels instead.
@@ -60,7 +91,7 @@ internal static class AliasesScreenRenderer
     {
         var title = $"[bold {Value}] Aliases[/]";
         var hints = ScreenChrome.Hints(
-            ScreenChrome.ListHints, "F3", model?.HasEditableRow ?? false, focus);
+            ScreenChrome.ListHints, "F3", model?.HasEditableRow ?? false, focus, model?.HasRemovableRow ?? false);
         return SpreadLR(" " + title, hints, width);
     }
 
@@ -77,8 +108,11 @@ internal static class AliasesScreenRenderer
         var entries = Flatten(sets);
         var list = ScreenModel.Rows(entries, entry => ScreenRow.Of(
             ScreenToggle.Bind(() => entry.Alias.Enabled, v => entry.Alias.Enabled = v),
+            ScreenField.Name("name", () => entry.Alias.Name, v => entry.Alias.Name = v),
             ScreenField.Pattern("match pattern", () => entry.Alias.Pattern, v => entry.Alias.Pattern = v),
-            ScreenField.Lines("expansion", () => entry.Alias.Substitution, v => entry.Alias.Substitution = v)));
+            ScreenField.Lines("expansion", () => entry.Alias.Substitution, v => entry.Alias.Substitution = v)))
+            .Concat(Buttons(sets, selected))
+            .ToArray();
 
         if (selected < 0 || selected >= entries.Count)
         {
@@ -92,6 +126,58 @@ internal static class AliasesScreenRenderer
         };
 
         return new ScreenModel(list, editor);
+    }
+
+    /// <summary>
+    /// The alias list's buttons. Like F2's, an alias is added to the set that owns the selection, so a
+    /// new one appears in the set the user is looking at rather than wherever the configuration ends.
+    /// <para>
+    /// <c>duplicate</c> is offered here for the same reason it is on F2 and not on F6: an alias carries
+    /// a regex and a multi-line expansion, and aliases come in families that share the shape of both —
+    /// copying one and changing a word is the real workflow. It copies through
+    /// <see cref="Alias.Clone"/> and renames the copy so it can be told apart in the list.
+    /// </para>
+    /// </summary>
+    private static List<ScreenRow> Buttons(IReadOnlyList<TriggerSet> sets, int selected)
+    {
+        var rows = new List<ScreenRow>();
+        if (ScreenLists.Target(sets, s => s.Aliases, selected) is not { } target)
+        {
+            return rows;
+        }
+
+        rows.Add(ScreenRow.Of(ScreenButton.Add(
+            AddAliasLabel,
+            target.Items,
+            () => new Alias
+            {
+                Name = NewAliasName,
+                Pattern = NewAliasPattern,
+                Substitution = NewAliasSubstitution,
+            },
+            target.Offset)));
+
+        if (ScreenLists.Locate(sets, s => s.Aliases, selected) is not { } slot)
+        {
+            return rows;
+        }
+
+        var source = slot.Items[slot.Index];
+        rows.Add(ScreenRow.Of(ScreenButton.Add(
+            DuplicateAliasLabel,
+            slot.Items,
+            () =>
+            {
+                var copy = source.Clone();
+                copy.Name = ScreenLists.Unique(sets.SelectMany(s => s.Aliases).Select(a => a.Name), source.Name);
+                return copy;
+            },
+            slot.Offset,
+            source.Name)));
+        rows.Add(ScreenRow.Of(ScreenButton.Remove(
+            RemoveAliasLabel, slot.Items, slot.Index, slot.Offset, source.Name)));
+
+        return rows;
     }
 
     /// <summary>The action bar: which alias is selected on the left, cancel/save on the right.</summary>
@@ -124,7 +210,6 @@ internal static class AliasesScreenRenderer
         if (entries.Count == 0)
         {
             lines.Add("[dim]no aliases[/]");
-            return lines;
         }
 
         for (var i = 0; i < entries.Count; i++)
@@ -133,6 +218,8 @@ internal static class AliasesScreenRenderer
             lines.Add(ScreenChrome.Cursor(row, cursor.IsOn(0, i), ColumnWidth));
         }
 
+        lines.Add(string.Empty);
+        lines.AddRange(ScreenChrome.Buttons(Buttons(sets, selected), cursor, 0, entries.Count, ColumnWidth));
         return lines;
     }
 
@@ -179,10 +266,15 @@ internal static class AliasesScreenRenderer
 
     private static List<string> BuildEditor(Alias alias, ScreenFocus cursor, int selected)
     {
+        // The name leads the editor because it leads the row's fields: ⏎ on an alias opens it here,
+        // which is also where one created by [+ alias] lands ready to be called something.
         var lines = new List<string>
         {
+            "[dim]name[/]",
+            $"  {ScreenChrome.Field(Escape(alias.Name), cursor.EditOn(0, selected, NameField))}",
+            string.Empty,
             "[dim]match pattern (regex)[/]",
-            $"  {ScreenChrome.Field(Escape(alias.Pattern), cursor.EditOn(0, selected, 0))}",
+            $"  {ScreenChrome.Field(Escape(alias.Pattern), cursor.EditOn(0, selected, PatternField))}",
             string.Empty,
             "[dim]expands to[/]",
         };
@@ -190,7 +282,7 @@ internal static class AliasesScreenRenderer
         // An expansion is one command per line, so it normally lists. While it is being typed it is a
         // single buffer with the breaks written \n (see ScreenField.Lines), and it has to be drawn the
         // way it is being edited — one row — or the caret would have nowhere honest to sit.
-        if (cursor.EditOn(0, selected, 1) is { } expansion)
+        if (cursor.EditOn(0, selected, ExpansionField) is { } expansion)
         {
             lines.Add("  " + ScreenChrome.Field(string.Empty, expansion));
         }

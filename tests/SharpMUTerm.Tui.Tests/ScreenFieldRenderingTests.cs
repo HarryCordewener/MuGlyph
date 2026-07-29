@@ -111,7 +111,7 @@ public class ScreenFieldRenderingTests
     public async Task Triggers_DrawsThePatternBufferUnderItsOwnLabel()
     {
         var lines = TriggersScreenRenderer.EditorColumn(
-            Sets(), 0, Array.Empty<string>(), Edit(0, 0, 0, "pages you"));
+            Sets(), 0, Array.Empty<string>(), Edit(0, 0, TriggersScreenRenderer.PatternField, "pages you"));
 
         await Assert.That(Carets(lines)).IsEqualTo(1);
         var edited = lines.Single(HasCaret);
@@ -119,47 +119,86 @@ public class ScreenFieldRenderingTests
         await Assert.That(lines[lines.IndexOf(edited) - 1]).Contains("match pattern");
     }
 
+    /// <summary>
+    /// The name is the first field of every list row, so it is the one ⏎ opens — and the editor pane
+    /// has to draw it, or ⏎ on a freshly added rule would type into a value nothing on screen shows.
+    /// </summary>
     [Test]
-    public async Task Aliases_DrawsThePatternAndCollapsesTheExpansionToTheRowBeingTyped()
+    public async Task Triggers_DrawsTheNameBufferUnderItsOwnLabel()
+    {
+        var lines = TriggersScreenRenderer.EditorColumn(
+            Sets(), 0, Array.Empty<string>(), Edit(0, 0, TriggersScreenRenderer.NameField, "Whisper"));
+
+        await Assert.That(Carets(lines)).IsEqualTo(1);
+        var edited = lines.Single(HasCaret);
+        await Assert.That(edited).Contains("Whispe");
+        await Assert.That(lines[lines.IndexOf(edited) - 1]).Contains("name");
+    }
+
+    [Test]
+    public async Task Aliases_DrawsTheNamePatternAndCollapsesTheExpansionToTheRowBeingTyped()
     {
         var sets = Sets();
 
-        var pattern = AliasesScreenRenderer.EditorColumn(sets, 0, Edit(0, 0, 0, "^kk$"));
+        var name = AliasesScreenRenderer.EditorColumn(sets, 0, Edit(0, 0, AliasesScreenRenderer.NameField, "kk"));
+        await Assert.That(Carets(name)).IsEqualTo(1);
+        await Assert.That(name.Single(HasCaret)).Contains("kk");
+
+        var pattern = AliasesScreenRenderer.EditorColumn(
+            sets, 0, Edit(0, 0, AliasesScreenRenderer.PatternField, "^kk$"));
         await Assert.That(Carets(pattern)).IsEqualTo(1);
         await Assert.That(pattern.Single(HasCaret)).Contains("^kk$");
 
         // Off-edit the expansion lists one command per line; being typed it is one escaped row.
         await Assert.That(AliasesScreenRenderer.EditorColumn(sets, 0).Count(l => l.Contains("say done"))).IsEqualTo(1);
 
-        var expansion = AliasesScreenRenderer.EditorColumn(sets, 0, Edit(0, 0, 1, @"kill $1\nsay done"));
+        var expansion = AliasesScreenRenderer.EditorColumn(
+            sets, 0, Edit(0, 0, AliasesScreenRenderer.ExpansionField, @"kill $1\nsay done"));
         await Assert.That(Carets(expansion)).IsEqualTo(1);
         await Assert.That(expansion.Single(HasCaret)).Contains(@"kill $1\nsay don");
     }
 
     [Test]
-    public async Task Timers_DrawsTheIntervalAndCommandBuffers()
+    public async Task Timers_DrawsTheNameIntervalAndCommandBuffers()
     {
         var sets = Sets();
 
-        var interval = TimersScreenRenderer.EditorColumn(sets, 0, Edit(0, 0, 0, "45"));
+        var name = TimersScreenRenderer.EditorColumn(sets, 0, Edit(0, 0, TimersScreenRenderer.NameField, "pong"));
+        await Assert.That(Carets(name)).IsEqualTo(1);
+        await Assert.That(name.Single(HasCaret)).Contains("pon");
+
+        var interval = TimersScreenRenderer.EditorColumn(
+            sets, 0, Edit(0, 0, TimersScreenRenderer.IntervalField, "45"));
         await Assert.That(Carets(interval)).IsEqualTo(1);
         await Assert.That(interval.Single(HasCaret)).Contains("45");
 
-        var command = TimersScreenRenderer.EditorColumn(sets, 0, Edit(0, 0, 1, "score"));
+        var command = TimersScreenRenderer.EditorColumn(
+            sets, 0, Edit(0, 0, TimersScreenRenderer.CommandField, "score"));
         await Assert.That(command.Single(HasCaret)).Contains("scor");
     }
 
+    /// <summary>
+    /// F4 has no editor pane, so both of a binding's editable values are drawn — and typed — in the
+    /// binding row itself, on either side of the key it is bound to.
+    /// </summary>
     [Test]
-    public async Task Keypad_DrawsTheCommandBufferInTheBindingRowItself()
+    public async Task Keypad_DrawsTheNameAndCommandBuffersInTheBindingRowItself()
     {
         var macros = Sets()[0].Macros;
 
-        var lines = KeypadScreenRenderer.HotkeysColumn(macros, Edit(0, 0, 0, "look here"));
+        var command = KeypadScreenRenderer.HotkeysColumn(
+            macros, Edit(0, 0, KeypadScreenRenderer.CommandField, "look here"));
 
-        await Assert.That(Carets(lines)).IsEqualTo(1);
-        var edited = lines.Single(HasCaret);
+        await Assert.That(Carets(command)).IsEqualTo(1);
+        var edited = command.Single(HasCaret);
         await Assert.That(edited).Contains("Num5");
         await Assert.That(edited).Contains("look her");
+
+        var name = KeypadScreenRenderer.HotkeysColumn(
+            macros, Edit(0, 0, KeypadScreenRenderer.NameField, "Survey"));
+
+        await Assert.That(Carets(name)).IsEqualTo(1);
+        await Assert.That(name.Single(HasCaret)).Contains("Surve");
     }
 
     [Test]
@@ -191,7 +230,8 @@ public class ScreenFieldRenderingTests
     [Test]
     public async Task BracketsTypedIntoABufferAreEscaped_NotRenderedAsMarkup()
     {
-        var lines = KeypadScreenRenderer.HotkeysColumn(Sets()[0].Macros, Edit(0, 0, 0, "say [red]hi"));
+        var lines = KeypadScreenRenderer.HotkeysColumn(
+            Sets()[0].Macros, Edit(0, 0, KeypadScreenRenderer.CommandField, "say [red]hi"));
 
         var edited = lines.Single(HasCaret);
         await Assert.That(edited).Contains("[[red]]hi");

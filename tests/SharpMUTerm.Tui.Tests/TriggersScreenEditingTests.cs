@@ -48,14 +48,16 @@ public class TriggersScreenEditingTests
         var sets = Sets();
         var model = TriggersScreenRenderer.Model(sets, 0, Targets);
 
-        await Assert.That(model.RowAt(0, 0).FieldCount).IsEqualTo(4);
-        await Assert.That(model.FieldAt(0, 0, 0)!.Value.Get()).IsEqualTo("tells you");
-        await Assert.That(model.FieldAt(0, 0, 1)!.Value.Get()).IsEqualTo("Chat");
-        await Assert.That(model.FieldAt(0, 0, 2)!.Value.Get()).IsEqualTo("gold");
-        await Assert.That(model.FieldAt(0, 0, 3)!.Value.Get()).IsEqualTo("none");
+        // The name leads, then the four values the editor pane draws.
+        await Assert.That(model.RowAt(0, 0).FieldCount).IsEqualTo(5);
+        await Assert.That(model.FieldAt(0, 0, TriggersScreenRenderer.NameField)!.Value.Get()).IsEqualTo("Tell");
+        await Assert.That(model.FieldAt(0, 0, TriggersScreenRenderer.PatternField)!.Value.Get()).IsEqualTo("tells you");
+        await Assert.That(model.FieldAt(0, 0, TriggersScreenRenderer.RouteField)!.Value.Get()).IsEqualTo("Chat");
+        await Assert.That(model.FieldAt(0, 0, TriggersScreenRenderer.ForegroundField)!.Value.Get()).IsEqualTo("gold");
+        await Assert.That(model.FieldAt(0, 0, TriggersScreenRenderer.BackgroundField)!.Value.Get()).IsEqualTo("none");
 
-        // The editor pane keeps exactly the two checkbox rows it had — the route and the colours are
-        // one setting each, so they are fields on the rule, not new cursor stops.
+        // The editor pane keeps exactly the two checkbox rows it had — the route, the colours and the
+        // name are one setting each, so they are fields on the rule, not new cursor stops.
         await Assert.That(model.Sizes[1]).IsEqualTo(2);
     }
 
@@ -64,12 +66,12 @@ public class TriggersScreenEditingTests
     {
         var sets = Sets();
 
-        var known = TriggersScreenRenderer.Model(sets, 0, Targets).FieldAt(0, 0, 1)!.Value.Choices;
+        var known = TriggersScreenRenderer.Model(sets, 0, Targets).FieldAt(0, 0, TriggersScreenRenderer.RouteField)!.Value.Choices;
         await Assert.That(known).IsEquivalentTo(new[] { "main", "Chat", "pages", "trade" });
 
         // A rule pointed at a window the workspace has no record of still offers — and keeps — its own
         // value, rather than being refused by its own field.
-        var unknown = TriggersScreenRenderer.Model(sets, 0).FieldAt(0, 0, 1)!.Value;
+        var unknown = TriggersScreenRenderer.Model(sets, 0).FieldAt(0, 0, TriggersScreenRenderer.RouteField)!.Value;
         await Assert.That(unknown.Choices).IsEquivalentTo(new[] { "main", "Chat" });
         await Assert.That(unknown.Validate("Chat")).IsNull();
     }
@@ -81,10 +83,10 @@ public class TriggersScreenEditingTests
         var trigger = sets[0].Triggers[0];
         var edits = new ScreenEdits();
 
-        edits.Apply(TriggersScreenRenderer.Model(sets, 0, Targets).FieldAt(0, 0, 1)!.Value, "main");
+        edits.Apply(TriggersScreenRenderer.Model(sets, 0, Targets).FieldAt(0, 0, TriggersScreenRenderer.RouteField)!.Value, "main");
         await Assert.That(trigger.Actions.SpawnTarget).IsNull();
 
-        edits.Apply(TriggersScreenRenderer.Model(sets, 0, Targets).FieldAt(0, 0, 1)!.Value, "trade");
+        edits.Apply(TriggersScreenRenderer.Model(sets, 0, Targets).FieldAt(0, 0, TriggersScreenRenderer.RouteField)!.Value, "trade");
         await Assert.That(trigger.Actions.SpawnTarget).IsEqualTo("trade");
 
         edits.Revert();
@@ -101,7 +103,7 @@ public class TriggersScreenEditingTests
     {
         var sets = Sets();
         var trigger = sets[0].Triggers[0];
-        var field = TriggersScreenRenderer.Model(sets, 0, Targets).FieldAt(0, 0, 1)!.Value;
+        var field = TriggersScreenRenderer.Model(sets, 0, Targets).FieldAt(0, 0, TriggersScreenRenderer.RouteField)!.Value;
 
         await Assert.That(field.Validate("nowhere")).IsNull();
         await Assert.That(new ScreenEdits().Apply(field, "nowhere")).IsNull();
@@ -112,7 +114,7 @@ public class TriggersScreenEditingTests
     [Test]
     public async Task ARouteIsRefusedWhenBlankOrCarryingControlCharacters()
     {
-        var field = TriggersScreenRenderer.Model(Sets(), 0, Targets).FieldAt(0, 0, 1)!.Value;
+        var field = TriggersScreenRenderer.Model(Sets(), 0, Targets).FieldAt(0, 0, TriggersScreenRenderer.RouteField)!.Value;
 
         await Assert.That(field.Validate("   ")).IsNotNull();
         await Assert.That(field.Validate("chat\tspam")).IsNotNull();
@@ -132,8 +134,9 @@ public class TriggersScreenEditingTests
         var session = new SettingsSession(
             selection => TriggersScreenRenderer.Model(sets, selection.CursorIn(0), Targets));
 
-        session.Handle(Key(ConsoleKey.Enter)); // opens the pattern
-        session.Handle(Key(ConsoleKey.Tab));   // commits it, steps to the route
+        session.Handle(Key(ConsoleKey.Enter)); // opens the name
+        session.Handle(Key(ConsoleKey.Tab));   // commits it, steps to the pattern
+        session.Handle(Key(ConsoleKey.Tab));   // commits that, steps to the route
 
         // Clear the opened value ("Chat") before typing, as anyone renaming the route would.
         for (var i = 0; i < "Chat".Length; i++)
@@ -167,8 +170,9 @@ public class TriggersScreenEditingTests
         var session = new SettingsSession(
             selection => TriggersScreenRenderer.Model(sets, selection.CursorIn(0), Targets));
 
-        session.Handle(Key(ConsoleKey.Enter)); // opens the pattern
-        session.Handle(Key(ConsoleKey.Tab));   // commits it, steps to the route
+        session.Handle(Key(ConsoleKey.Enter)); // opens the name
+        session.Handle(Key(ConsoleKey.Tab));   // commits it, steps to the pattern
+        session.Handle(Key(ConsoleKey.Tab));   // commits that, steps to the route
         await Assert.That(session.Focus().Edit!.Value.Text).IsEqualTo("Chat");
         await Assert.That(session.Focus().Edit!.Value.HasChoices).IsTrue();
 
@@ -187,6 +191,7 @@ public class TriggersScreenEditingTests
         // Wrapping backwards off "main" lands on the last window, not on nothing.
         session.Handle(Key(ConsoleKey.Enter));
         session.Handle(Key(ConsoleKey.Tab));
+        session.Handle(Key(ConsoleKey.Tab));
         session.Handle(Key(ConsoleKey.UpArrow));
         session.Handle(Key(ConsoleKey.UpArrow));
         await Assert.That(session.Focus().Edit!.Value.Text).IsEqualTo("main");
@@ -201,10 +206,10 @@ public class TriggersScreenEditingTests
         var trigger = sets[0].Triggers[0];
         var edits = new ScreenEdits();
 
-        edits.Apply(TriggersScreenRenderer.Model(sets, 0, Targets).FieldAt(0, 0, 2)!.Value, "none");
+        edits.Apply(TriggersScreenRenderer.Model(sets, 0, Targets).FieldAt(0, 0, TriggersScreenRenderer.ForegroundField)!.Value, "none");
         await Assert.That(trigger.Actions.HighlightForeground).IsNull();
 
-        edits.Apply(TriggersScreenRenderer.Model(sets, 0, Targets).FieldAt(0, 0, 3)!.Value, "blue");
+        edits.Apply(TriggersScreenRenderer.Model(sets, 0, Targets).FieldAt(0, 0, TriggersScreenRenderer.BackgroundField)!.Value, "blue");
         await Assert.That(trigger.Actions.HighlightBackground)
             .IsEqualTo(TerminalColor.FromRgb(0x00, 0x00, 0xff));
 
@@ -225,7 +230,7 @@ public class TriggersScreenEditingTests
     {
         var sets = Sets();
         sets[0].Triggers[0].Actions.HighlightForeground = TerminalColor.FromRgb(0x12, 0x34, 0x56);
-        var field = TriggersScreenRenderer.Model(sets, 0, Targets).FieldAt(0, 0, 2)!.Value;
+        var field = TriggersScreenRenderer.Model(sets, 0, Targets).FieldAt(0, 0, TriggersScreenRenderer.ForegroundField)!.Value;
 
         await Assert.That(field.Get()).IsEqualTo("#123456");
         await Assert.That(field.Validate(field.Get())).IsNull();
@@ -261,7 +266,8 @@ public class TriggersScreenEditingTests
 
         session.Handle(Key(ConsoleKey.Enter));
         session.Handle(Key(ConsoleKey.Tab));
-        session.Handle(Key(ConsoleKey.Tab)); // pattern → route → highlight fg
+        session.Handle(Key(ConsoleKey.Tab));
+        session.Handle(Key(ConsoleKey.Tab)); // name → pattern → route → highlight fg
         for (var i = 0; i < 4; i++)
         {
             session.Handle(Key(ConsoleKey.Backspace));
