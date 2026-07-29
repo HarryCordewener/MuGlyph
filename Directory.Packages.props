@@ -21,6 +21,16 @@
     <!-- Logging abstractions (TelnetNegotiationCore takes an ILogger). -->
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.2" />
 
+    <!--
+      Client diagnostics: Serilog behind Microsoft.Extensions.Logging. Only the Tui's composition root
+      (ClientDiagnostics) references Serilog types; everything else logs through ILogger. Sinks are a
+      rolling file and an in-memory buffer — deliberately never a console sink, which would write to
+      the screen this app owns and wreck the display.
+    -->
+    <PackageVersion Include="Serilog" Version="4.3.1" />
+    <PackageVersion Include="Serilog.Extensions.Logging" Version="10.0.0" />
+    <PackageVersion Include="Serilog.Sinks.File" Version="7.0.0" />
+
     <!-- Test stack: TUnit (source-generated, runs on Microsoft.Testing.Platform). -->
     <PackageVersion Include="TUnit" Version="1.61.38" />
   </ItemGroup>

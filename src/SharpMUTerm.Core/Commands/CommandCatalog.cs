@@ -97,6 +97,11 @@ public static class CommandCatalog
             ? new CommandItem(CommandGroup.Terminal, "Resume scrollback", "term:unfreeze")
             : new CommandItem(CommandGroup.Terminal, "Freeze pane", "term:freeze"));
         items.Add(new CommandItem(CommandGroup.Terminal, "Clear window", "term:clear"));
+
+        // The client's own messages — the status-line notices that dismiss themselves — kept out of the
+        // output window (and so out of the session log) and readable here instead.
+        items.Add(new CommandItem(
+            CommandGroup.Terminal, "Show client messages", "term:messages", "status-line notices"));
         items.Add(context.TimestampsOn
             ? new CommandItem(CommandGroup.Terminal, "Hide timestamps", "term:timestamps-off")
             : new CommandItem(CommandGroup.Terminal, "Show timestamps", "term:timestamps-on"));

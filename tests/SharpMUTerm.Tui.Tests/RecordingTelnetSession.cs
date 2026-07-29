@@ -13,6 +13,16 @@ internal sealed class RecordingTelnetSession : ITelnetSession
 
     public bool IsConnected { get; private set; }
 
+    /// <summary>
+    /// What <see cref="ConnectAsync"/> throws instead of connecting, or null to connect. A refused
+    /// connection is the case the old fire-and-forget <c>Reconnect</c> swallowed, so the tests need a
+    /// transport that can refuse one.
+    /// </summary>
+    public Exception? ConnectFault { get; init; }
+
+    /// <summary>How many times a connection was asked for, refused ones included.</summary>
+    public int ConnectAttempts { get; private set; }
+
     /// <summary>Every NAWS report this session was given, oldest first.</summary>
     public IReadOnlyList<(int Width, int Height)> Sizes
     {
@@ -35,6 +45,12 @@ internal sealed class RecordingTelnetSession : ITelnetSession
 
     public Task ConnectAsync(CancellationToken cancellationToken = default)
     {
+        ConnectAttempts++;
+        if (ConnectFault is { } fault)
+        {
+            return Task.FromException(fault);
+        }
+
         IsConnected = true;
         return Task.CompletedTask;
     }

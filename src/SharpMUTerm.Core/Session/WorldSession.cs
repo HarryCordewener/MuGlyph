@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SharpMUTerm.Core.Automation;
 using SharpMUTerm.Core.Configuration;
 using SharpMUTerm.Core.Logging;
@@ -25,7 +27,7 @@ public sealed class WorldSession : IAsyncDisposable
     private readonly Func<ConnectionOptions, ITelnetSession> _sessionFactory;
     private readonly ILineParser _parser;
     private readonly EmojiSubstitutor? _emoji;
-    private readonly ILogSink? _log;
+    private ILogSink? _log;
     private readonly TextSettings? _text;
     private readonly InputSettings? _input;
     private readonly TimerDefinition[] _timers;
@@ -84,6 +86,14 @@ public sealed class WorldSession : IAsyncDisposable
         _ => new AnsiParser(),
     };
 
+    /// <summary>
+    /// Where this session's diagnostics go — its own, and the telnet stack's, which
+    /// <see cref="DefaultSessionFactory"/> hands straight to <see cref="TelnetSession"/>. Defaults to
+    /// <see cref="NullLogger.Instance"/>, so Core stays free of any logging implementation; the app sets
+    /// it (via <see cref="SessionManager.Logger"/>) to its client diagnostics pipeline.
+    /// </summary>
+    public ILogger Logger { get; set; } = NullLogger.Instance;
+
     public WorldDefinition World { get; }
 
     /// <summary>The character this session connects as, or null for an anonymous connection.</summary>
@@ -132,6 +142,38 @@ public sealed class WorldSession : IAsyncDisposable
 
     public bool IsConnected => _telnet?.IsConnected == true;
 
+    /// <summary>Whether this session is writing its output to a log right now.</summary>
+    public bool IsLogging => _log is not null;
+
+    /// <summary>
+    /// Starts logging this session's output to <paramref name="log"/>, mid-connection. Whatever it was
+    /// logging to is flushed and closed first: a session writes to one log, and swapping a sink in
+    /// without closing the old one leaves a handle open on a file the user believes they stopped.
+    /// </summary>
+    public void AttachLog(ILogSink log)
+    {
+        ArgumentNullException.ThrowIfNull(log);
+        DetachLog();
+        _log = log;
+    }
+
+    /// <summary>
+    /// Stops logging, flushing and closing the sink. Does nothing when there is no log, so "stop" is
+    /// safe to call on a session that never started one.
+    /// </summary>
+    public void DetachLog()
+    {
+        var log = _log;
+        _log = null;
+        if (log is null)
+        {
+            return;
+        }
+
+        log.Flush();
+        log.Dispose();
+    }
+
     public async Task ConnectAsync(CancellationToken cancellationToken = default)
     {
         if (State is ConnectionState.Connecting or ConnectionState.Connected)
@@ -170,6 +212,7 @@ public sealed class WorldSession : IAsyncDisposable
         {
             SetState(ConnectionState.Faulted, ex);
             PrintSystem($"*** Connection failed: {ex.Message}");
+            Logger.LogWarning(ex, "Connect to {Host}:{Port} failed", World.Host, World.Port);
             throw;
         }
     }
@@ -433,10 +476,17 @@ public sealed class WorldSession : IAsyncDisposable
     /// <see cref="WorldDefinition.Encoding"/> at the head of the CHARSET preference order — otherwise
     /// a world set to Latin-1 would still negotiate UTF-8 and the F5 field would be decoration.
     /// Instance-level (not static) for exactly that reason: the factory has to see the world.
+    /// <para>
+    /// The session's <see cref="Logger"/> goes in with it. It used to be left out, so every diagnostic
+    /// TelnetNegotiationCore produces — negotiation traces, option state, keepalive and MCCP/GMCP/MSDP
+    /// errors — went to <c>NullLogger</c> and was discarded. That is the detail you want when a MU*
+    /// misbehaves, and it now reaches the client's diagnostics pipeline.
+    /// </para>
     /// </summary>
     private ITelnetSession DefaultSessionFactory(ConnectionOptions options) =>
         new TelnetSession(
             new TcpTransport(options),
+            Logger,
             options: new TelnetSessionOptions
             {
                 CharsetOrder = TelnetSessionOptions.PreferEncoding(World.Encoding),
@@ -447,7 +497,7 @@ public sealed class WorldSession : IAsyncDisposable
     {
         StopTimers();
         Scheduler.Dispose();
-        _log?.Dispose();
+        DetachLog(); // flushes what the session logged before closing the file behind it
         if (_telnet is not null)
         {
             await _telnet.DisposeAsync().ConfigureAwait(false);

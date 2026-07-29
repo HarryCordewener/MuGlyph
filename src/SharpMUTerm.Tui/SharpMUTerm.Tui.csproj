@@ -36,6 +36,13 @@
     <PackageReference Include="SharpConsoleUI" />
   </ItemGroup>
 
+  <!-- The composition root for client diagnostics: Serilog is referenced here and nowhere else. -->
+  <ItemGroup>
+    <PackageReference Include="Serilog" />
+    <PackageReference Include="Serilog.Extensions.Logging" />
+    <PackageReference Include="Serilog.Sinks.File" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="SharpMUTerm.Tui.Tests" />
   </ItemGroup>
