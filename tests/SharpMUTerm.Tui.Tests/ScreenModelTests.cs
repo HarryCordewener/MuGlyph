@@ -58,7 +58,11 @@ public class ScreenModelTests
         // every index below addresses and is unchanged; the buttons are appended after it.
         await Assert.That(model.ListSizes[0]).IsEqualTo(2);
         await Assert.That(model.Sizes[0]).IsEqualTo(5);
-        await Assert.That(model.Sizes[1]).IsEqualTo(2);
+
+        // Three checkbox rows: gag and stop-processing, plus case sensitivity — which F3 has always
+        // offered on an alias and F2 arbitrarily did not. It is appended rather than inserted, so the
+        // two rows below still mean what every other assertion here says they mean.
+        await Assert.That(model.Sizes[1]).IsEqualTo(3);
 
         model.ToggleAt(0, 1)!.Value.Flip();
         await Assert.That(sets[0].Triggers[1].Enabled).IsTrue();
@@ -68,6 +72,9 @@ public class ScreenModelTests
 
         model.ToggleAt(1, 1)!.Value.Flip();
         await Assert.That(sets[0].Triggers[0].StopProcessing).IsTrue();
+
+        model.ToggleAt(1, 2)!.Value.Flip();
+        await Assert.That(sets[0].Triggers[0].CaseSensitive).IsTrue();
     }
 
     [Test]

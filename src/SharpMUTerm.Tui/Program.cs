@@ -27,12 +27,12 @@ internal static class Program
             // the snapshot is deterministic however it's launched (terminal, pipe, or CI redirect).
             Console.SetIn(TextReader.Null);
 
-            // Snapshots always render the demo configuration, never whatever happens to be on this
-            // machine. They exist for docs images and golden files, and a golden file that changes
-            // with the developer's own worlds isn't one — the same command has to produce the same
-            // frame everywhere. `--snapshot --live-config` opts into the real config for debugging
-            // something only your own setup reproduces.
-            if (!args.Contains("--live-config"))
+            // A snapshot shows your own configuration, like every other way of running the client.
+            // `--demo-config` swaps in the built-in demo worlds instead: that is what the docs images
+            // and golden frames use, because a golden file that changes with the developer's own
+            // worlds isn't one. Opting in keeps the demo where it belongs — an explicit request,
+            // never the default state of the app.
+            if (args.Contains("--demo-config"))
             {
                 config = DemoScene.Build();
             }
@@ -154,11 +154,11 @@ internal static class Program
         Console.WriteLine("  --tls                Connect over TLS.");
         Console.WriteLine("  --insecure           Accept invalid TLS certificates.");
         Console.WriteLine("  --name <name>        Display name for the world.");
-        Console.WriteLine("  --snapshot           Render one demo frame (ANSI) headlessly and exit.");
+        Console.WriteLine("  --snapshot           Render one frame (ANSI) headlessly and exit.");
         Console.WriteLine("  --size <WxH>         Snapshot size in cells (default 160x48).");
         Console.WriteLine("  --view <name>        Snapshot an overlay (e.g. 'settings') over the workspace.");
         Console.WriteLine("                       '<name>-edit' opens that settings screen mid field edit.");
-        Console.WriteLine("  --live-config        Snapshot your own config instead of the demo worlds.");
+        Console.WriteLine("  --demo-config        Snapshot the built-in demo worlds instead of your own.");
         Console.WriteLine("  --out <file>         Write the snapshot to a file instead of stdout.");
         Console.WriteLine("  -h, --help           Show this help.");
         Console.WriteLine();

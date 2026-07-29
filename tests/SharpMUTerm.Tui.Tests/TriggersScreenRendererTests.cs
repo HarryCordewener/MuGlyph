@@ -80,21 +80,20 @@ public class TriggersScreenRendererTests
     }
 
     [Test]
-    public async Task Render_SelectedTriggerEditorShowsPatternAndRouteList()
+    public async Task Render_SelectedTriggerEditorShowsPatternAndRoute()
     {
         var lines = TriggersScreenRenderer.Render(Scene(), selectedTrigger: 0, spawnTargets: new[] { "Chat", "Combat log" });
 
         await Assert.That(lines.Any(l => l.Contains("match pattern"))).IsTrue();
         await Assert.That(lines.Any(l => l.Contains(@"^(\w+) tells you"))).IsTrue();
 
+        // The route is the window's name, drawn as an editable value like every other row here — the
+        // windows already in use are ↑↓ suggestions while it is open, not a fixed set of rows.
         await Assert.That(lines.Any(l => l.Contains("route to"))).IsTrue();
+        await Assert.That(lines.Any(l => l.Contains("Chat"))).IsTrue();
 
-        // Current route (Chat) is marked with the accent dot; "main" and "Combat log" are hollow.
-        var chatRow = lines.Single(l => l.Contains("●") && l.Contains("Chat") && !l.Contains("Combat log"));
-        await Assert.That(chatRow).Contains("#00f5b7");
-
-        var mainRow = lines.Single(l => l.EndsWith("main", StringComparison.Ordinal));
-        await Assert.That(mainRow).Contains("○");
+        // The windows this rule does not point at are suggestions, so they are not drawn at rest.
+        await Assert.That(lines.Any(l => l.Contains("Combat log"))).IsFalse();
     }
 
     [Test]

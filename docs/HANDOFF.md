@@ -4,8 +4,8 @@ Context for whoever (human or agent) picks up this work next.
 
 - **Repository:** `SharpMUSH/SharpMUTerm`
 - **Start from:** a fresh branch off `main`
-- **Tests:** 894 across the solution (336 Core / 83 Graphics / 42 Scripting /
-  28 Web / 405 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
+- **Tests:** 912 across the solution (338 Core / 83 Graphics / 42 Scripting /
+  28 Web / 421 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
   from this repo; building against a local SharpConsoleUI clone surfaces 2 upstream
   NuGet advisory warnings for AngleSharp, which are the framework's, not ours)
 
@@ -47,7 +47,14 @@ works.
 - **F2's route-to radios and highlight-colour picker** are live, as `Choice` and
   `Colour` fields on the *rule's own list row* (ordinals: pattern, route,
   highlight fg, highlight bg). ↑↓ cycle them, which is exactly radio and palette
-  semantics, and the editor pane keeps the two checkbox rows it always had.
+  semantics.
+- **F2 reaches every action a trigger has** — rewrite, respond, script, added
+  attributes and case sensitivity all have UI now, so nothing the README advertises
+  is JSON-only any more. See *Settings screens* under Critical Gotchas for the
+  shapes and why each was chosen. Two pinned assertions moved for it, both in the
+  direction of asserting more: the rule row's `FieldCount` 5 → 9 (the four new
+  fields are appended; 0–4 are untouched) and F2's editor pane `Sizes[1]` 2 → 3
+  (the `case sensitive` checkbox, appended after the two that were there).
 - **Every item's name is editable**, and is the **first** field of its list row on
   all five screens, so ⏎ on a row — and on a row `[+ …]` just created — opens the
   one value that tells it apart. `ScreenField.Name` is the shared validator: not
@@ -150,9 +157,13 @@ Things that will waste your time if you don't know them.
 - **Generate a frame:**
   ```bash
   dotnet run --project src/SharpMUTerm.Tui --no-build -- \
-    --snapshot --view <name> --size 120x32 --out frame.ansi
+    --snapshot --demo-config --view <name> --size 120x32 --out frame.ansi
   python3 tools/ansi_frame_to_image.py frame.ansi frame.svg
   ```
+  **`--demo-config` is not optional for verification work.** Without it a snapshot renders
+  whatever config is on the machine — and a saved config in `~/.config/SharpMUTerm/` will
+  quietly replace the demo worlds, so you end up checking your own data and calling it the
+  demo. Drop the flag only when reproducing something specific to a real setup.
 - **Snapshot view names:** `worlds`/`settings`, `triggers`, `aliases`, `timers`,
   `keypad`, `textansi`, `input`, `logging`, `freeze`, `spawn`, `split`, `move`,
   `drag`, `history`, `menu`, `menu-split`, plus the default (no `--view`) workspace.
@@ -395,9 +406,29 @@ What the framework actually provides (read at v2.5.14, not assumed):
   colour no short palette names, and a picker that refused the value it was
   showing would make an existing highlight uneditable.
 - **Making a Core property settable? Check for cached derived state.**
-  `Trigger.Pattern` and `Alias.Pattern` drop their compiled `Regex` on write, like
-  `Alias.CaseSensitive` already did — otherwise the rule goes on matching the
-  pattern it no longer has, invisibly, until a line arrives.
+  `Trigger.Pattern`, `Alias.Pattern` and now **`Trigger.CaseSensitive`** drop their
+  compiled `Regex` on write, like `Alias.CaseSensitive` always did — otherwise the
+  rule goes on matching the pattern (or the casing) it no longer has, invisibly,
+  until a line arrives. The other four that became settable for F2's action fields
+  — `Rewrite`, `SendResponse`, `ScriptCallback`, `AddAttributes` — carry no cache
+  at all: `TriggerEngine` reads each per match. Both answers are pinned, in
+  `TriggerEngineTests.FlippingCaseSensitivity_RecompilesTheMatcher` and
+  `.EditingTheActions_AppliesToTheNextLineWithNothingCached`.
+- **F2 now exposes every `TriggerActions` member.** `Rewrite`, `SendResponse` and
+  `ScriptCallback` are `ScreenField.Template` fields (blank ⇒ **null**, so "off" has
+  one spelling; control characters refused, because each is drawn and typed on one
+  row); `AddAttributes` is a `ScreenField.Flags<TextAttributes>` **multi-select** —
+  deliberately not a `Choice`, and deliberately carrying **no `Choices`**, because
+  ↑↓ step one-of-N and bold-and-underline is not one of anything (the `↑↓ choose`
+  hint derives from `Choices`, so a cycling field would advertise dead keys). Its
+  vocabulary is drawn as a two-row **legend** under the `attrs` well, lit per
+  attribute and following the *buffer* while the field is open — the same rule the
+  route radios follow. Eight `ScreenToggle` rows were rejected: they would be eight
+  cursor stops for a setting most rules never touch, and a `ScreenRow` holds at most
+  one checkbox, so a horizontal row of them could never be one navigable row anyway.
+  `Trigger.CaseSensitive` is the editor pane's **third** checkbox, appended after
+  gag/stop-processing so their ordinals didn't move. Ordinals 0–4 are unchanged;
+  attributes/rewrite/respond/script are 5–8.
 - **Snapshot `--view <name>-edit`** opens a settings screen and then drives real
   keys into it through `SettingsOverlay.SimulateKey` (the same handler
   `PreviewKeyPressed` raises), so a frame can show a field genuinely mid-edit.

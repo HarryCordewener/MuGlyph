@@ -140,6 +140,143 @@ internal readonly record struct ScreenField(
     }
 
     /// <summary>
+    /// An action that is <em>off</em> when it is blank — a trigger's rewrite template, the command it
+    /// answers with, the script it calls. Blank is stored as null rather than as <c>""</c>, so "unset"
+    /// and "set to nothing" cannot drift apart in config the way two spellings of the same state
+    /// always do; the screens draw the null state in words.
+    /// <para>
+    /// Refused when it carries control characters. All three of these values are typed on one row and
+    /// drawn on one row, and a newline inside one would break both — a rewrite would smuggle a second
+    /// output line past the line model, and a response would smuggle a second command past the server.
+    /// </para>
+    /// <para>
+    /// <paramref name="known"/> is offered as ↑↓ suggestions exactly the way <see cref="WindowName"/>
+    /// offers the spawn windows already in use: values seen elsewhere in the configuration, not a
+    /// closed list. Free text is the point — a script callback naming a function nothing calls yet is
+    /// how the first rule that calls it gets written.
+    /// </para>
+    /// </summary>
+    internal static ScreenField Template(
+        string label, Func<string?> get, Action<string?> set, IReadOnlyList<string>? known = null)
+    {
+        ArgumentNullException.ThrowIfNull(get);
+        ArgumentNullException.ThrowIfNull(set);
+
+        return new ScreenField(
+            label,
+            () => get() ?? string.Empty,
+            value => value.Any(char.IsControl) ? $"{label} cannot contain control characters" : null,
+            value => set(string.IsNullOrWhiteSpace(value) ? null : value.Trim()),
+            Restore(get, set),
+            known is { Count: > 0 } ? known : null);
+    }
+
+    /// <summary>
+    /// A <c>[Flags]</c> enumeration: several independent booleans, written as a space-separated list of
+    /// their names and read back the same way. <c>none</c> is the empty set.
+    /// <para>
+    /// Deliberately <em>not</em> a <see cref="Choice"/>, and deliberately carrying no
+    /// <see cref="Choices"/>: ↑↓ step one-of-N, and bold-and-underline is not one of anything. Leaving
+    /// <see cref="Choices"/> null is also what keeps the chrome honest — the <c>↑↓ choose</c> hint is
+    /// derived from it, so a field with nothing to cycle cannot advertise the keys.
+    /// </para>
+    /// </summary>
+    internal static ScreenField Flags<TEnum>(string label, Func<TEnum> get, Action<TEnum> set)
+        where TEnum : struct, Enum
+    {
+        ArgumentNullException.ThrowIfNull(get);
+        ArgumentNullException.ThrowIfNull(set);
+
+        return new ScreenField(
+            label,
+            () => FormatFlags(get()),
+            value => UnknownFlag<TEnum>(value) is { } bad ? $"{label} has no '{bad}'" : null,
+            value => set((TEnum)Enum.ToObject(typeof(TEnum), CombineFlags<TEnum>(value))),
+            Restore(get, set));
+    }
+
+    /// <summary>What a flag set with nothing in it reads and is typed as.</summary>
+    internal const string NoFlags = "none";
+
+    /// <summary>The separators a flag list may be typed with — spaces, commas, or pipes.</summary>
+    private static readonly char[] FlagSeparators = { ' ', '\t', ',', '|', '+' };
+
+    /// <summary>
+    /// Every non-zero member of a <c>[Flags]</c> enumeration, lower-cased, in declaration order — the
+    /// vocabulary a <see cref="Flags{TEnum}"/> field accepts, and the list a screen draws so the words
+    /// are discoverable without being typed blind.
+    /// </summary>
+    internal static IReadOnlyList<string> FlagNames<TEnum>() where TEnum : struct, Enum =>
+        Enum.GetValues<TEnum>()
+            .Where(v => Convert.ToInt64(v, CultureInfo.InvariantCulture) != 0)
+            .Select(v => v.ToString()!.ToLowerInvariant())
+            .ToArray();
+
+    /// <summary>A flag set as <see cref="Flags{TEnum}"/> reads it: the set names, or <see cref="NoFlags"/>.</summary>
+    internal static string FormatFlags<TEnum>(TEnum value) where TEnum : struct, Enum
+    {
+        var bits = Convert.ToInt64(value, CultureInfo.InvariantCulture);
+        var set = Enum.GetValues<TEnum>()
+            .Select(v => (Name: v.ToString()!.ToLowerInvariant(), Bits: Convert.ToInt64(v, CultureInfo.InvariantCulture)))
+            .Where(f => f.Bits != 0 && (bits & f.Bits) == f.Bits)
+            .Select(f => f.Name)
+            .ToArray();
+
+        return set.Length == 0 ? NoFlags : string.Join(' ', set);
+    }
+
+    /// <summary>
+    /// Whether a typed flag list names a given flag. Screens ask this rather than parsing, so a legend
+    /// can follow the <em>buffer</em> while a field is open — the same rule F2's route radios follow,
+    /// and the reason ↑↓ and typing both visibly do something before ⏎ commits anything.
+    /// </summary>
+    internal static bool FlagIsListed(string spec, string name) =>
+        spec.Split(FlagSeparators, StringSplitOptions.RemoveEmptyEntries)
+            .Any(word => string.Equals(word, name, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>The first word of a flag list that names nothing, or null when every word is legal.</summary>
+    private static string? UnknownFlag<TEnum>(string value) where TEnum : struct, Enum
+    {
+        var names = FlagNames<TEnum>();
+        foreach (var word in value.Split(FlagSeparators, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (string.Equals(word, NoFlags, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!names.Contains(word, StringComparer.OrdinalIgnoreCase))
+            {
+                return word;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>The combined bits of a flag list that <see cref="UnknownFlag{TEnum}"/> has accepted.</summary>
+    private static long CombineFlags<TEnum>(string value) where TEnum : struct, Enum
+    {
+        var members = Enum.GetValues<TEnum>()
+            .Select(v => (Name: v.ToString()!, Bits: Convert.ToInt64(v, CultureInfo.InvariantCulture)))
+            .ToArray();
+
+        var bits = 0L;
+        foreach (var word in value.Split(FlagSeparators, StringSplitOptions.RemoveEmptyEntries))
+        {
+            foreach (var member in members)
+            {
+                if (string.Equals(member.Name, word, StringComparison.OrdinalIgnoreCase))
+                {
+                    bits |= member.Bits;
+                }
+            }
+        }
+
+        return bits;
+    }
+
+    /// <summary>
     /// The name of a window to route output to. Free text, with the windows already in use offered
     /// as ↑↓ suggestions — deliberately not a <see cref="Choice"/>, because the set of spawn windows
     /// is defined by what triggers route to, so a closed list could only ever re-use a window that

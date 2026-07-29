@@ -6,24 +6,29 @@ documentation images and CI visual checks work anywhere the .NET build runs.
 ## How it works
 
 SharpConsoleUI ships a `HeadlessConsoleDriver` that renders to a captured buffer instead
-of a real console. `sharpmuterm --snapshot` builds the app on that driver, loads a
-representative demo scene (a room, a `Chat` spawn window with unread, an input draft),
-renders one frame, and writes the raw ANSI to stdout (or `--out file`).
+of a real console. `sharpmuterm --snapshot` builds the app on that driver, renders one
+frame, and writes the raw ANSI to stdout (or `--out file`).
+
+It renders **your own configuration**, like any other way of running the client. Add
+`--demo-config` to render the built-in demo scene instead — a room, a `Chat` spawn window
+with unread, an input draft. Every published image and golden frame uses it, since one
+that changed with the developer's own worlds would be no use as either.
 
 `tools/ansi_frame_to_image.py` parses that frame — cursor-addressed truecolor SGR — into
 a character grid and emits a **self-contained SVG** (great for embedding in Markdown) or
 **HTML** (`.html` output, or `--html`). No external dependencies.
 
 ```bash
-# one-shot
-sharpmuterm --snapshot --size 100x30 | python3 tools/ansi_frame_to_image.py > shot.svg
+# one-shot, off the demo scene
+sharpmuterm --snapshot --demo-config --size 100x30 | python3 tools/ansi_frame_to_image.py > shot.svg
 
 # regenerate the committed screenshots
 tools/make-screenshots.sh
 ```
 
 The frame is deterministic (the desktop panels/clock are disabled under the headless
-driver), so `sharpmuterm --snapshot` output can also serve as a **golden file** for CI.
+driver), so `sharpmuterm --snapshot --demo-config` output can also serve as a **golden
+file** for CI — which is exactly what the CI smoke check greps.
 
 ## Animated demos (VHS)
 

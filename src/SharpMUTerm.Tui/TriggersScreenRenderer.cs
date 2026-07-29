@@ -10,7 +10,8 @@ namespace SharpMUTerm.Tui;
 /// Produces the markup sub-blocks for the F2 Triggers &amp; spawn routing screen — the header band,
 /// the rule list (flattened across every <see cref="TriggerSet"/>, each row carrying its enabled
 /// state, name/pattern, owning set, action flags, and route), the editor for the selected trigger
-/// (pattern, route-to list, highlight swatches, and toggles), and the footer action bar.
+/// (pattern, route-to list, highlight swatches and attributes, the three action templates, and
+/// the toggles), and the footer action bar.
 /// <see cref="TriggersScreenView"/> composes these into real panels (grids) for the live/snapshot
 /// view; <see cref="Render"/> merges the same blocks into a single line list for the unit tests.
 /// Pure so every block is testable.
@@ -46,6 +47,35 @@ internal static class TriggersScreenRenderer
     internal const int ForegroundField = 3;
 
     internal const int BackgroundField = 4;
+
+    internal const int AttributesField = 5;
+
+    internal const int RewriteField = 6;
+
+    internal const int ResponseField = 7;
+
+    internal const int ScriptField = 8;
+
+    /// <summary>
+    /// How wide the <c>fg</c> / <c>bg</c> / <c>attrs</c> and <c>rewrite</c> / <c>respond</c> /
+    /// <c>script</c> labels are padded, so the field wells in each section start in the same column.
+    /// </summary>
+    private const int HighlightLabelWidth = 5;
+
+    private const int ActionLabelWidth = 7;
+
+    /// <summary>How many attributes a legend row lists before wrapping to the next.</summary>
+    private const int AttributesPerRow = 4;
+
+    /// <summary>
+    /// What an unconfigured action reads as. An empty well would say nothing at all, and the whole
+    /// point of these three being null-when-blank is that "this rule does not rewrite" is a state worth
+    /// naming — not the same thing as "this rule rewrites to the empty string".
+    /// </summary>
+    private const string OffLabel = "(off)";
+
+    /// <summary>The vocabulary the attributes field accepts, in the enum's own declaration order.</summary>
+    private static readonly IReadOnlyList<string> AttributeNames = ScreenField.FlagNames<TextAttributes>();
 
     /// <summary>The labels the rule list's buttons carry, in the order they are drawn.</summary>
     internal const string AddTriggerLabel = "+ trigger";
@@ -95,6 +125,64 @@ internal static class TriggersScreenRenderer
     }
 
     /// <summary>
+    /// The script callbacks offered as ↑↓ suggestions on a rule's <c>script</c> field: every callback
+    /// named anywhere in the configuration — by a trigger, an alias, a timer or a macro — plus the one
+    /// this rule already names, so a rule pointing at a function nothing else calls still shows its own
+    /// value.
+    /// <para>
+    /// They are suggestions, not the permitted set, and they deliberately do <em>not</em> come from the
+    /// scripting host. A <see cref="SharpMUTerm.Scripting.ScriptHost"/> cannot enumerate anything
+    /// useful here: the callbacks it holds are keyed by ids it generates itself
+    /// (<c>trigger#1</c>), created by <c>trigger.add(pattern, function ... end)</c> whose function is
+    /// anonymous, and written into <em>runtime</em> triggers rather than into the configuration this
+    /// screen edits. What a user can actually type is a name their own Lua defines, so the honest
+    /// suggestion list is the vocabulary their configuration already uses.
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyList<string> Callbacks(Trigger trigger, IReadOnlyList<string>? known)
+    {
+        ArgumentNullException.ThrowIfNull(trigger);
+
+        var callbacks = new List<string>();
+        foreach (var callback in (known ?? Array.Empty<string>()).Append(trigger.Actions.ScriptCallback))
+        {
+            if (!string.IsNullOrWhiteSpace(callback) && !callbacks.Contains(callback, StringComparer.Ordinal))
+            {
+                callbacks.Add(callback);
+            }
+        }
+
+        return callbacks;
+    }
+
+    /// <summary>
+    /// Every script callback the configuration names, swept once per projection rather than once per
+    /// rule — the model is rebuilt on every keystroke, and this is the only part of a row that has to
+    /// look at every other set to build itself.
+    /// </summary>
+    private static List<string> NamedCallbacks(IReadOnlyList<TriggerSet> sets)
+    {
+        var named = new List<string>();
+        foreach (var set in sets)
+        {
+            var all = set.Triggers.Select(t => t.Actions.ScriptCallback)
+                .Concat(set.Aliases.Select(a => a.ScriptCallback))
+                .Concat(set.Timers.Select(t => t.ScriptCallback))
+                .Concat(set.Macros.Select(m => m.ScriptCallback));
+
+            foreach (var callback in all)
+            {
+                if (!string.IsNullOrWhiteSpace(callback) && !named.Contains(callback, StringComparer.Ordinal))
+                {
+                    named.Add(callback);
+                }
+            }
+        }
+
+        return named;
+    }
+
+    /// <summary>
     /// Merges every sub-block into one line list (header, rule list | editor, footer). Used by the
     /// unit tests and as a width-agnostic fallback; the live view composes the same blocks into
     /// panels instead.
@@ -140,9 +228,10 @@ internal static class TriggersScreenRenderer
     }
 
     /// <summary>
-    /// The screen's navigable panes: the rule list (Space enables/disables a trigger, ⏎ edits its
-    /// match pattern and then ⇥ steps through its route and its two highlight colours) and the
-    /// selected rule's checkbox rows, in the order <see cref="EditorColumn"/> draws them.
+    /// The screen's navigable panes: the rule list (Space enables/disables a trigger, ⏎ edits its name
+    /// and then ⇥ steps through its pattern, route, two highlight colours, attributes, and its rewrite,
+    /// response and script templates) and the selected rule's checkbox rows, in the order
+    /// <see cref="EditorColumn"/> draws them.
     /// <para>
     /// Everything the editor pane *displays* about the selected rule belongs to that rule's own list
     /// row rather than to the editor pane. That is the same reason the pattern does: a rule's route
@@ -165,6 +254,7 @@ internal static class TriggersScreenRenderer
         ArgumentNullException.ThrowIfNull(sets);
 
         var flattened = Flatten(sets);
+        var callbacks = NamedCallbacks(sets);
         var rules = ScreenModel.Rows(flattened, entry => ScreenRow.Of(
             ScreenToggle.Bind(() => entry.Trigger.Enabled, v => entry.Trigger.Enabled = v),
             ScreenField.Name("name", () => entry.Trigger.Name, v => entry.Trigger.Name = v),
@@ -182,7 +272,22 @@ internal static class TriggersScreenRenderer
             ScreenField.Colour(
                 "highlight bg",
                 () => entry.Trigger.Actions.HighlightBackground,
-                v => entry.Trigger.Actions.HighlightBackground = v)))
+                v => entry.Trigger.Actions.HighlightBackground = v),
+            ScreenField.Flags<TextAttributes>(
+                "attributes",
+                () => entry.Trigger.Actions.AddAttributes,
+                v => entry.Trigger.Actions.AddAttributes = v),
+            ScreenField.Template(
+                "rewrite", () => entry.Trigger.Actions.Rewrite, v => entry.Trigger.Actions.Rewrite = v),
+            ScreenField.Template(
+                "respond",
+                () => entry.Trigger.Actions.SendResponse,
+                v => entry.Trigger.Actions.SendResponse = v),
+            ScreenField.Template(
+                "script",
+                () => entry.Trigger.Actions.ScriptCallback,
+                v => entry.Trigger.Actions.ScriptCallback = v,
+                Callbacks(entry.Trigger, callbacks))))
             .Concat(Buttons(sets, selectedTrigger))
             .ToArray();
 
@@ -192,10 +297,13 @@ internal static class TriggersScreenRenderer
         }
 
         var trigger = flattened[selectedTrigger].Trigger;
+        // Appended rather than inserted: these are the pane's cursor stops, and putting the new one
+        // above the two that were here would renumber rows the screen (and its tests) already address.
         var editor = new[]
         {
             ScreenRow.Of(ScreenToggle.Bind(() => trigger.Actions.Gag, v => trigger.Actions.Gag = v)),
             ScreenRow.Of(ScreenToggle.Bind(() => trigger.StopProcessing, v => trigger.StopProcessing = v)),
+            ScreenRow.Of(ScreenToggle.Bind(() => trigger.CaseSensitive, v => trigger.CaseSensitive = v)),
         };
 
         return new ScreenModel(rules, editor);
@@ -298,8 +406,8 @@ internal static class TriggersScreenRenderer
     }
 
     /// <summary>
-    /// The editor for the selected rule — pattern, route-to list, highlight swatches, and toggles.
-    /// Empty when nothing is selected.
+    /// The editor for the selected rule — pattern, route-to list, highlight swatches and attributes,
+    /// the rewrite/respond/script templates, and the toggles. Empty when nothing is selected.
     /// </summary>
     internal static List<string> EditorColumn(
         IReadOnlyList<TriggerSet> sets,
@@ -346,7 +454,12 @@ internal static class TriggersScreenRenderer
     private static string Flags(TriggerActions actions)
     {
         var flags = new List<string>();
-        if (actions.HighlightForeground is not null || actions.HighlightBackground is not null)
+
+        // Attributes count as highlighting because that is literally what they are: TriggerEngine
+        // restyles the matched region when a colour *or* an attribute is set, through one code path.
+        if (actions.HighlightForeground is not null
+            || actions.HighlightBackground is not null
+            || actions.AddAttributes != TextAttributes.None)
         {
             flags.Add("H");
         }
@@ -356,7 +469,12 @@ internal static class TriggersScreenRenderer
             flags.Add("G");
         }
 
-        if (actions.SendResponse is not null)
+        if (!string.IsNullOrEmpty(actions.Rewrite))
+        {
+            flags.Add("✎");
+        }
+
+        if (!string.IsNullOrEmpty(actions.SendResponse))
         {
             flags.Add("R");
         }
@@ -366,7 +484,7 @@ internal static class TriggersScreenRenderer
             flags.Add(Glyphs.Capture);
         }
 
-        if (actions.ScriptCallback is not null)
+        if (!string.IsNullOrEmpty(actions.ScriptCallback))
         {
             flags.Add("ƒ");
         }
@@ -382,6 +500,10 @@ internal static class TriggersScreenRenderer
         var route = cursor.EditOn(0, index, RouteField);
         var foreground = cursor.EditOn(0, index, ForegroundField);
         var background = cursor.EditOn(0, index, BackgroundField);
+        var attributes = cursor.EditOn(0, index, AttributesField);
+        var rewrite = cursor.EditOn(0, index, RewriteField);
+        var response = cursor.EditOn(0, index, ResponseField);
+        var script = cursor.EditOn(0, index, ScriptField);
 
         // While the route field is open the radios follow the *buffer*, not config, so ↑↓ visibly move
         // the dot before anything is committed — the buffer is what ⏎ would write.
@@ -398,43 +520,54 @@ internal static class TriggersScreenRenderer
             $"  {ScreenChrome.Field(Escape(trigger.Pattern), pattern)}",
             string.Empty,
             Heading("route to", route),
+
+            // The window is a name you type, not one of a fixed set — the spawn windows that exist
+            // are defined by what routes to them, so a closed list could only ever re-use one. It is
+            // therefore drawn as an editable value like every other row in this pane rather than as a
+            // radio group: the group cost five rows, was the only control here shaped differently
+            // from its neighbours, and could not show a name being typed for the first time without a
+            // row invented for the purpose. The windows already in use remain ↑↓ suggestions while
+            // the field is open, which is what a radio group was really offering.
+            $"  {ScreenChrome.Field(Escape(currentRoute), route)}",
         };
-
-        var known = Routes(trigger, spawnTargets);
-        foreach (var target in known)
-        {
-            lines.Add(RouteRow(target, currentRoute, route is not null));
-        }
-
-        // A route may name a window that doesn't exist yet — that is how a spawn window is created.
-        // The rows above are the windows already in use, so a name being typed for the first time
-        // matches none of them and would otherwise be invisible: the group would sit with no dot lit
-        // while the keyboard was plainly doing something. Give the new name its own row, carrying the
-        // caret, so what is being typed is on screen where the committed value will be.
-        if (route is { } typing && !known.Contains(currentRoute, StringComparer.Ordinal))
-        {
-            lines.Add($"  [{Accent}]●[/] {ScreenChrome.Field(Escape(currentRoute), typing)}");
-        }
 
         var fg = trigger.Actions.HighlightForeground;
         var bg = trigger.Actions.HighlightBackground;
+        var attrs = trigger.Actions.AddAttributes;
 
-        // What the two swatch rows add up to is a caption on the section that owns them, not a fourth
+        // What the swatch rows add up to is a caption on the section that owns them, not a fourth
         // checkbox under it. It was drawn as one, which made it look like a fourth thing to press: the
         // cursor cannot land on it, Space does nothing to it, and it sat *below* the two rows it is
         // derived from, so it read as a cause rather than the effect it is. The caption says the same
         // thing, above the rows that decide it, in a shape nothing offers to press.
+        //
+        // Attributes belong to this section rather than one of their own because TriggerEngine restyles
+        // a matched region through a single path for colours and attributes alike — and while the
+        // caption only knew about colours it flatly lied about a bold-only rule.
         lines.Add(string.Empty);
-        lines.Add(Heading("highlight", foreground ?? background, HighlightCaption(fg, bg)));
+        lines.Add(Heading("highlight", foreground ?? background ?? attributes, HighlightCaption(fg, bg, attrs)));
         lines.Add(HighlightRow("fg", fg, foreground));
         lines.Add(HighlightRow("bg", bg, background));
+        lines.Add(AttributeRow(attrs, attributes));
+        lines.AddRange(AttributeLegend(attributes?.Text ?? ScreenField.FormatFlags(attrs)));
+
+        // The three action templates. They are one section because they are the three things a rule can
+        // *do* to a line beyond recolouring it, and they are not exclusive — a rule may gag a line,
+        // answer it and call a script off the same match.
+        lines.Add(string.Empty);
+        lines.Add(Heading("actions", null, ScreenChrome.ReadOnly("· $1..$9 insert captures")));
+        lines.Add(ActionRow("rewrite", trigger.Actions.Rewrite, rewrite));
+        lines.Add(ActionRow("respond", trigger.Actions.SendResponse, response));
+        lines.Add(ActionRow("script", trigger.Actions.ScriptCallback, script));
         lines.Add(string.Empty);
 
-        // The two rows below are real booleans on the trigger, and are the editor pane's navigable rows
-        // in this order.
+        // The three rows below are real booleans on the trigger, and are the editor pane's navigable
+        // rows in this order.
         lines.Add(ScreenChrome.Cursor(Checkbox("gag line", trigger.Actions.Gag), cursor.IsOn(1, 0), ColumnWidth));
         lines.Add(ScreenChrome.Cursor(
             Checkbox("stop processing", trigger.StopProcessing), cursor.IsOn(1, 1), ColumnWidth));
+        lines.Add(ScreenChrome.Cursor(
+            Checkbox("case sensitive", trigger.CaseSensitive), cursor.IsOn(1, 2), ColumnWidth));
 
         return lines;
     }
@@ -461,32 +594,27 @@ internal static class TriggersScreenRenderer
     }
 
     /// <summary>
-    /// What the two swatch rows amount to, read out beside the section heading: whether a matching line
-    /// gets recoloured at all. Muted rather than accented, because it reports the state of the two rows
-    /// below it and cannot itself be changed — the same treatment every other readout on these screens
-    /// gets (see <see cref="ScreenChrome.ReadOnly"/>).
+    /// What the section's rows amount to, read out beside its heading: whether a matching line gets
+    /// restyled at all. Muted rather than accented, because it reports the state of the rows below it
+    /// and cannot itself be changed — the same treatment every other readout on these screens gets (see
+    /// <see cref="ScreenChrome.ReadOnly"/>).
+    /// <para>
+    /// Attributes are read here as well as the colours, because the engine restyles on either. Left to
+    /// the colours alone, a rule that only bolds its match would have been captioned "left alone" while
+    /// visibly bolding every line it matched.
+    /// </para>
     /// </summary>
-    private static string HighlightCaption(TerminalColor? foreground, TerminalColor? background) =>
-        foreground is not null || background is not null
-            ? ScreenChrome.ReadOnly("· matching lines are recoloured")
-            : "[dim]· matching lines are left alone[/]";
-
-    /// <summary>
-    /// One radio of the route group. <paramref name="editing"/> wells the whole group so it reads as
-    /// live rather than as the report it is the rest of the time — the selected radio moves with ↑↓,
-    /// and a group that looked identical either way would give no sign the keyboard had it.
-    /// </summary>
-    private static string RouteRow(string label, string currentRoute, bool editing)
+    private static string HighlightCaption(
+        TerminalColor? foreground, TerminalColor? background, TextAttributes attributes)
     {
-        var selected = string.Equals(label, currentRoute, StringComparison.Ordinal);
-        if (!selected)
+        if (foreground is not null || background is not null)
         {
-            return $"  [dim]○[/] {Escape(label)}";
+            return ScreenChrome.ReadOnly("· matching lines are recoloured");
         }
 
-        return editing
-            ? $"  [{Accent}]●[/] [{Value} on {FieldBg}]{Escape(label)} [/]"
-            : $"  [{Accent}]●[/] {Escape(label)}";
+        return attributes != TextAttributes.None
+            ? ScreenChrome.ReadOnly("· matching text is restyled")
+            : "[dim]· matching lines are left alone[/]";
     }
 
     /// <summary>
@@ -499,6 +627,79 @@ internal static class TriggersScreenRenderer
         var swatch = colour is { } set ? $"[{ScreenColours.Hex(set, Accent)}]████[/]" : $"[{Rule}]░░░░[/]";
         var name = ScreenColours.Format(colour);
         var display = colour is null ? $"[dim]{name}[/]" : $"[{Value}]{Escape(name)}[/]";
-        return $"  {swatch} {label}  {ScreenChrome.Field(display, edit)}";
+        return $"  {swatch} {PadVisible(label, HighlightLabelWidth)} {ScreenChrome.Field(display, edit)}";
+    }
+
+    /// <summary>
+    /// The attributes value, drawn in the same <c>swatch label value</c> shape as the two colours it
+    /// sits under — one field well, because it is one setting, however many booleans it packs. Its
+    /// swatch is filled or hollow on the same rule as theirs: something is added to the match, or
+    /// nothing is.
+    /// </summary>
+    private static string AttributeRow(TextAttributes attributes, ScreenFieldEdit? edit)
+    {
+        var swatch = attributes == TextAttributes.None ? $"[{Rule}]░░░░[/]" : $"[{Accent}]▚▚▚▚[/]";
+        var spec = ScreenField.FormatFlags(attributes);
+        var display = attributes == TextAttributes.None
+            ? $"[dim]{Escape(spec)}[/]"
+            : $"[{Value}]{Escape(spec)}[/]";
+        return $"  {swatch} {PadVisible("attrs", HighlightLabelWidth)} {ScreenChrome.Field(display, edit)}";
+    }
+
+    /// <summary>
+    /// The whole attribute vocabulary, wrapped over as many rows as it takes, each name lit when it is
+    /// in <paramref name="spec"/> and muted when it isn't.
+    /// <para>
+    /// This is the "row of checkboxes" the setting really is, and it is drawn rather than navigated
+    /// deliberately. Eight <see cref="ScreenToggle"/> rows would be eight cursor stops for a setting
+    /// most rules never touch, burying the three flags below them; and a <see cref="ScreenRow"/> holds
+    /// at most one checkbox, so a *horizontal* row of them could never be one navigable row anyway. As
+    /// a legend it does the one job the field cannot: it says what the legal words are, so nobody has
+    /// to type into <c>attrs</c> blind.
+    /// </para>
+    /// <para>
+    /// It follows the <em>buffer</em> while the field is open, exactly as the route radios do — a
+    /// legend that only moved on ⏎ would look inert for precisely as long as it was being used.
+    /// </para>
+    /// </summary>
+    private static IEnumerable<string> AttributeLegend(string spec)
+    {
+        // Column widths, not one width for all: "strikethrough" is thirteen cells and padding every
+        // name to it would push the legend past the editor column at the widths this screen is used at.
+        var widths = new int[AttributesPerRow];
+        for (var i = 0; i < AttributeNames.Count; i++)
+        {
+            widths[i % AttributesPerRow] = Math.Max(widths[i % AttributesPerRow], AttributeNames[i].Length);
+        }
+
+        for (var start = 0; start < AttributeNames.Count; start += AttributesPerRow)
+        {
+            var cells = new List<string>(AttributesPerRow);
+            for (var i = start; i < Math.Min(start + AttributesPerRow, AttributeNames.Count); i++)
+            {
+                var name = AttributeNames[i];
+                var padded = name.PadRight(widths[i % AttributesPerRow]);
+                cells.Add(ScreenField.FlagIsListed(spec, name)
+                    ? $"[{Accent}]✓{padded}[/]"
+                    : $"[dim]·{padded}[/]");
+            }
+
+            yield return "       " + string.Join(" ", cells).TrimEnd();
+        }
+    }
+
+    /// <summary>
+    /// One of the three action templates: its label, then its value in a field well — or a muted
+    /// <c>(off)</c> in that same well when nothing is set. The well stays either way, because the row is
+    /// still a place a value goes; what changes is that the screen says, in words, that this rule does
+    /// not rewrite / does not answer / calls nothing, which is a different state from a template that
+    /// happens to be empty (see <see cref="ScreenField.Template"/>, which stores blank as null).
+    /// </summary>
+    private static string ActionRow(string label, string? value, ScreenFieldEdit? edit)
+    {
+        var display = string.IsNullOrEmpty(value)
+            ? $"[dim]{OffLabel}[/]"
+            : $"[{Value}]{Escape(value)}[/]";
+        return $"  {PadVisible(label, ActionLabelWidth)} {ScreenChrome.Field(display, edit)}";
     }
 }

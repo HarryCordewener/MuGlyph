@@ -73,17 +73,34 @@ internal static class DemoScene
             Description = "channel + page routing",
             Triggers =
             {
+                // The F2 screen opens on this rule, so it is the one that has to exercise the editor
+                // pane: a capture group to reference, a rewrite that uses it, an attribute, a script
+                // callback, and case-sensitive matching. Its `respond` is deliberately left off — the
+                // frame should show both states of an action, not four filled wells.
                 new Trigger
                 {
                     Name = "public",
-                    Pattern = @"^\[public\]",
-                    Actions = new TriggerActions { SpawnTarget = "Chat", HighlightForeground = teal },
+                    Pattern = @"^\[public\] (.+)$",
+                    CaseSensitive = true,
+                    Actions = new TriggerActions
+                    {
+                        SpawnTarget = "Chat",
+                        HighlightForeground = teal,
+                        AddAttributes = TextAttributes.Bold,
+                        Rewrite = "» $1",
+                        ScriptCallback = "onChannel",
+                    },
                 },
                 new Trigger
                 {
                     Name = "page",
-                    Pattern = @"^\w+ pages:",
-                    Actions = new TriggerActions { SpawnTarget = "pages", HighlightForeground = pink },
+                    Pattern = @"^(\w+) pages:",
+                    Actions = new TriggerActions
+                    {
+                        SpawnTarget = "pages",
+                        HighlightForeground = pink,
+                        SendResponse = "page $1=afk, back shortly",
+                    },
                 },
                 new Trigger
                 {

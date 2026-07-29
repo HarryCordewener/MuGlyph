@@ -48,17 +48,23 @@ public class TriggersScreenEditingTests
         var sets = Sets();
         var model = TriggersScreenRenderer.Model(sets, 0, Targets);
 
-        // The name leads, then the four values the editor pane draws.
-        await Assert.That(model.RowAt(0, 0).FieldCount).IsEqualTo(5);
+        // The name leads, then everything the editor pane draws. The first five ordinals are unchanged
+        // — the four new ones are appended, so nothing the screen, the snapshot keys or these tests
+        // already address is renumbered.
+        await Assert.That(model.RowAt(0, 0).FieldCount).IsEqualTo(9);
         await Assert.That(model.FieldAt(0, 0, TriggersScreenRenderer.NameField)!.Value.Get()).IsEqualTo("Tell");
         await Assert.That(model.FieldAt(0, 0, TriggersScreenRenderer.PatternField)!.Value.Get()).IsEqualTo("tells you");
         await Assert.That(model.FieldAt(0, 0, TriggersScreenRenderer.RouteField)!.Value.Get()).IsEqualTo("Chat");
         await Assert.That(model.FieldAt(0, 0, TriggersScreenRenderer.ForegroundField)!.Value.Get()).IsEqualTo("gold");
         await Assert.That(model.FieldAt(0, 0, TriggersScreenRenderer.BackgroundField)!.Value.Get()).IsEqualTo("none");
+        await Assert.That(model.FieldAt(0, 0, TriggersScreenRenderer.AttributesField)!.Value.Get()).IsEqualTo("none");
+        await Assert.That(model.FieldAt(0, 0, TriggersScreenRenderer.RewriteField)!.Value.Get()).IsEqualTo(string.Empty);
+        await Assert.That(model.FieldAt(0, 0, TriggersScreenRenderer.ResponseField)!.Value.Get()).IsEqualTo(string.Empty);
+        await Assert.That(model.FieldAt(0, 0, TriggersScreenRenderer.ScriptField)!.Value.Get()).IsEqualTo(string.Empty);
 
-        // The editor pane keeps exactly the two checkbox rows it had — the route, the colours and the
-        // name are one setting each, so they are fields on the rule, not new cursor stops.
-        await Assert.That(model.Sizes[1]).IsEqualTo(2);
+        // The editor pane holds only checkbox rows — every value it draws is a field on the rule, not a
+        // cursor stop of its own. It gained the third checkbox (case sensitivity) and nothing else.
+        await Assert.That(model.Sizes[1]).IsEqualTo(3);
     }
 
     [Test]
@@ -159,11 +165,11 @@ public class TriggersScreenEditingTests
     }
 
     /// <summary>
-    /// ↑↓ steps the radio group, and the drawn radios follow the buffer — a group that only moved on
-    /// ⏎ would look inert for exactly as long as the user was using it.
+    /// ↑↓ step the windows already in use, and the drawn route follows the buffer — a value that only
+    /// moved on ⏎ would look inert for exactly as long as the user was using it.
     /// </summary>
     [Test]
-    public async Task UpAndDownStepTheRouteRadios_AndTheDrawnDotFollowsTheBuffer()
+    public async Task UpAndDownStepTheKnownWindows_AndTheDrawnRouteFollowsTheBuffer()
     {
         var sets = Sets();
         var trigger = sets[0].Triggers[0];
@@ -179,11 +185,11 @@ public class TriggersScreenEditingTests
         session.Handle(Key(ConsoleKey.DownArrow));
         await Assert.That(session.Focus().Edit!.Value.Text).IsEqualTo("pages");
 
-        // Nothing is written yet, but the radios already show where ⏎ would land.
+        // Nothing is written yet, but the drawn route already shows where ⏎ would land.
         await Assert.That(trigger.Actions.SpawnTarget).IsEqualTo("Chat");
         var editor = TriggersScreenRenderer.EditorColumn(sets, 0, Targets, session.Focus());
-        await Assert.That(editor.Any(l => l.Contains('●') && l.Contains("pages"))).IsTrue();
-        await Assert.That(editor.Any(l => l.Contains('●') && l.Contains("Chat"))).IsFalse();
+        await Assert.That(editor.Any(l => l.Contains("pages"))).IsTrue();
+        await Assert.That(editor.Any(l => l.Contains("Chat"))).IsFalse();
 
         session.Handle(Key(ConsoleKey.Enter));
         await Assert.That(trigger.Actions.SpawnTarget).IsEqualTo("pages");

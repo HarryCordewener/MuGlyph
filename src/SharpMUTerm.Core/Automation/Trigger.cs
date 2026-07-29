@@ -20,17 +20,26 @@ public sealed class TriggerActions
     /// <summary>Recolour the matched region's background. Settable for the same reason as its foreground.</summary>
     public TerminalColor? HighlightBackground { get; set; }
 
-    /// <summary>Add these attributes to the matched region (e.g. bold).</summary>
-    public TextAttributes AddAttributes { get; init; } = TextAttributes.None;
+    /// <summary>
+    /// Add these attributes to the matched region (e.g. bold). Settable so the F2 screen's attribute
+    /// field can change it live; <see cref="TriggerEngine"/> reads it per match and derives nothing
+    /// from it, so there is no cache to drop and a change applies to the next line.
+    /// </summary>
+    public TextAttributes AddAttributes { get; set; } = TextAttributes.None;
 
     /// <summary>
     /// Replace the whole line's text with this template (supports <c>$1</c>..<c>$9</c> and
-    /// <c>${name}</c> capture references). Rewritten text renders with the default style.
+    /// <c>${name}</c> capture references). Rewritten text renders with the default style. Null — which
+    /// is what the F2 screen writes for a blank field — means the rule rewrites nothing; settable for
+    /// the same reason <see cref="SpawnTarget"/> is, and with the same absence of any cached state.
     /// </summary>
-    public string? Rewrite { get; init; }
+    public string? Rewrite { get; set; }
 
-    /// <summary>Send this command back to the server (capture references supported).</summary>
-    public string? SendResponse { get; init; }
+    /// <summary>
+    /// Send this command back to the server (capture references supported). Null or empty means the
+    /// rule answers nothing. Settable so the F2 screen can edit it live; nothing is derived from it.
+    /// </summary>
+    public string? SendResponse { get; set; }
 
     /// <summary>
     /// Route the line to a named spawn window instead of the main output; null routes to the main
@@ -40,8 +49,12 @@ public sealed class TriggerActions
     /// </summary>
     public string? SpawnTarget { get; set; }
 
-    /// <summary>Invoke this named script callback (resolved by the scripting layer).</summary>
-    public string? ScriptCallback { get; init; }
+    /// <summary>
+    /// Invoke this named script callback (resolved by the scripting layer). Null or empty means the
+    /// rule calls nothing. Settable so the F2 screen can point a rule at a callback live; the engine
+    /// resolves the name per match, so nothing is cached from it.
+    /// </summary>
+    public string? ScriptCallback { get; set; }
 
     /// <summary>
     /// A copy of these actions. Every field is a value or an immutable string, so a member-wise copy
@@ -69,6 +82,7 @@ public sealed class TriggerActions
 public sealed class Trigger
 {
     private Regex? _compiled;
+    private bool _caseSensitive;
     private string _pattern = string.Empty;
 
     /// <summary>
@@ -100,7 +114,26 @@ public sealed class Trigger
 
     public bool Enabled { get; set; } = true;
 
-    public bool CaseSensitive { get; init; }
+    /// <summary>
+    /// Match case exactly. Settable so the F2 settings screen can flip it live — the asymmetry with
+    /// <see cref="Alias.CaseSensitive"/>, which F3 has always offered, was arbitrary. Writing it drops
+    /// the cached <see cref="Regex"/>, because the casing is baked into that regex's options: without
+    /// the drop the rule would go on matching with the old options, invisibly, until a line arrived.
+    /// </summary>
+    public bool CaseSensitive
+    {
+        get => _caseSensitive;
+        set
+        {
+            if (_caseSensitive == value)
+            {
+                return;
+            }
+
+            _caseSensitive = value;
+            _compiled = null;
+        }
+    }
 
     /// <summary>
     /// When true, later triggers are not evaluated once this one matches. Settable so the F2 screen
@@ -122,7 +155,7 @@ public sealed class Trigger
     /// <see cref="Actions"/> are copied rather than shared: an aliased copy would look right and then
     /// follow every later edit of its original's gag, route and highlight around. The compiled
     /// <see cref="Regex"/> is deliberately not carried over; the copy builds its own on first use, so a
-    /// later pattern edit on either rule cannot be seen by the other.
+    /// later pattern or casing edit on either rule cannot be seen by the other.
     /// </summary>
     public Trigger Clone() => new()
     {
