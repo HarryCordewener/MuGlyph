@@ -1,4 +1,5 @@
 using System.Text;
+using static SharpMUTerm.Tui.MarkupText;
 
 namespace SharpMUTerm.Tui;
 
@@ -50,6 +51,4 @@ internal static class Powerline
 
         return sb.ToString();
     }
-
-    private static string Escape(string text) => text.Replace("[", "[[").Replace("]", "]]");
 }

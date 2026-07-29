@@ -60,8 +60,10 @@ HTML logging · GMCP / MSDP / MSSP / MCCP · MXP + Pueblo · Unicode/emoji.
   are recognised and discarded.
 - **Scrollback** — bounded, thread-safe styled-line model with change events.
 - **Automation** — regex **triggers** (gag / highlight / rewrite / respond / spawn-route /
-  script), **aliases** (capture-group expansion, multi-command), **macros/keybinds**, and a
-  recurring/one-shot **timer** scheduler. User regexes run with a ReDoS match-timeout guard.
+  script), **aliases** (capture-group expansion, multi-command), **macros/keybinds** (F-keys and
+  Ctrl/Alt chords — the numpad is not deliverable through the terminal, and F4 says so per
+  binding), and a recurring/one-shot **timer** scheduler. User regexes run with a ReDoS
+  match-timeout guard.
 - **MXP & Pueblo** — first-class parsers for both markup protocols: tags → styled spans, with
   **clickable** `<SEND>`/`<A>` links and commands (`SpanInteraction`), colours, entities, and
   line breaks. Selectable per world.

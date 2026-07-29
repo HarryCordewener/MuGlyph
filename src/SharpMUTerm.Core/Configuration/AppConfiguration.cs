@@ -33,6 +33,12 @@ public sealed class AppConfiguration
     /// <summary>Default charset preference order (IANA names), most-preferred first.</summary>
     public List<string> CharsetOrder { get; set; } = new() { "utf-8", "iso-8859-1" };
 
+    /// <summary>How inbound text is drawn — the F7 "Text &amp; ANSI" screen's settings.</summary>
+    public TextSettings Text { get; set; } = new();
+
+    /// <summary>How the command line behaves — the F8 "Input &amp; spellcheck" screen's settings.</summary>
+    public InputSettings Input { get; set; } = new();
+
     /// <summary>The saved worlds (servers), each holding its own characters.</summary>
     public List<WorldDefinition> Worlds { get; set; } = new();
 

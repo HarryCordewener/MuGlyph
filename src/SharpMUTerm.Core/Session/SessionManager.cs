@@ -1,4 +1,5 @@
 using SharpMUTerm.Core.Configuration;
+using SharpMUTerm.Core.Logging;
 
 namespace SharpMUTerm.Core.Session;
 
@@ -25,12 +26,18 @@ public sealed class SessionManager : IAsyncDisposable
 
     /// <summary>
     /// Creates and registers an anonymous session for a world (no character, no automation).
-    /// Used for ad-hoc command-line connections. Does not connect it.
+    /// Used for ad-hoc command-line connections and for a world that has no characters configured.
+    /// Does not connect it.
     /// </summary>
-    public WorldSession Open(WorldDefinition world, int scrollbackCapacity = 20_000)
+    public WorldSession Open(
+        WorldDefinition world,
+        int scrollbackCapacity = 20_000,
+        TextSettings? text = null,
+        InputSettings? input = null)
     {
         ArgumentNullException.ThrowIfNull(world);
-        var session = new WorldSession(world, scrollbackCapacity: scrollbackCapacity);
+        var session = new WorldSession(
+            world, scrollbackCapacity: scrollbackCapacity, text: text, input: input);
         Add(session);
         return session;
     }
@@ -38,17 +45,32 @@ public sealed class SessionManager : IAsyncDisposable
     /// <summary>
     /// Creates and registers a session for a specific character on a world, composing its
     /// automation from <paramref name="triggerSets"/>. Does not connect it.
+    /// <para>
+    /// <paramref name="text"/> and <paramref name="input"/> are the app-wide F7/F8 preferences and
+    /// are passed by reference, not copied — see the <see cref="WorldSession"/> constructor for why
+    /// that is the whole point of them.
+    /// </para>
     /// </summary>
     public WorldSession Open(
         WorldDefinition world,
         CharacterDefinition character,
         IReadOnlyList<TriggerSet> triggerSets,
-        int scrollbackCapacity = 20_000)
+        int scrollbackCapacity = 20_000,
+        ILogSink? log = null,
+        TextSettings? text = null,
+        InputSettings? input = null)
     {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(character);
         ArgumentNullException.ThrowIfNull(triggerSets);
-        var session = new WorldSession(world, character, triggerSets, scrollbackCapacity: scrollbackCapacity);
+        var session = new WorldSession(
+            world,
+            character,
+            triggerSets,
+            log: log,
+            scrollbackCapacity: scrollbackCapacity,
+            text: text,
+            input: input);
         Add(session);
         return session;
     }

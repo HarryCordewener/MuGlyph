@@ -16,32 +16,61 @@ namespace SharpMUTerm.Tui;
 /// </summary>
 internal static class WorldsScreenView
 {
-    private const string RuleColor = "#3a4257";
-
     public static IWindowControl Build(
         IReadOnlyList<WorldDefinition> worlds,
         IReadOnlyList<TriggerSet> triggerSets,
         int selectedWorld,
         int selectedCharacter,
-        int width)
+        int width,
+        ScreenFocus? focus = null,
+        string fkey = WorldsScreenRenderer.FKey,
+        int selectedSet = 0,
+        int height = 0)
     {
+        // Both panes end in button rows, so a raw cursor can point past its list; resolving once here
+        // keeps every block of the screen agreeing on which world and character are selected.
+        (selectedWorld, selectedCharacter) =
+            WorldsScreenRenderer.Resolve(worlds, selectedWorld, selectedCharacter);
         var accent = WorldsScreenRenderer.AccentFor(worlds, selectedWorld);
 
-        var header = Band(WorldsScreenRenderer.HeaderLine(width), WorldsScreenRenderer.HeaderBg);
-        var footer = Band(
-            WorldsScreenRenderer.FooterLine(worlds, selectedWorld, selectedCharacter, accent, width),
-            WorldsScreenRenderer.FooterBg);
+        var model = WorldsScreenRenderer.Model(
+            worlds, triggerSets, selectedWorld, selectedCharacter, selectedSet);
+        var header = ScreenChrome.Band(
+            WorldsScreenRenderer.HeaderLine(width, model, focus, fkey), ScreenPalette.HeaderBg);
+        var footer = ScreenChrome.Band(
+            WorldsScreenRenderer.FooterLine(worlds, selectedWorld, selectedCharacter, accent, width, focus),
+            ScreenPalette.FooterBg);
+
+        // How many rows the WORLDS/detail body has once the header, the character band, the gap under
+        // it and the action bar have taken theirs. The detail column is built against that number, so a
+        // pane taller than its slot compacts and then scrolls rather than losing its tail silently.
+        var band = WorldsScreenRenderer.HasCharacter(worlds, selectedWorld, selectedCharacter)
+            ? Math.Max(
+                WorldsScreenRenderer.FormColumn(
+                    worlds[selectedWorld].Characters[selectedCharacter], accent, focus, selectedCharacter).Count,
+                WorldsScreenRenderer.TriggersColumn(
+                    worlds[selectedWorld].Characters[selectedCharacter],
+                    triggerSets,
+                    accent,
+                    focus,
+                    selectedSet,
+                    worlds).Count) + 2
+            : 1;
+        var rows = height <= 0 ? 0 : Math.Max(1, height - 1 - band);
 
         // Body: WORLDS list │ detail, as two real columns.
-        var worldsCol = Stretch(new MarkupControl(WorldsScreenRenderer.WorldsColumn(worlds, selectedWorld).ToList()));
-        var detailCol = Stretch(new MarkupControl(
-            WorldsScreenRenderer.DetailColumn(worlds, triggerSets, selectedWorld, selectedCharacter, accent).ToList()));
+        var worldsCol = ScreenChrome.Stretch(
+            new MarkupControl(WorldsScreenRenderer.WorldsColumn(worlds, selectedWorld, focus).ToList()));
+        var detailCol = ScreenChrome.Stretch(new MarkupControl(
+            WorldsScreenRenderer
+                .DetailColumn(worlds, triggerSets, selectedWorld, selectedCharacter, accent, focus, rows)
+                .ToList()));
         var body = Controls.HorizontalGrid()
             .WithAlignment(HorizontalAlignment.Stretch)
             .WithVerticalAlignment(VerticalAlignment.Fill)
             .Column(c => c.Width(30).Add(worldsCol))
-            .Column(c => c.Width(1).Add(VerticalRule()))
-            .Column(c => c.Width(1).Add(new MarkupControl(new List<string>())))
+            .Column(c => c.Width(1).Add(ScreenChrome.VerticalRule()))
+            .Column(c => c.Width(1).Add(ScreenChrome.Filler()))
             .Column(c => c.Flex(1).Add(detailCol))
             .Build();
 
@@ -52,25 +81,30 @@ internal static class WorldsScreenView
         if (WorldsScreenRenderer.HasCharacter(worlds, selectedWorld, selectedCharacter))
         {
             var character = worlds[selectedWorld].Characters[selectedCharacter];
-            var form = WorldsScreenRenderer.FormColumn(character, accent).ToList();
-            var triggers = WorldsScreenRenderer.TriggersColumn(character, triggerSets, accent).ToList();
+            var form = WorldsScreenRenderer.FormColumn(character, accent, focus, selectedCharacter).ToList();
+            var triggers = WorldsScreenRenderer
+                .TriggersColumn(character, triggerSets, accent, focus, selectedSet, worlds)
+                .ToList();
             var editHeight = Math.Max(form.Count, triggers.Count);
 
             // Form panel on the left; the trigger checklist pushed to the right by a flex spacer so its
             // block sits on the right while its checkboxes stay left-aligned (an Auto column hugs it, not
             // per-row right-justify, which would ragged the left edge). The edit grid's own background
             // gives the full-width elevated band behind both.
-            var formPanel = new MarkupControl(Indent(form)) { HorizontalAlignment = HorizontalAlignment.Left };
+            var formPanel = new MarkupControl(ScreenChrome.Indent(form))
+            {
+                HorizontalAlignment = HorizontalAlignment.Left,
+            };
             var trigPanel = new MarkupControl(triggers) { HorizontalAlignment = HorizontalAlignment.Left };
             var edit = Controls.HorizontalGrid()
                 .WithAlignment(HorizontalAlignment.Stretch)
                 .WithVerticalAlignment(VerticalAlignment.Fill)
                 .Column(c => c.Width(48).Add(formPanel))
-                .Column(c => c.Flex(1).Add(new MarkupControl(new List<string>())))
+                .Column(c => c.Flex(1).Add(ScreenChrome.Filler()))
                 .Column(c => c.Add(trigPanel))
-                .Column(c => c.Width(2).Add(new MarkupControl(new List<string>())))
+                .Column(c => c.Width(2).Add(ScreenChrome.Filler()))
                 .Build();
-            edit.BackgroundColor = new Color(WorldsScreenRenderer.EditBg);
+            edit.BackgroundColor = new Color(ScreenPalette.EditBg);
 
             // A one-row panel-background gap sits between the editing pane and the footer so the footer
             // reads as a separate bar, not the last row of the character setup section.
@@ -93,21 +127,4 @@ internal static class WorldsScreenView
 
         return root.Build();
     }
-
-    private static MarkupControl Band(string line, string bg) => new(new List<string> { line })
-    {
-        BackgroundColor = new Color(bg),
-        HorizontalAlignment = HorizontalAlignment.Stretch,
-    };
-
-    private static MarkupControl Stretch(MarkupControl control)
-    {
-        control.HorizontalAlignment = HorizontalAlignment.Stretch;
-        return control;
-    }
-
-    private static MarkupControl VerticalRule() => new(new List<string>()) { BackgroundColor = new Color(RuleColor) };
-
-    /// <summary>Prefixes each form row with a space so the editing pane doesn't sit flush to the left edge.</summary>
-    private static List<string> Indent(IEnumerable<string> lines) => lines.Select(l => " " + l).ToList();
 }

@@ -45,6 +45,61 @@ public static class StyledText
         return Coalesce(text, styles);
     }
 
+    /// <summary>
+    /// Returns the line with every span's foreground and background reset to
+    /// <see cref="TerminalColor.Default"/> — the "strip incoming ANSI colour" preference
+    /// (<see cref="SharpMUTerm.Core.Configuration.TextSettings.StripIncomingColour"/>).
+    /// <para>
+    /// Only the two colours go. Attributes stay, because bold/underline/reverse are how a server marks
+    /// structure once its palette is gone, and an interaction stays because a stripped MXP link is
+    /// still a link. Spans are re-coalesced, so a line that was only ever colour-differentiated
+    /// collapses back to one span. A line with no colour on it is returned unchanged rather than
+    /// rebuilt.
+    /// </para>
+    /// </summary>
+    public static StyledLine StripColour(StyledLine line)
+    {
+        ArgumentNullException.ThrowIfNull(line);
+
+        var coloured = false;
+        foreach (var span in line.Spans)
+        {
+            if (span.Style.Foreground.Kind != TerminalColorKind.Default ||
+                span.Style.Background.Kind != TerminalColorKind.Default)
+            {
+                coloured = true;
+                break;
+            }
+        }
+
+        if (!coloured)
+        {
+            return line;
+        }
+
+        var spans = new List<StyledSpan>(line.Spans.Count);
+        foreach (var span in line.Spans)
+        {
+            var style = span.Style
+                .WithForeground(TerminalColor.Default)
+                .WithBackground(TerminalColor.Default);
+
+            // Merge with the previous span when stripping made them identical, so the result has as
+            // few spans as the text really needs (the renderer emits one markup tag per span).
+            if (spans.Count > 0 &&
+                spans[^1].Style == style &&
+                Equals(spans[^1].Interaction, span.Interaction))
+            {
+                spans[^1] = new StyledSpan(spans[^1].Text + span.Text, style, span.Interaction);
+                continue;
+            }
+
+            spans.Add(new StyledSpan(span.Text, style, span.Interaction));
+        }
+
+        return new StyledLine(spans, line.RuleColor);
+    }
+
     /// <summary>Rebuilds a line from a plain string and a parallel per-character style array.</summary>
     public static StyledLine Coalesce(string text, TextStyle[] styles)
     {

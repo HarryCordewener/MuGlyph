@@ -17,6 +17,14 @@ internal sealed class LineWriter(int width)
     private bool _lineHasContent;
     private bool _pendingSpace;
 
+    /// <summary>
+    /// The index the line currently being built will occupy in the finished list. Stable once the
+    /// line has content: <see cref="BlankLine"/> only ever appends after it, and
+    /// <see cref="Finish"/> only trims trailing <em>empty</em> lines. Callers that need to point
+    /// back at a line they are about to write (an image placeholder, say) read this first.
+    /// </summary>
+    public int LineIndex => _lines.Count;
+
     public void AddText(string text, TextStyle style, SpanInteraction? link, bool preformatted)
     {
         if (string.IsNullOrEmpty(text))

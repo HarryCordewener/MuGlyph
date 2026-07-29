@@ -52,6 +52,28 @@ public class AliasEngineTests
         var result = engine.Expand("abc");
         await Assert.That(result.Matched).IsFalse();
     }
+
+    /// <summary>
+    /// Pattern and substitution are settable so the F3 settings screen can edit a live alias. The
+    /// compiled regex is cached, so writing the pattern has to drop that cache — the same trap
+    /// <see cref="Alias.CaseSensitive"/> already guards against.
+    /// </summary>
+    [Test]
+    public async Task RewritingThePatternAndExpansion_TakesEffectImmediately()
+    {
+        var alias = new Alias { Pattern = "^k$", Substitution = "kill" };
+        var engine = new AliasEngine();
+        engine.Add(alias);
+        await Assert.That(engine.Expand("k").Matched).IsTrue();
+
+        alias.Pattern = "^kk$";
+        alias.Substitution = "kill target";
+
+        await Assert.That(engine.Expand("k").Matched).IsFalse();
+        var result = engine.Expand("kk");
+        await Assert.That(result.Matched).IsTrue();
+        await Assert.That(result.Commands[0]).IsEqualTo("kill target");
+    }
 }
 
 public class MacroEngineTests
@@ -90,5 +112,125 @@ public class MacroEngineTests
     public async Task Describe_ProducesCanonicalDescriptor(string key, bool ctrl, bool alt, bool shift, string expected)
     {
         await Assert.That(MacroKey.Describe(key, ctrl, alt, shift)).IsEqualTo(expected);
+    }
+
+    /// <summary>
+    /// Rebinding is live. The engine used to be a <c>Dictionary</c> keyed on the descriptor string it was
+    /// handed at construction — a cache of the one property the F4 screen's capture mode can now change,
+    /// so a rebound macro went on answering to the key it no longer carried until the next reconnect
+    /// rebuilt the engine. Exactly the staleness <see cref="Alias.CaseSensitive"/> and
+    /// <see cref="Trigger.Pattern"/> drop their compiled matcher to avoid.
+    /// </summary>
+    [Test]
+    public async Task RebindingTheKey_TakesEffectImmediately()
+    {
+        var macro = new Macro { Key = "Ctrl+F1", Command = "north" };
+        var engine = new MacroEngine(new[] { macro });
+        await Assert.That(engine.Resolve("Ctrl+F1")).IsNotNull();
+
+        macro.Key = "Ctrl+F10";
+
+        await Assert.That(engine.Resolve("Ctrl+F1")).IsNull();
+        await Assert.That(engine.Resolve("Ctrl+F10")).IsNotNull();
+        await Assert.That(engine.Macros).HasSingleItem();
+    }
+
+    /// <summary>
+    /// Two macros on one key is a state the F4 screen refuses to create, but a hand-edited file can still
+    /// hold one. The first wins, the way <see cref="AliasEngine"/>'s first matching pattern does, so the
+    /// answer is at least deterministic and the same one the screen names when it refuses the duplicate.
+    /// </summary>
+    [Test]
+    public async Task TwoMacrosOnOneKey_ResolveToTheFirst()
+    {
+        var engine = new MacroEngine(new[]
+        {
+            new Macro { Name = "first", Key = "Ctrl+F1", Command = "north" },
+            new Macro { Name = "second", Key = "ctrl+f1", Command = "south" },
+        });
+
+        await Assert.That(engine.Resolve("Ctrl+F1")!.Command).IsEqualTo("north");
+    }
+
+    /// <summary>Add replaces whatever holds the key, and Remove takes it out however it was spelt.</summary>
+    [Test]
+    public async Task AddReplacesTheBindingOnAKeyAndRemoveTakesItOut()
+    {
+        var engine = new MacroEngine();
+        engine.Add(new Macro { Key = "Ctrl+F1", Command = "north" });
+        engine.Add(new Macro { Key = "ctrl+f1", Command = "south" });
+
+        await Assert.That(engine.Macros).HasSingleItem();
+        await Assert.That(engine.Resolve("Ctrl+F1")!.Command).IsEqualTo("south");
+
+        await Assert.That(engine.Remove("CTRL+F1")).IsTrue();
+        await Assert.That(engine.Resolve("Ctrl+F1")).IsNull();
+        await Assert.That(engine.Remove("Ctrl+F1")).IsFalse();
+    }
+}
+
+/// <summary>
+/// The descriptor vocabulary. It is Core's because it is what <see cref="MacroEngine"/> compares and what
+/// a configuration file stores; what any of it is <em>worth</em> on a given keyboard is the UI layer's
+/// question (see <c>MacroKeys</c> in the TUI), because it is a property of the host, not of the binding.
+/// </summary>
+public class MacroKeyTests
+{
+    /// <summary>
+    /// A descriptor has one canonical spelling, so two ways of writing the same chord compare equal. The
+    /// two shapes already in configurations — <c>Ctrl+F1</c> and <c>Num5</c> — come back untouched, which
+    /// is the whole requirement: settling the spelling must not quietly rewrite anyone's bindings.
+    /// </summary>
+    [Test]
+    [Arguments("Ctrl+F1", "Ctrl+F1")]
+    [Arguments("Num5", "Num5")]
+    [Arguments("F1", "F1")]
+    [Arguments("shift+ctrl+f1", "Ctrl+Shift+F1")]
+    [Arguments("CONTROL+f10", "Ctrl+F10")]
+    [Arguments("NumPad0", "Num0")]
+    [Arguments("alt+k", "Alt+K")]
+    [Arguments("  Ctrl + F1 ", "Ctrl+F1")]
+    [Arguments("pgup", "PageUp")]
+    [Arguments("uparrow", "Up")]
+    [Arguments("esc", "Escape")]
+    public async Task Canonicalise_SettlesTheSpelling(string descriptor, string expected)
+    {
+        await Assert.That(MacroKey.Canonicalise(descriptor)).IsEqualTo(expected);
+    }
+
+    /// <summary>
+    /// A descriptor whose modifiers name nothing, or which has no key at all, comes back null rather than
+    /// half-understood: a caller that cannot say what a descriptor is must not pretend, because the answer
+    /// decides whether a binding is drawn as one that fires.
+    /// </summary>
+    [Test]
+    [Arguments("")]
+    [Arguments("   ")]
+    [Arguments("Hyper+F1")]
+    [Arguments("Ctrl+")]
+    [Arguments("Ctrl++F1")]
+    public async Task Canonicalise_RefusesWhatItCannotRead(string descriptor)
+    {
+        await Assert.That(MacroKey.Canonicalise(descriptor)).IsNull();
+    }
+
+    /// <summary>
+    /// A key this client has never heard of is kept verbatim rather than rejected or renamed: a
+    /// configuration may name one, and silently rewriting it would be worse than leaving it alone.
+    /// </summary>
+    [Test]
+    public async Task Canonicalise_LeavesAnUnknownKeyNameAlone()
+    {
+        await Assert.That(MacroKey.Canonicalise("Ctrl+MediaPlay")).IsEqualTo("Ctrl+MediaPlay");
+    }
+
+    [Test]
+    public async Task TryParse_ReportsTheModifiersAndTheBaseKey()
+    {
+        await Assert.That(MacroKey.TryParse("ctrl+alt+shift+f5", out var parts)).IsTrue();
+        await Assert.That(parts).IsEqualTo(new MacroKeyParts("F5", Ctrl: true, Alt: true, Shift: true));
+
+        await Assert.That(MacroKey.TryParse("Num5", out var bare)).IsTrue();
+        await Assert.That(bare).IsEqualTo(new MacroKeyParts("Num5", false, false, false));
     }
 }

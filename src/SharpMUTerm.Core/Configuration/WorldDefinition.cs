@@ -86,6 +86,32 @@ public sealed class WorldDefinition
     /// <summary>The characters that can connect to this world.</summary>
     public List<CharacterDefinition> Characters { get; set; } = new();
 
+    /// <summary>
+    /// A deep copy of this world, characters and all. Same contract as
+    /// <see cref="CharacterDefinition.Clone"/>: nothing mutable is shared with the original, so a
+    /// duplicated world can be renamed and re-pointed without dragging its source along.
+    /// </summary>
+    public WorldDefinition Clone() => new()
+    {
+        Name = Name,
+        Host = Host,
+        Port = Port,
+        UseTls = UseTls,
+        AllowInvalidCertificates = AllowInvalidCertificates,
+        LocalEcho = LocalEcho,
+        Encoding = Encoding,
+        KeepaliveSeconds = KeepaliveSeconds,
+        ContentFormat = ContentFormat,
+        Emoji = new EmojiSettings
+        {
+            Enabled = Emoji.Enabled,
+            Emoticons = Emoji.Emoticons,
+            Shortcodes = Emoji.Shortcodes,
+        },
+        Accent = Accent,
+        Characters = Characters.Select(c => c.Clone()).ToList(),
+    };
+
     /// <summary>Builds the transport-level options from this world.</summary>
     public ConnectionOptions ToConnectionOptions() => new()
     {

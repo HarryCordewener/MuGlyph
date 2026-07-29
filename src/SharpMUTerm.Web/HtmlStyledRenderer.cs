@@ -32,14 +32,24 @@ public sealed class HtmlStyledRenderer
         TextStyle.Default.WithForeground(TerminalColor.FromIndex(11)).AddAttribute(TextAttributes.Bold);
 
     private readonly string? _baseUrl;
+    private readonly List<WebImage> _images = new();
     private int _width = 80;
 
     public HtmlStyledRenderer(string? baseUrl = null) => _baseUrl = baseUrl;
 
-    public IReadOnlyList<StyledLine> Render(string html, int width = 80)
+    /// <summary>Renders the document to styled lines, discarding the image index.</summary>
+    public IReadOnlyList<StyledLine> Render(string html, int width = 80) => RenderDocument(html, width).Lines;
+
+    /// <summary>
+    /// Renders the document to styled lines <em>and</em> the list of <c>&lt;img&gt;</c> elements it
+    /// contains, each pointing at the line holding its placeholder. A graphics-capable view uses the
+    /// index to swap placeholders for real pictures; everything else just renders the lines.
+    /// </summary>
+    public HtmlRenderResult RenderDocument(string html, int width = 80)
     {
         ArgumentNullException.ThrowIfNull(html);
         _width = Math.Max(20, width);
+        _images.Clear();
         var document = new HtmlParser().ParseDocument(html);
         var writer = new LineWriter(_width);
         INode? root = document.Body ?? document.DocumentElement;
@@ -51,7 +61,7 @@ public sealed class HtmlStyledRenderer
             }
         }
 
-        return writer.Finish();
+        return new HtmlRenderResult(writer.Finish(), _images.ToArray());
     }
 
     /// <summary>Extracts the document title, if any.</summary>
@@ -95,11 +105,7 @@ public sealed class HtmlStyledRenderer
                 writer.BlankLine();
                 return;
             case "img":
-                var alt = element.GetAttribute("alt");
-                var label = string.IsNullOrWhiteSpace(alt) ? "[image]" : $"[image: {alt}]";
-                var src = element.GetAttribute("src");
-                var imgLink = string.IsNullOrWhiteSpace(src) ? null : SpanInteraction.Link(Resolve(src));
-                writer.AddText(label, style.AddAttribute(TextAttributes.Italic), imgLink, preformatted);
+                EmitImage(element, writer, style, preformatted);
                 return;
         }
 
@@ -166,6 +172,32 @@ public sealed class HtmlStyledRenderer
         if (tag is "p" or "h1" or "h2" or "h3" or "h4" or "h5" or "h6" or "blockquote" or "ul" or "ol" or "pre")
         {
             writer.BlankLine();
+        }
+    }
+
+    /// <summary>
+    /// Writes an image's text placeholder and records where it landed. The placeholder gets a line
+    /// to itself: a graphics-capable view replaces that whole row with the picture, which it can only
+    /// do if no surrounding prose shares the row. Images with no <c>src</c> still get a placeholder —
+    /// there is just nothing to fetch, so they are not indexed.
+    /// </summary>
+    private void EmitImage(IElement element, LineWriter writer, TextStyle style, bool preformatted)
+    {
+        var alt = element.GetAttribute("alt");
+        var label = string.IsNullOrWhiteSpace(alt) ? "[image]" : $"[image: {alt}]";
+        var src = element.GetAttribute("src");
+        var hasSource = !string.IsNullOrWhiteSpace(src);
+        var resolved = hasSource ? Resolve(src!) : null;
+
+        writer.EndLine();
+        var lineIndex = writer.LineIndex;
+        var imgLink = resolved is null ? null : SpanInteraction.Link(resolved);
+        writer.AddText(label, style.AddAttribute(TextAttributes.Italic), imgLink, preformatted);
+        writer.EndLine();
+
+        if (resolved is not null)
+        {
+            _images.Add(new WebImage(lineIndex, resolved, alt?.Trim() is { Length: > 0 } a ? a : null, label));
         }
     }
 

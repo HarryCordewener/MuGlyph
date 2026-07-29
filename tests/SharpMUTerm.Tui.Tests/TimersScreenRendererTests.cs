@@ -144,4 +144,22 @@ public class TimersScreenRendererTests
         await Assert.That(lines.Any(l => l.Contains("od[[d]]"))).IsTrue();
         await Assert.That(lines.Any(l => l.Contains("say [[hi]]"))).IsTrue();
     }
+
+    /// <summary>
+    /// The list's key, at the foot of the column. The tick and the set marker are the two glyphs a row
+    /// is written in, and <c>on</c> as a column header was not much better a gloss than the tick it
+    /// headed. It reads the selected row too: its tick is lit when that timer is enabled.
+    /// </summary>
+    [Test]
+    public async Task TheListKeyNamesTheTickAndTheSetMarker()
+    {
+        var column = TimersScreenRenderer.ListColumn(Scene(), selected: 0);
+        var key = string.Join("\n", column.SkipWhile(l => !l.Contains("key")));
+
+        await Assert.That(key).Contains("✓");
+        await Assert.That(key).Contains("enabled");
+        await Assert.That(key).Contains("▪");
+        await Assert.That(key).Contains("set");
+        await Assert.That(key).Contains($"[{ScreenPalette.Value}]enabled[/]");
+    }
 }

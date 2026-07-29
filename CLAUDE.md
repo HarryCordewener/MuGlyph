@@ -32,7 +32,7 @@ fallbacks) for inline images/maps.
 ## Repository state
 
 **M1 delivered, plus substantial M2–M4 work.** `SharpMUTerm.slnx` builds all ten projects on
-`net10.0`; the solution has **514 passing tests**. In place:
+`net10.0`; the solution has **1129 tests**, all passing. In place:
 
 - **Core** — `AnsiParser` (SGR 16/256/truecolor), styled-line + `ScrollbackBuffer` model,
   `TcpTransport` (TLS + IPv6), `TelnetSession` (wraps TelnetNegotiationCore **2.5.3**),
@@ -40,7 +40,10 @@ fallbacks) for inline images/maps.
   config (worlds → characters + shared trigger sets, with migration),
   `Theme`/`ThemeLibrary`, and `WorldSession`/`SessionManager` orchestration.
 - **Graphics** — Kitty encoder + Unicode placeholders, Sixel + half-block fallbacks, capability
-  probe (no UI dependency).
+  probe, and `InlineImagePolicy` — the Kitty → Sixel → half-block → text degradation chain (no UI
+  dependency). Inside the TUI the *pixels* are drawn by SharpConsoleUI's `ImageControl`; ours
+  supplies the policy, because only the framework's renderer can put an image into compositor cells.
+  See `docs/HANDOFF.md` §2 for why, including the framework's missing Sixel back-end.
 - **Scripting** — sandboxed MoonSharp `ScriptHost` (world/output/trigger/alias/timer/gmcp/log).
 - **Tui** — **SharpConsoleUI** app: a `TabControl` of output windows (main + trigger-routed **spawn
   windows** + web view, with unread badges), each a `MarkupControl` fed StyledLine → Spectre-style
@@ -79,7 +82,7 @@ Planned solution layout:
 | Project | Responsibility |
 |---|---|
 | `SharpMUTerm.Core` | Transport, telnet, ANSI/MXP/Pueblo parsers, GMCP/MSDP routing, scrollback, engines, logging (no UI deps) |
-| `SharpMUTerm.Graphics` | Kitty graphics protocol, capability probe, Sixel + half-block fallbacks, `GraphicsView` |
+| `SharpMUTerm.Graphics` | Kitty/Sixel encoders, capability probe, half-block fallback, `InlineImagePolicy` (no UI deps) |
 | `SharpMUTerm.Scripting` | MoonSharp host + scripting API |
 | `SharpMUTerm.Tui` | SharpConsoleUI application |
 | `*.Tests` (Core, Graphics, Scripting, Web, Tui) | TUnit |

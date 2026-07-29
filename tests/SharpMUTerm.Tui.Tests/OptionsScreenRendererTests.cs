@@ -1,4 +1,3 @@
-using SharpMUTerm.Core.Configuration;
 using SharpMUTerm.Tui;
 
 namespace SharpMUTerm.Tui.Tests;
@@ -26,10 +25,10 @@ public class OptionsScreenRendererTests
     [Test]
     public async Task Render_ValueRow_ShowsLabelAndValue()
     {
-        var rows = new[] { new OptionsScreenRenderer.OptionRow("dictionary", "en_US", null) };
-        var lines = OptionsScreenRenderer.Render("Input & spellcheck", "F8", rows);
-        var row = lines.Single(l => l.Contains("dictionary"));
-        await Assert.That(row).Contains("en_US");
+        var rows = new[] { new OptionsScreenRenderer.OptionRow("scrollback", "20000", null) };
+        var lines = OptionsScreenRenderer.Render("Input", "F8", rows);
+        var row = lines.Single(l => l.Contains("scrollback"));
+        await Assert.That(row).Contains("20000");
     }
 
     [Test]
@@ -54,13 +53,20 @@ public class OptionsScreenRendererTests
         await Assert.That(lines[3]).IsEqualTo(string.Empty);
     }
 
+    /// <summary>
+    /// The header names the screen and how to leave it, and nothing else. It used to open with a
+    /// <c>‹ back</c> affordance — on the options screens only, pointing at a navigation stack that does
+    /// not exist. The assertion is kept pointed the other way rather than dropped, so it cannot come
+    /// back by accident.
+    /// </summary>
     [Test]
     public async Task Render_HeaderAndFooter_MatchPattern()
     {
-        var lines = OptionsScreenRenderer.Render("Logging", "F9", Array.Empty<OptionsScreenRenderer.OptionRow>());
-        await Assert.That(lines[0]).Contains("‹ back");
-        await Assert.That(lines[0]).Contains("Logging");
-        await Assert.That(lines[0]).Contains("F9");
+        var lines = OptionsScreenRenderer.Render(
+            "Input", "F8", Array.Empty<OptionsScreenRenderer.OptionRow>());
+        await Assert.That(lines[0]).DoesNotContain("‹ back");
+        await Assert.That(lines[0]).Contains("Input");
+        await Assert.That(lines[0]).Contains("F8");
         await Assert.That(lines[^1]).Contains("Cancel");
         await Assert.That(lines[^1]).Contains("Save");
     }
@@ -83,39 +89,41 @@ public class OptionsScreenRendererTests
         await Assert.That(lines.Any(l => l.Contains("allow blink"))).IsTrue();
         await Assert.That(lines.Any(l => l.Contains("underline hyperlinks"))).IsTrue();
         await Assert.That(lines.Any(l => l.Contains("emoji substitution"))).IsTrue();
-        await Assert.That(lines.Any(l => l.Contains("ambiguous width") && l.Contains("narrow"))).IsTrue();
+    }
+
+    /// <summary>
+    /// F7 no longer offers <c>ambiguous width</c>. Every column measurement in this app is
+    /// SharpConsoleUI's, which has no East-Asian-ambiguous policy to set, so the row stored a string
+    /// nothing read. Asserted as an absence so it cannot drift back in without this being noticed.
+    /// </summary>
+    [Test]
+    public async Task TextAnsi_DoesNotOfferAmbiguousWidth()
+    {
+        var lines = OptionsScreenRenderer.TextAnsi();
+        await Assert.That(lines.Any(l => l.Contains("ambiguous width"))).IsFalse();
     }
 
     [Test]
-    public async Task InputSpellcheck_ContainsExpectedLabelsAndSections()
+    public async Task Input_ContainsExpectedLabelsAndSections()
     {
-        var lines = OptionsScreenRenderer.InputSpellcheck();
+        var lines = OptionsScreenRenderer.Input();
         await Assert.That(lines.Any(l => l.Contains("INPUT"))).IsTrue();
-        await Assert.That(lines.Any(l => l.Contains("SPELLCHECK"))).IsTrue();
         await Assert.That(lines.Any(l => l.Contains("local echo"))).IsTrue();
         await Assert.That(lines.Any(l => l.Contains("keep per-tab drafts"))).IsTrue();
-        await Assert.That(lines.Any(l => l.Contains("newline key") && l.Contains("Shift+Enter"))).IsTrue();
-        await Assert.That(lines.Any(l => l.Contains("check spelling"))).IsTrue();
-        await Assert.That(lines.Any(l => l.Contains("dictionary") && l.Contains("en_US"))).IsTrue();
     }
 
+    /// <summary>
+    /// The screen is "Input", not "Input &amp; spellcheck": there is no speller in this client, so
+    /// <c>check spelling</c> and <c>dictionary</c> were removed rather than left promising a check
+    /// that never ran. <c>newline key</c> went with them — the command line is a single-line control.
+    /// </summary>
     [Test]
-    public async Task Logging_ReflectsPassedSettings()
+    public async Task Input_DoesNotOfferSpellcheckOrANewlineKey()
     {
-        var logging = new LoggingSettings { Format = LogFormat.Html, Directory = "/var/log/mu" };
-        var lines = OptionsScreenRenderer.Logging(logging);
-        await Assert.That(lines.Any(l => l.Contains("format") && l.Contains("Html"))).IsTrue();
-        await Assert.That(lines.Any(l => l.Contains("directory") && l.Contains("/var/log/mu"))).IsTrue();
-        await Assert.That(lines.Any(l => l.Contains("auto-start on connect") && l.Contains("[[x]]"))).IsTrue();
-    }
-
-    [Test]
-    public async Task Logging_NoneFormat_AutoStartUnchecked_AndUsesDefaultDirectoryText()
-    {
-        var logging = new LoggingSettings { Format = LogFormat.None, Directory = null };
-        var lines = OptionsScreenRenderer.Logging(logging);
-        await Assert.That(lines.Any(l => l.Contains("directory") && l.Contains("(default)"))).IsTrue();
-        var autoStart = lines.Single(l => l.Contains("auto-start on connect"));
-        await Assert.That(autoStart).Contains("[[ ]]");
+        var lines = OptionsScreenRenderer.Input();
+        await Assert.That(lines.Any(l => l.Contains("SPELLCHECK"))).IsFalse();
+        await Assert.That(lines.Any(l => l.Contains("check spelling"))).IsFalse();
+        await Assert.That(lines.Any(l => l.Contains("dictionary"))).IsFalse();
+        await Assert.That(lines.Any(l => l.Contains("newline key"))).IsFalse();
     }
 }

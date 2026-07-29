@@ -20,7 +20,9 @@ DLL="$ROOT/src/SharpMUTerm.Tui/bin/Release/net10.0/sharpmuterm.dll"
 render() {
   local name="$1" size="$2"
   echo "Rendering $name ($size)…"
-  dotnet "$DLL" --snapshot --size "$size" --out "$OUT/$name.ansi"
+  # --demo-config: these are the published demo images, so they must not depend on whatever
+  # worlds happen to be configured on the machine rendering them.
+  dotnet "$DLL" --snapshot --demo-config --size "$size" --out "$OUT/$name.ansi"
   python3 "$ROOT/tools/ansi_frame_to_image.py" "$OUT/$name.ansi" "$OUT/$name.svg"
   python3 "$ROOT/tools/ansi_frame_to_image.py" "$OUT/$name.ansi" "$OUT/$name.html"
 }

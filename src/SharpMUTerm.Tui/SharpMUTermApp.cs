@@ -2,6 +2,7 @@ using SharpMUTerm.Core.Commands;
 using SharpMUTerm.Core.Automation;
 using SharpMUTerm.Core.Configuration;
 using SharpMUTerm.Core.Input;
+using SharpMUTerm.Core.Logging;
 using SharpMUTerm.Core.Session;
 using SharpMUTerm.Core.Text;
 using SharpMUTerm.Core.Theming;
@@ -15,6 +16,11 @@ using SharpConsoleUI.Drivers;
 using SharpConsoleUI.Events;
 using SharpConsoleUI.Layout;
 using SColor = SharpConsoleUI.Color;
+// Aliased rather than a plain using: SharpConsoleUI.Imaging also has a HalfBlockRenderer, which
+// would collide with SharpMUTerm.Graphics'.
+using PixelBuffer = SharpConsoleUI.Imaging.PixelBuffer;
+using ImageScaleMode = SharpConsoleUI.Imaging.ImageScaleMode;
+using static SharpMUTerm.Tui.MarkupText;
 
 namespace SharpMUTerm.Tui;
 
@@ -37,7 +43,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private readonly MarkupFormatter _formatter;
     private readonly Workspace _workspace;
     private readonly Dictionary<string, MarkupControl> _panes = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string> _drafts = new(StringComparer.Ordinal);
+    private readonly DraftStore _drafts;
     private readonly InputHistory _history = new();
     private bool _suppressInputChanged;
 
@@ -55,9 +61,33 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private readonly MarkupControl _rail;
     private readonly MarkupControl _railSpacer = new(new List<string>());
     private readonly Dictionary<string, TabControl> _paneTabs = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Guards <see cref="_paneTabs"/>. Everything else touches it on the UI thread, but a mouse frame
+    /// arrives on the driver's input thread and has to read it to locate the panes — enumerating it
+    /// while a rebuild clears and refills it would throw.
+    /// </summary>
+    private readonly object _paneTabsLock = new();
     private readonly PromptControl _input;
     private readonly GmcpStats _stats = new();
     private readonly SharpMUTerm.Web.WebPageFetcher _fetcher = new();
+    private readonly WebImageLoader _imageLoader = new();
+
+    /// <summary>
+    /// The web page currently in the web tab, its markup lines, and the images that decoded — keyed
+    /// by index into <see cref="SharpMUTerm.Web.WebPage.Images"/>. Together these are everything
+    /// <see cref="BuildWebContent"/> needs; an empty image map means the tab is the plain text-mode
+    /// page it has always been.
+    /// </summary>
+    private SharpMUTerm.Web.WebPage? _webPage;
+    private IReadOnlyList<string> _webMarkup = Array.Empty<string>();
+    private readonly Dictionary<int, PixelBuffer> _webImages = new();
+
+    /// <summary>
+    /// Cancels the in-flight image fetches of a superseded page. Loading is per-page and a new
+    /// navigation invalidates the old one's images outright.
+    /// </summary>
+    private CancellationTokenSource? _webImageCts;
 
     private readonly CommandPalette _palette;
     private readonly SettingsOverlay _settings;
@@ -81,7 +111,16 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private bool _moveMode;
     private string? _moveWindowId;
     private string? _moveTargetPaneId;
+    private Edge? _moveEdge;
     private readonly Dictionary<string, char> _moveLetters = new(StringComparer.Ordinal);
+
+    /// <summary>Assembles pane drag-and-drop out of the driver's raw mouse frames (see PaneDragTracker).</summary>
+    private readonly PaneDragTracker _paneDrag = new();
+
+    /// <summary>The pane the live mouse drag is hovering, and the edge it would split — null when idle.</summary>
+    private string? _dragTargetPaneId;
+    private Edge? _dragEdge;
+    private bool _dragActive;
 
     /// <summary>The rail + pane-area row currently in the window (index 1). Swapped on layout change.</summary>
     private IWindowControl _workspaceRow = null!;
@@ -94,7 +133,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _config = config;
         _capabilities = capabilities;
         _theme = ResolveTheme(config);
-        _formatter = new MarkupFormatter(_theme);
+        _formatter = new MarkupFormatter(_theme, config.Text);
+        _drafts = new DraftStore(() => config.Input.KeepDrafts);
 
         // Resume the last session's workspace (panes/windows/focus) when the config carries one;
         // otherwise start with a single main window. Real startup and the demo share this path.
@@ -163,7 +203,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             .Build();
 
         _palette = new CommandPalette(_system, BuildCatalog, () => _active?.SessionKey, DispatchCommand);
-        _settings = new SettingsOverlay(_system);
+        _settings = new SettingsOverlay(_system, SaveConfiguration);
 
         _window.OnResize += (_, _) =>
         {
@@ -175,17 +215,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // The PromptControl otherwise measures to its content width, leaving the band short of the right
         // edge; pinning Width to the window makes the field fill (and its background paint) run edge-to-edge.
         SyncInputWidth();
-        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.Q, () => _system.RequestExit(0));
-        // Next window (Ctrl+N, plus Ctrl+Tab where the terminal reports it) and close window (Ctrl+W).
-        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.N, NextWindow);
-        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.Tab, NextWindow);
-        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.W, CloseActiveWindow);
-        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.O, CyclePane);
-        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.P, ToggleMenu);
-        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.B, ArmPrefix);
-        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.F, ToggleFreeze);
         _window.PreviewKeyPressed += OnWindowKey;
-        RegisterSettingsShortcuts();
+        // Pane drag-and-drop listens at the driver, not at a control: SharpConsoleUI delivers mouse
+        // frames to the control that was pressed (it captures on Button1Pressed), so a control-level
+        // handler would only ever see the *source* pane. The driver stream carries every frame in
+        // desktop cells, which is exactly what a drag between panes needs.
+        _system.ConsoleDriver.MouseEvent += OnDriverMouseEvent;
+        RegisterGlobalShortcuts();
         _system.AddWindow(_window);
     }
 
@@ -263,6 +299,33 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitRight);
             RebuildPaneArea();
             EnterMoveMode();
+
+            // Drive the real key handler so the frame shows move mode as a user would leave it after
+            // picking a target pane and an edge: "b", then ←.
+            HandleMoveKey(new KeyPressedEventArgs(new ConsoleKeyInfo('b', ConsoleKey.B, false, false, false), false));
+            HandleMoveKey(new KeyPressedEventArgs(new ConsoleKeyInfo('\0', ConsoleKey.LeftArrow, false, false, false), false));
+        }
+
+        // Mouse drag: split, lay the frame out so the panes have real bounds, then drive an actual
+        // press + drag through the headless driver's mouse event. Nothing here fakes the preview —
+        // it is whatever the pointer path produces, which is what makes this frame worth looking at.
+        if (string.Equals(view, "drag", StringComparison.OrdinalIgnoreCase))
+        {
+            PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitRight);
+            RebuildPaneArea();
+            RenderFrame();
+            SimulateSnapshotDrag();
+
+            // The frame above left the driver's front buffer populated, so the closing render would
+            // emit only the cells that changed. The headless driver ignores InvalidateFrontBuffer
+            // (the interface default is an empty body), but re-initialising it builds a fresh buffer,
+            // which together with a full repaint makes the closing render a whole frame again.
+            if (_system.ConsoleDriver is HeadlessConsoleDriver headlessDriver)
+            {
+                headlessDriver.Initialize(_system);
+            }
+
+            _system.ForceFullRepaint();
         }
 
         // History-recall state: seed a couple of sent commands, then recall the newest so the input
@@ -291,24 +354,39 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _palette.Toggle();
         }
 
-        // F5 Worlds & Characters is a composed-control screen (real panels); others are markup.
-        if (string.Equals(view, "worlds", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(view, "settings", StringComparison.OrdinalIgnoreCase))
+        // Settings screens (composed-control or markup — SettingsView hands back a control factory
+        // either way) open over the workspace for their --view name. A "<name>-edit" view opens the
+        // same screen and then drives real keys into it, so the frame shows a field genuinely mid-edit
+        // rather than a hand-drawn impression of one.
+        var editing = view is not null && view.EndsWith(EditViewSuffix, StringComparison.OrdinalIgnoreCase);
+        var screenView = editing ? view![..^EditViewSuffix.Length] : view;
+        if (screenView is not null && SettingsView(screenView) is { } screen)
         {
-            _settings.OpenForSnapshot(ConsoleKey.F5, WorldsControl);
-        }
-        else if (view is not null && SettingsView(view) is { } screen)
-        {
-            _settings.OpenForSnapshot(screen.Key, screen.Content);
+            _settings.OpenForSnapshot(screen.Key, screen.Open());
+            if (editing)
+            {
+                foreach (var key in EditSnapshotKeys(screenView))
+                {
+                    _settings.SimulateKey(key);
+                }
+            }
         }
 
-        // Render exactly one frame, synchronously, inline on this thread. ForceRender() performs a
-        // single render cycle (bypassing the frame-rate limiter) with no Run() loop, no driver
-        // Initialize/Start, and no OnShown pass — a freshly-added window is dirty and paints on the
-        // first call. The HeadlessConsoleDriver writes the composited frame straight to the console,
-        // so we redirect Console.Out for the duration of that one call and keep what it wrote. (An
-        // earlier Run()-on-a-worker-thread approach raced the input+render pump and hung/OOM'd.)
         SyncInputWidth(); // the window now carries the snapshot size, so the band fills its full width
+        return RenderFrame();
+    }
+
+    /// <summary>
+    /// Renders exactly one frame, synchronously, inline on this thread, and returns it as ANSI.
+    /// ForceRender() performs a single render cycle (bypassing the frame-rate limiter) with no Run()
+    /// loop, no driver Initialize/Start, and no OnShown pass — a freshly-added window is dirty and
+    /// paints on the first call. The HeadlessConsoleDriver writes the composited frame straight to the
+    /// console, so Console.Out is redirected for the duration of that one call and what it wrote is
+    /// kept. (An earlier Run()-on-a-worker-thread approach raced the input+render pump and hung/OOM'd.)
+    /// A frame also arranges the layout, so control bounds are only real after one has been rendered.
+    /// </summary>
+    private string RenderFrame()
+    {
         var real = Console.Out;
         var writer = new StringWriter();
         try
@@ -322,6 +400,37 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         return writer.ToString();
+    }
+
+    /// <summary>
+    /// Drives a genuine pane drag through the headless driver for the <c>drag</c> snapshot: primary
+    /// button down on the first pane's tab strip, then a drag frame over the second pane's left edge.
+    /// The button is deliberately left down so the frame captures the live drop preview. Requires a
+    /// frame to have been rendered already, so the panes have real bounds to hit.
+    /// </summary>
+    private void SimulateSnapshotDrag()
+    {
+        if (_system.ConsoleDriver is not HeadlessConsoleDriver driver)
+        {
+            return;
+        }
+
+        var panes = _workspace.Layout.Panes;
+        var surface = PaneSnapshot();
+        if (panes.Count < 2 ||
+            surface.RectOf(panes[0].Id) is not { } source ||
+            surface.RectOf(panes[1].Id) is not { } target)
+        {
+            return;
+        }
+
+        driver.SimulateMouseEvent(
+            new List<MouseFlags> { MouseFlags.Button1Pressed },
+            new System.Drawing.Point(source.X + 2, source.Y));
+
+        driver.SimulateMouseEvent(
+            new List<MouseFlags> { MouseFlags.Button1Pressed, MouseFlags.Button1Dragged, MouseFlags.ReportMousePosition },
+            new System.Drawing.Point(target.X + 1, target.Y + (target.Height / 2)));
     }
 
     /// <summary>
@@ -434,7 +543,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return;
         }
 
-        var session = _sessions.Open(world, _config.ScrollbackLines);
+        var session = OpenSession(world);
         BindSession(session);
 
         session.PrintSystem($"*** SharpMUTerm — theme '{_theme.Name}', graphics: {_capabilities.Protocol}.");
@@ -447,6 +556,82 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         catch
         {
             // WorldSession already surfaced the failure as a system line.
+        }
+    }
+
+    /// <summary>
+    /// Builds the session for a world: as its <em>first configured character</em> when it has one, so
+    /// the character's trigger sets, auto-login, on-connect lines and log actually reach the runtime.
+    /// A world with no characters still connects, anonymously, which is what a host typed on the
+    /// command line is.
+    /// <para>
+    /// This is the seam the F2/F3/F5/F6 screens all hang off: the session holds the <em>same</em>
+    /// <see cref="Trigger"/>/<see cref="Alias"/>/<see cref="TimerDefinition"/> objects the screens
+    /// edit, so editing one is seen by the next line without a reload. Adding or removing a rule is
+    /// not — the engines were handed the list at construction — and neither is picking a different
+    /// character; both need a reconnect.
+    /// </para>
+    /// </summary>
+    private WorldSession OpenSession(WorldDefinition world)
+    {
+        var character = world.Characters.FirstOrDefault();
+        return character is null
+            ? _sessions.Open(world, _config.ScrollbackLines, _config.Text, _config.Input)
+            : _sessions.Open(
+                world,
+                character,
+                _config.ResolveTriggerSets(character),
+                _config.ScrollbackLines,
+                OpenLog(world, character),
+                _config.Text,
+                _config.Input);
+    }
+
+    /// <summary>
+    /// Opens the character's log sink for this session, per its <see cref="LoggingSettings"/> — the
+    /// two fields F5 draws on the character's own row. <see cref="LogFormat.None"/> (the default)
+    /// opens nothing, and a folder that can't be written is reported as a system line rather than
+    /// taken as a reason not to connect.
+    /// <para>
+    /// Resolved once, at connect: a log file is a handle, and re-pointing one mid-session would mean
+    /// closing a file the user is still tailing. The F5 fields therefore apply on the next connect,
+    /// which is what the screen says.
+    /// </para>
+    /// </summary>
+    private ILogSink? OpenLog(WorldDefinition world, CharacterDefinition character)
+    {
+        var format = character.Logging.Format;
+        if (format == LogFormat.None)
+        {
+            return null;
+        }
+
+        var folder = string.IsNullOrWhiteSpace(character.Logging.Directory)
+            ? Path.Combine(Path.GetDirectoryName(ConfigurationStore.DefaultPath)!, "logs")
+            : character.Logging.Directory!;
+        var stem = $"{world.Name}.{character.Name}-{DateTime.Now:yyyyMMdd-HHmmss}"
+            .Replace(Path.DirectorySeparatorChar, '_')
+            .Replace(Path.AltDirectorySeparatorChar, '_');
+
+        try
+        {
+            var sinks = new List<ILogSink>(2);
+            if (format is LogFormat.Plain or LogFormat.Both)
+            {
+                sinks.Add(PlainTextLogSink.CreateFile(Path.Combine(folder, stem + ".log")));
+            }
+
+            if (format is LogFormat.Html or LogFormat.Both)
+            {
+                sinks.Add(HtmlLogSink.CreateFile(Path.Combine(folder, stem + ".html"), stem));
+            }
+
+            return sinks.Count == 1 ? sinks[0] : new CompositeLogSink(sinks);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+        {
+            SetStatus($"[red]could not open the log:[/] {Escape(ex.Message)}");
+            return null;
         }
     }
 
@@ -561,7 +746,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // the draft-safe history so ↑/↓ can recall it without clobbering a future draft.
         _history.Add(command);
         var windowId = ActiveWindowId();
-        _drafts.Remove(windowId);
+        _drafts.Clear(windowId);
         _workspace.SetUnsentInput(windowId, false);
         _input.Input = string.Empty;
         RefreshTabTitles();
@@ -570,6 +755,17 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         if (command.StartsWith("/web ", StringComparison.OrdinalIgnoreCase))
         {
             OpenWeb(command[5..].Trim());
+            return;
+        }
+
+        // `/graphics` reports where the degradation chain settled and, when it degraded, why — so a
+        // missing picture is an explanation rather than a mystery.
+        if (command.Trim().Equals("/graphics", StringComparison.OrdinalIgnoreCase))
+        {
+            // Appended to the window rather than routed through the session, so it still answers
+            // when nothing is connected — which is exactly when someone is checking their terminal.
+            var report = InlineImagePolicy.Describe(_capabilities, WebGraphicsSurface());
+            AppendWindowLine(windowId, $"[dim]*** Graphics: {Escape(report)}.[/]");
             return;
         }
 
@@ -593,14 +789,9 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         var windowId = ActiveWindowId();
-        if (string.IsNullOrEmpty(text))
-        {
-            _drafts.Remove(windowId);
-        }
-        else
-        {
-            _drafts[windowId] = text;
-        }
+
+        // The store decides whether to keep it — that is where F8's "keep per-tab drafts" lives.
+        _drafts.Record(windowId, text);
 
         _workspace.SetUnsentInput(windowId, !string.IsNullOrEmpty(text));
         RefreshTabTitles();
@@ -718,22 +909,117 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private string? ActiveCharacterKey() => _active?.SessionKey ?? _demoActiveKey;
 
     /// <summary>
-    /// Binds F2–F9 to the full-screen settings overlay. Each screen is rendered on demand from live
-    /// config by its pure renderer, so re-opening always reflects current state. Esc / same F-key closes.
+    /// One settings screen: the F-key that toggles it, the <c>--view</c> names that select it for a
+    /// snapshot, and the factory that opens it — a fresh <see cref="SettingsSession"/> (its own cursor
+    /// and undo log) plus the control factory that renders that session.
     /// </summary>
-    private void RegisterSettingsShortcuts()
-    {
-        void Bind(ConsoleKey key, Func<IReadOnlyList<string>> content) =>
-            _system.RegisterGlobalShortcut((ConsoleModifiers)0, key, () => _settings.Toggle(key, content));
+    private readonly record struct SettingsScreen(ConsoleKey Key, string[] Views, Func<ScreenBinding> Open);
 
-        Bind(ConsoleKey.F2, () => TriggersScreenRenderer.Render(_config.TriggerSets, 0, SpawnTargets()));
-        Bind(ConsoleKey.F3, () => AliasesScreenRenderer.Render(_config.TriggerSets, 0));
-        Bind(ConsoleKey.F4, () => KeypadScreenRenderer.Render(Macros()));
-        _system.RegisterGlobalShortcut((ConsoleModifiers)0, ConsoleKey.F5, () => _settings.Toggle(ConsoleKey.F5, WorldsControl));
-        Bind(ConsoleKey.F6, () => TimersScreenRenderer.Render(_config.TriggerSets, 0));
-        Bind(ConsoleKey.F7, OptionsScreenRenderer.TextAnsi);
-        Bind(ConsoleKey.F8, OptionsScreenRenderer.InputSpellcheck);
-        Bind(ConsoleKey.F9, () => OptionsScreenRenderer.Logging(ActiveLogging()));
+    /// <summary>
+    /// The F2–F9 settings screens, in F-key order. Both the global shortcuts and the <c>--view</c>
+    /// snapshot lookup read this one table, so a screen can't be bound to a key without also being
+    /// reachable by name. Each control is built on demand from live config by its pure renderer, so
+    /// re-opening always reflects current state, and every screen hands back a composed tree of real
+    /// panels.
+    /// </summary>
+    private IReadOnlyList<SettingsScreen> SettingsScreens() => new SettingsScreen[]
+    {
+        new(ConsoleKey.F2, new[] { "triggers", "route", "highlight", "set" }, TriggersScreen),
+        new(ConsoleKey.F3, new[] { "aliases" }, AliasesScreen),
+        new(ConsoleKey.F4, new[] { "keypad" }, KeypadScreen),
+        new(ConsoleKey.F5, new[] { "worlds", "settings" }, WorldsScreen),
+        new(ConsoleKey.F6, new[] { "timers" }, TimersScreen),
+        new(ConsoleKey.F7, new[] { "textansi" }, TextAnsiScreen),
+        new(ConsoleKey.F8, new[] { "input" }, InputScreen),
+        new(ConsoleKey.F9, new[] { "logging" }, CharacterLoggingScreen),
+    };
+
+    /// <summary>
+    /// Binds every chord the app claims globally: the window/pane commands, and each settings screen's
+    /// F-key to the full-screen overlay (Esc / the same F-key closes it).
+    /// <para>
+    /// The chords come from <see cref="MacroKeys.AppShortcuts"/> rather than being written out here,
+    /// because F4 has to tell a user that a macro on <c>Ctrl+Q</c> will never fire, and it can only say
+    /// so honestly if the list it reads is the list that was registered. Registering <em>from</em> that
+    /// table makes the two the same list. Both directions are checked as it goes: a claim with no action
+    /// and a screen with no claim are both startup failures rather than a key that silently does nothing.
+    /// </para>
+    /// </summary>
+    private void RegisterGlobalShortcuts()
+    {
+        var screens = SettingsScreens().ToDictionary(s => s.Key, s => s.Open);
+        foreach (var claim in MacroKeys.AppShortcuts)
+        {
+            var action = ShortcutAction(claim, screens)
+                ?? throw new InvalidOperationException(
+                    $"MacroKeys.AppShortcuts claims {claim.Modifiers}+{claim.Key} but nothing runs on it");
+            _system.RegisterGlobalShortcut(claim.Modifiers, claim.Key, action);
+        }
+
+        foreach (var key in screens.Keys)
+        {
+            if (!MacroKeys.AppShortcuts.Any(c => c.Modifiers == (ConsoleModifiers)0 && c.Key == key))
+            {
+                throw new InvalidOperationException(
+                    $"the {key} settings screen is not claimed in MacroKeys.AppShortcuts");
+            }
+        }
+    }
+
+    /// <summary>
+    /// What a claimed chord runs, or null when nothing does. Every one returns true: these are the keys
+    /// the app takes outright, and a global shortcut that returned false would hand the key back to the
+    /// window underneath — which is exactly what the keypad screen has just told the user does not happen.
+    /// </summary>
+    private Func<bool>? ShortcutAction(
+        AppShortcut claim, IReadOnlyDictionary<ConsoleKey, Func<ScreenBinding>> screens)
+    {
+        if (claim.Modifiers == (ConsoleModifiers)0)
+        {
+            if (!screens.TryGetValue(claim.Key, out var open))
+            {
+                return null;
+            }
+
+            var key = claim.Key;
+            return () => { _settings.Toggle(key, open); return true; };
+        }
+
+        if (claim.Modifiers != ConsoleModifiers.Control)
+        {
+            return null;
+        }
+
+        return claim.Key switch
+        {
+            ConsoleKey.Q => () => { _system.RequestExit(0); return true; },
+            // Next window (Ctrl+N, plus Ctrl+Tab where the terminal reports it) and close window (Ctrl+W).
+            ConsoleKey.N or ConsoleKey.Tab => () => { NextWindow(); return true; },
+            ConsoleKey.W => () => { CloseActiveWindow(); return true; },
+            ConsoleKey.O => () => { CyclePane(); return true; },
+            ConsoleKey.P => () => { ToggleMenu(); return true; },
+            ConsoleKey.B => () => { ArmPrefix(); return true; },
+            ConsoleKey.F => () => { ToggleFreeze(); return true; },
+            _ => null,
+        };
+    }
+
+    /// <summary>
+    /// Persists the configuration the settings screens edit — the ⏎ Save action. The workspace layout
+    /// is captured alongside it so a save never rolls back the resumed session; a failed write is
+    /// swallowed for the same reason startup's is (the config is a convenience, not the session).
+    /// </summary>
+    private void SaveConfiguration()
+    {
+        try
+        {
+            _config.LastSession = CaptureSession();
+            ConfigurationStore.Save(ConfigurationStore.DefaultPath, _config);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            SetStatus($"[red]could not save settings:[/] {Escape(ex.Message)}");
+        }
     }
 
     /// <summary>Distinct spawn-window targets referenced by any trigger (for the F2 route-to list).</summary>
@@ -783,29 +1069,311 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         return 0;
     }
 
-    /// <summary>The active character's logging settings, for the F9 logging screen.</summary>
+    /// <summary>
+    /// The logging settings the status bar reports on: the active character's. With nothing connected
+    /// there is no session being logged, so the bar reads the defaults (<c>LOG off</c>) rather than some
+    /// other character's format — the settings themselves are edited on F5, per character, where the
+    /// character they belong to is on screen.
+    /// </summary>
     private LoggingSettings ActiveLogging()
     {
+        if (ActiveCharacterKey() is null)
+        {
+            return new LoggingSettings();
+        }
+
         var world = _config.Worlds.ElementAtOrDefault(ActiveWorldIndex());
         return world?.Characters.ElementAtOrDefault(ActiveCharacterIndex())?.Logging ?? new LoggingSettings();
     }
 
-    /// <summary>Maps a <c>--view</c> name to a settings screen (F-key + content) for snapshots.</summary>
-    /// <summary>Builds the F5 Worlds &amp; Characters screen as a composed control tree (real panels).</summary>
-    private IWindowControl WorldsControl() => WorldsScreenView.Build(
-        _config.Worlds, _config.TriggerSets, ActiveWorldIndex(), ActiveCharacterIndex(), _system.DesktopDimensions.Width);
+    /// <summary>
+    /// Opens the F5 Worlds &amp; Characters screen: four panes (worlds → characters → the selected
+    /// character's trigger sets → the selected world's security checkboxes), seeded on whatever is
+    /// connected so the screen opens where the user already is.
+    /// </summary>
+    private ScreenBinding WorldsScreen() => WorldsScreen(WorldsScreenRenderer.FKey, onCharacters: false);
 
-    private (ConsoleKey Key, Func<IReadOnlyList<string>> Content)? SettingsView(string view) => view.ToLowerInvariant() switch
+    /// <summary>
+    /// F9 opens the same screen, focused on the character pane. Logging is per character and now lives
+    /// in that character's form, so the key that used to open a Logging screen of its own is kept as a
+    /// second door into where the setting moved rather than retired: an F-key is muscle memory, and one
+    /// that had quietly stopped doing anything would be worse than the screen it replaced.
+    /// <para>
+    /// It is a seeding difference and nothing more — the same renderer, the same session shape, the same
+    /// undo log — so there is no second surface to keep in step. The header is told which key opened it,
+    /// so the screen offers F9 to close what F9 opened.
+    /// </para>
+    /// </summary>
+    private ScreenBinding CharacterLoggingScreen() =>
+        WorldsScreen(WorldsScreenRenderer.LogFKey, onCharacters: true);
+
+    private ScreenBinding WorldsScreen(string fkey, bool onCharacters)
     {
-        "triggers" => (ConsoleKey.F2, () => TriggersScreenRenderer.Render(_config.TriggerSets, 0, SpawnTargets())),
-        "aliases" => (ConsoleKey.F3, () => AliasesScreenRenderer.Render(_config.TriggerSets, 0)),
-        "keypad" => (ConsoleKey.F4, () => KeypadScreenRenderer.Render(Macros())),
-        "timers" => (ConsoleKey.F6, () => TimersScreenRenderer.Render(_config.TriggerSets, 0)),
-        "textansi" => (ConsoleKey.F7, OptionsScreenRenderer.TextAnsi),
-        "input" => (ConsoleKey.F8, OptionsScreenRenderer.InputSpellcheck),
-        "logging" => (ConsoleKey.F9, () => OptionsScreenRenderer.Logging(ActiveLogging())),
-        _ => null,
-    };
+        // SelectionIn, not CursorIn: both list panes end in their own buttons, and the cursor has to
+        // leave the list to press one. The *selection* is what the detail column and the delete buttons
+        // are about, and it stays on the row the user was looking at.
+        var session = new SettingsSession(selection => WorldsScreenRenderer.Model(
+            _config.Worlds,
+            _config.TriggerSets,
+            selection.SelectionIn(WorldsScreenRenderer.WorldsPane),
+            selection.SelectionIn(WorldsScreenRenderer.CharactersPane),
+            selection.SelectionIn(WorldsScreenRenderer.TriggerSetsPane)));
+        session.Selection.Seed(WorldsScreenRenderer.WorldsPane, ActiveWorldIndex());
+        session.Selection.Seed(WorldsScreenRenderer.CharactersPane, ActiveCharacterIndex());
+        if (onCharacters)
+        {
+            session.Selection.FocusPane(WorldsScreenRenderer.CharactersPane);
+        }
+
+        return new ScreenBinding(session, () => WorldsScreenView.Build(
+            _config.Worlds,
+            _config.TriggerSets,
+            session.Selection.SelectionIn(WorldsScreenRenderer.WorldsPane),
+            session.Selection.SelectionIn(WorldsScreenRenderer.CharactersPane),
+            _system.DesktopDimensions.Width,
+            session.Focus(),
+            fkey,
+            session.Selection.SelectionIn(WorldsScreenRenderer.TriggerSetsPane),
+            _system.DesktopDimensions.Height));
+    }
+
+    /// <summary>
+    /// Opens the F2 Triggers &amp; spawn routing screen: the rule list, then the rule's toggles.
+    /// <see cref="ScreenSelection.SelectionIn"/>, not <c>CursorIn</c> — the list pane ends in its own
+    /// buttons, and the cursor has to leave the list to press one. The selection is what the editor
+    /// pane and the <c>[[- del]]</c> row are about, and it stays on the rule the user was looking at.
+    /// </summary>
+    private ScreenBinding TriggersScreen()
+    {
+        var session = new SettingsSession(selection =>
+            TriggersScreenRenderer.Model(_config.TriggerSets, selection.SelectionIn(0), SpawnTargets()));
+
+        return new ScreenBinding(session, () => TriggersScreenView.Build(
+            _config.TriggerSets,
+            session.Selection.SelectionIn(0),
+            SpawnTargets(),
+            _system.DesktopDimensions.Width,
+            session.Focus(),
+            _system.DesktopDimensions.Height));
+    }
+
+    /// <summary>Opens the F3 Aliases screen: the alias list, then the alias's toggles.</summary>
+    private ScreenBinding AliasesScreen()
+    {
+        var session = new SettingsSession(selection =>
+            AliasesScreenRenderer.Model(_config.TriggerSets, selection.SelectionIn(0)));
+
+        return new ScreenBinding(session, () => AliasesScreenView.Build(
+            _config.TriggerSets,
+            session.Selection.SelectionIn(0),
+            _system.DesktopDimensions.Width,
+            session.Focus(),
+            _system.DesktopDimensions.Height));
+    }
+
+    /// <summary>
+    /// Opens the F4 Keypad &amp; hotkeys screen: one pane, the binding list. The trigger sets go in
+    /// alongside the flattened macro list because a binding's home is a set — the flattened list alone
+    /// cannot say which one <c>[[+ binding]]</c> should add to.
+    /// </summary>
+    private ScreenBinding KeypadScreen()
+    {
+        var session = new SettingsSession(selection =>
+            KeypadScreenRenderer.Model(Macros(), _config.TriggerSets, selection.SelectionIn(0)));
+
+        return new ScreenBinding(session, () => KeypadScreenView.Build(
+            Macros(),
+            _config.TriggerSets,
+            session.Selection.SelectionIn(0),
+            _system.DesktopDimensions.Width,
+            session.Focus(),
+            _system.DesktopDimensions.Height));
+    }
+
+    /// <summary>Opens the F6 Timers screen: the timer list, then the timer's toggles.</summary>
+    private ScreenBinding TimersScreen()
+    {
+        var session = new SettingsSession(selection =>
+            TimersScreenRenderer.Model(_config.TriggerSets, selection.SelectionIn(0)));
+
+        return new ScreenBinding(session, () => TimersScreenView.Build(
+            _config.TriggerSets,
+            session.Selection.SelectionIn(0),
+            _system.DesktopDimensions.Width,
+            session.Focus(),
+            _system.DesktopDimensions.Height));
+    }
+
+    /// <summary>Opens the F7 Text &amp; ANSI screen, bound to the app's text preferences.</summary>
+    private ScreenBinding TextAnsiScreen() =>
+        OptionsScreen(() => OptionsScreenRenderer.TextAnsiScreen(_config.Text));
+
+    /// <summary>Opens the F8 Input screen, bound to the app's input preferences.</summary>
+    private ScreenBinding InputScreen() =>
+        OptionsScreen(() => OptionsScreenRenderer.InputScreen(_config.Input));
+
+    /// <summary>
+    /// The shared open path for the single-list option screens (F7/F8). <paramref name="screen"/> is
+    /// re-projected from config on every key, so a flipped checkbox shows up in both the row it lives
+    /// on and the model the next keystroke navigates.
+    /// </summary>
+    private ScreenBinding OptionsScreen(Func<OptionsScreenRenderer.OptionsScreen> screen)
+    {
+        var session = new SettingsSession(_ => OptionsScreenRenderer.Model(screen()));
+        return new ScreenBinding(session, () => OptionsScreenView.Build(
+            screen(), _system.DesktopDimensions.Width, session.Focus()));
+    }
+
+    /// <summary>The <c>--view</c> suffix that opens a settings screen with a field being typed into.</summary>
+    private const string EditViewSuffix = "-edit";
+
+    /// <summary>
+    /// The keys a <c>&lt;name&gt;-edit</c> snapshot drives into a freshly opened screen. ⏎ opens the
+    /// focused row's first field — which on every list screen is now its <em>name</em> — ⇥ commits it
+    /// and steps to the next, and the rest is typing. Several views walk further than the first field,
+    /// because a still frame should land on the thing that screen's editing actually added: F5 rewrites
+    /// a host's suffix ("no way to change a host" is the gap the whole mode closes), and F2 steps on to
+    /// its route and moves the mark, which is the only way to see that the dropdown is live rather than
+    /// a report. The <c>logging</c> view opens F5 on the character pane, so it steps twice more to
+    /// reach the log format — past the name and the on-connect line — because the character's log is
+    /// the whole reason that view exists, and it is also this app's one <em>closed</em> list, so it is
+    /// what the closed presentation is checked against. <c>keypad</c> steps twice in the other
+    /// direction, onto the binding's <em>key capture</em>: that is the one state on these screens no
+    /// amount of typing can reach, so a still frame is the only way to look at it.
+    /// <para>
+    /// <c>route</c> and <c>highlight</c> are F2 again, stopped at the two states a single frame of
+    /// <c>triggers-edit</c> cannot also show: a buffer that has <em>narrowed</em> the list (<c>pa</c> →
+    /// <c>pages</c>), and a list longer than the pane can hold (seventeen colour names capped to six).
+    /// Both are drawn chrome with no state of their own, so a snapshot is the only place they can be
+    /// looked at rather than merely asserted.
+    /// </para>
+    /// <para>
+    /// <c>textansi</c> and <c>input</c> have no <c>-edit</c> state to script any more, and their
+    /// scripts are empty rather than "press ⏎": every row F7 and F8 still draw is a checkbox, since
+    /// the three value rows those screens carried (<c>ambiguous width</c>, <c>newline key</c>,
+    /// <c>dictionary</c>) named features that do not exist and went with them. ⏎ on a row with
+    /// nothing to open <em>saves and closes</em>, so driving one would snapshot the workspace with no
+    /// screen on it — a frame that silently isn't of the thing it is named after.
+    /// </para>
+    /// </summary>
+    private static IEnumerable<ConsoleKeyInfo> EditSnapshotKeys(string view)
+    {
+        if (string.Equals(view, "textansi", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(view, "input", StringComparison.OrdinalIgnoreCase))
+        {
+            yield break;
+        }
+
+        yield return Stroke('\r', ConsoleKey.Enter);
+
+        if (string.Equals(view, "keypad", StringComparison.OrdinalIgnoreCase))
+        {
+            // name → command → key, which is where the keyboard stops being a text buffer: the frame
+            // shows an armed capture, the one screen state that cannot be reached by typing anything.
+            yield return Stroke('\t', ConsoleKey.Tab);
+            yield return Stroke('\t', ConsoleKey.Tab);
+            yield break;
+        }
+
+        if (string.Equals(view, "logging", StringComparison.OrdinalIgnoreCase))
+        {
+            // name → on connect → log: the character row's fields, in order.
+            yield return Stroke('\t', ConsoleKey.Tab);
+            yield return Stroke('\t', ConsoleKey.Tab);
+            yield break;
+        }
+
+        if (string.Equals(view, "set", StringComparison.OrdinalIgnoreCase))
+        {
+            // Straight to the rule's last field, the set that owns it — the one edit on these screens
+            // that moves the row it is made on. A still frame is the only way to see the closed list of
+            // sets over a pane whose rows are flattened across all of them.
+            for (var i = 0; i < TriggersScreenRenderer.SetField; i++)
+            {
+                yield return Stroke('\t', ConsoleKey.Tab);
+            }
+
+            yield break;
+        }
+
+        if (string.Equals(view, "triggers", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(view, "route", StringComparison.OrdinalIgnoreCase))
+        {
+            // name → pattern → route: two steps, because the name now leads the row's fields.
+            yield return Stroke('\t', ConsoleKey.Tab);
+            yield return Stroke('\t', ConsoleKey.Tab);
+
+            if (string.Equals(view, "triggers", StringComparison.OrdinalIgnoreCase))
+            {
+                yield return Stroke('\0', ConsoleKey.DownArrow);
+                yield break;
+            }
+
+            // Clear the opened value, then type a fragment of another window: the list narrows to it,
+            // and the frame shows a filter rather than a menu.
+            for (var i = 0; i < 4; i++)
+            {
+                yield return Stroke('\b', ConsoleKey.Backspace);
+            }
+
+            foreach (var c in "pa")
+            {
+                yield return Stroke(c, ConsoleKey.NoName);
+            }
+
+            yield break;
+        }
+
+        if (string.Equals(view, "highlight", StringComparison.OrdinalIgnoreCase))
+        {
+            // name → pattern → route → highlight fg, then clear the buffer: an empty one narrows
+            // nothing, so the whole seventeen-name palette is offered and the list is drawn at its cap.
+            for (var i = 0; i < 3; i++)
+            {
+                yield return Stroke('\t', ConsoleKey.Tab);
+            }
+
+            for (var i = 0; i < 12; i++)
+            {
+                yield return Stroke('\b', ConsoleKey.Backspace);
+            }
+
+            yield break;
+        }
+
+        if (!string.Equals(view, "worlds", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(view, "settings", StringComparison.OrdinalIgnoreCase))
+        {
+            yield break;
+        }
+
+        yield return Stroke('\t', ConsoleKey.Tab);
+        for (var i = 0; i < 3; i++)
+        {
+            yield return Stroke('\b', ConsoleKey.Backspace);
+        }
+
+        foreach (var c in "net")
+        {
+            yield return Stroke(c, ConsoleKey.NoName);
+        }
+    }
+
+    private static ConsoleKeyInfo Stroke(char c, ConsoleKey key) => new(c, key, false, false, false);
+
+    /// <summary>Maps a <c>--view</c> name to a settings screen (F-key + open factory) for snapshots.</summary>
+    private (ConsoleKey Key, Func<ScreenBinding> Open)? SettingsView(string view)
+    {
+        foreach (var screen in SettingsScreens())
+        {
+            if (screen.Views.Contains(view, StringComparer.OrdinalIgnoreCase))
+            {
+                return (screen.Key, screen.Open);
+            }
+        }
+
+        return null;
+    }
 
     /// <summary>The accent for a world at <paramref name="index"/>: its own, or the palette fallback.</summary>
     private static TerminalColor AccentFor(WorldDefinition world, int index) =>
@@ -1064,7 +1632,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _suppressInputChanged = true;
             try
             {
-                _input.Input = _drafts.GetValueOrDefault(id, string.Empty);
+                _input.Input = _drafts.Recall(id);
             }
             finally
             {
@@ -1114,13 +1682,179 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _workspace.FindWindow(WebWindowId)!.Title = title;
         }
 
-        PaneContentFor(WebWindowId, title).SetContent(page.Lines.Select(_formatter.ToMarkup).ToList());
+        // A new page invalidates the previous one's images, in flight or already decoded.
+        _webImageCts?.Cancel();
+        _webImageCts?.Dispose();
+        _webImageCts = null;
+        _webImages.Clear();
+
+        _webPage = page;
+        _webMarkup = page.Lines.Select(_formatter.ToMarkup).ToList();
+        PaneContentFor(WebWindowId, title).SetContent(_webMarkup.ToList());
         if (isNew)
         {
             RebuildPaneArea(); // realise the new tab before activating it
         }
 
         Activate(WebWindowId);
+        StartWebImageLoad(page);
+    }
+
+    /// <summary>
+    /// Kicks off the background fetch/decode of a page's inline images, but only when this view can
+    /// actually draw one. With no graphics the placeholders the HTML renderer already emitted are the
+    /// finished product, so nothing is fetched at all — a terminal without graphics does not pay for
+    /// images it cannot show.
+    /// </summary>
+    private void StartWebImageLoad(SharpMUTerm.Web.WebPage page)
+    {
+        if (page.Images.Count == 0 ||
+            ResolveInlineImagePresentation() == InlineImagePresentation.TextPlaceholder)
+        {
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _webImageCts = cts;
+        _ = LoadWebImagesAsync(page, WebImageColumns(), cts.Token);
+    }
+
+    /// <summary>
+    /// Fetches each of a page's images in turn and folds the ones that decode back into the view.
+    /// Each arrival repaints on its own rather than the page waiting on the whole set, so pictures
+    /// fill in progressively where their placeholders were. Sequential on purpose: a MU* client has
+    /// no business opening a dozen simultaneous connections to whatever host a page names.
+    /// </summary>
+    private async Task LoadWebImagesAsync(
+        SharpMUTerm.Web.WebPage page, int columns, CancellationToken cancellationToken)
+    {
+        for (var i = 0; i < page.Images.Count && i < MaxInlineWebImages; i++)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            PixelBuffer? buffer;
+            try
+            {
+                buffer = await _imageLoader
+                    .LoadAsync(page.Images[i].Source, columns, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            if (buffer is null || cancellationToken.IsCancellationRequested)
+            {
+                continue; // the placeholder line stays put — a perfectly good outcome
+            }
+
+            var index = i;
+            var decoded = buffer;
+            OnUi(() =>
+            {
+                // The page may have been replaced while this image was in flight.
+                if (cancellationToken.IsCancellationRequested || !ReferenceEquals(_webPage, page))
+                {
+                    return;
+                }
+
+                _webImages[index] = decoded;
+                RebuildPaneArea();
+            });
+        }
+    }
+
+    /// <summary>How many images one page may draw, so an image-heavy page cannot stall the client.</summary>
+    private const int MaxInlineWebImages = 12;
+
+    /// <summary>Columns an inline web image may span, leaving room for the rail and pane chrome.</summary>
+    private int WebImageColumns() => Math.Clamp(_window.Width - 8, 8, 200);
+
+    /// <summary>
+    /// What this view can actually put on screen. Asked fresh rather than cached in the constructor:
+    /// the console driver only knows whether the terminal speaks Kitty graphics <em>after</em> it has
+    /// initialised and run its capability probe.
+    /// </summary>
+    private GraphicsSurface WebGraphicsSurface() =>
+        GraphicsSurface.Compositor(_system.ConsoleDriver is IGraphicsProtocol { SupportsKittyGraphics: true });
+
+    /// <summary>The presentation the degradation chain settles on for this terminal and this view.</summary>
+    private InlineImagePresentation ResolveInlineImagePresentation() =>
+        InlineImagePolicy.Select(_capabilities, WebGraphicsSurface());
+
+    /// <summary>
+    /// Builds the web tab: the page's markup split around whichever images decoded, stacked in a
+    /// scrollable panel. With no decoded images this is a single markup control holding every line —
+    /// exactly the control the web view used before images existed.
+    /// </summary>
+    private IWindowControl BuildWebContent(string title)
+    {
+        var live = PaneContentFor(WebWindowId, title);
+        if (_webPage is null || _webImages.Count == 0)
+        {
+            return live;
+        }
+
+        var boxes = new Dictionary<int, WebImageLayout.CellBox>();
+        foreach (var (index, buffer) in _webImages)
+        {
+            boxes[index] = new WebImageLayout.CellBox(buffer.Width, Math.Max(1, buffer.Height / WebImageLayout.PixelsPerCell));
+        }
+
+        var blocks = WebViewComposer.Compose(_webMarkup, _webPage.Images, boxes);
+        var panel = Controls.ScrollablePanel()
+            .WithAlignment(HorizontalAlignment.Stretch)
+            .WithVerticalAlignment(VerticalAlignment.Fill);
+
+        var usedLiveControl = false;
+        foreach (var block in blocks)
+        {
+            switch (block)
+            {
+                case WebTextBlock text:
+                    // Reuse the window's own control for the first run so link routing and the
+                    // pane's identity survive; later runs get plain markup controls with the same
+                    // link handler.
+                    if (!usedLiveControl)
+                    {
+                        usedLiveControl = true;
+                        live.SetContent(text.Lines.ToList());
+                        panel.AddControl(live);
+                    }
+                    else
+                    {
+                        // Later runs mirror PaneContentFor's plain control, link routing included,
+                        // so a link reads the same wherever on the page it sits.
+                        var markup = new MarkupControl(text.Lines.ToList());
+                        markup.LinkClicked += (_, e) => OnLinkClicked(e.Url);
+                        panel.AddControl(markup);
+                    }
+
+                    break;
+
+                case WebImageBlock image:
+                    panel.AddControl(new ImageControl
+                    {
+                        Source = _webImages[image.Index],
+                        ScaleMode = ImageScaleMode.Fit,
+                        MinimumHeight = image.Box.Rows,
+                    });
+                    break;
+            }
+        }
+
+        if (!usedLiveControl)
+        {
+            // An all-image page: the window still needs its own control in the tree.
+            live.SetContent(new List<string>());
+            panel.AddControl(live);
+        }
+
+        return panel.Build();
     }
 
     /// <summary>The content control for a window, created (with link routing) on first use.</summary>
@@ -1144,7 +1878,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private IWindowControl BuildWorkspaceRow()
     {
-        _paneTabs.Clear();
+        lock (_paneTabsLock)
+        {
+            _paneTabs.Clear();
+        }
+
 
         // When a pane is zoomed, render just that pane full-area; otherwise render the whole tree.
         var zoomed = _workspace.Layout.ZoomedPaneId is { } zid ? _workspace.Layout.FindPane(zid) : null;
@@ -1246,6 +1984,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     {
         if (node is PaneNode pane)
         {
+            if (_dragActive)
+            {
+                return BuildDragPane(pane);
+            }
+
             return _moveMode && _moveLetters.TryGetValue(pane.Id, out var letter)
                 ? BuildMovePane(pane, letter)
                 : BuildPaneTabs(pane);
@@ -1330,7 +2073,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
         var paneId = pane.Id;
         tabs.TabChanged += (_, e) => OnTabChanged(paneId, e.NewTab);
-        _paneTabs[paneId] = tabs;
+        lock (_paneTabsLock)
+        {
+            _paneTabs[paneId] = tabs;
+        }
+
         return tabs;
     }
 
@@ -1349,6 +2096,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         if (window.Kind == WindowKind.Spawn && !string.IsNullOrEmpty(window.CapturePattern))
         {
             return BuildSpawnContent(windowId, window);
+        }
+
+        if (windowId == WebWindowId)
+        {
+            return BuildWebContent(window.Title);
         }
 
         return PaneContentFor(windowId, window.Title);
@@ -1444,23 +2196,59 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>Consumes the key after ⌃B and runs the matching pane command (tmux-style).</summary>
-    private void OnWindowKey(object? sender, KeyPressedEventArgs e)
+    private void OnWindowKey(object? sender, KeyPressedEventArgs e) => HandleWindowKey(e);
+
+    /// <summary>
+    /// Feeds one key to the very handler the main window's <c>PreviewKeyPressed</c> raises, and reports
+    /// the macro command it sent. It exists for the same reason
+    /// <see cref="SettingsOverlay.SimulateKey"/> does — the framework only pumps keys inside
+    /// <c>Run()</c>, which a headless test never enters — and it goes <em>through</em>
+    /// <see cref="HandleWindowKey"/> rather than around it, so what it proves is what a keystroke does.
+    /// </summary>
+    internal string? SimulateKey(ConsoleKeyInfo key) => HandleWindowKey(new KeyPressedEventArgs(key, false));
+
+    /// <summary>
+    /// The main window's key handler: move mode, the drag escape, the ⌃B prefix, then a bound macro,
+    /// then draft-safe history recall. Returns the macro command it dispatched, or null.
+    /// </summary>
+    private string? HandleWindowKey(KeyPressedEventArgs e)
     {
         if (_moveMode)
         {
             HandleMoveKey(e);
-            return;
+            return null;
+        }
+
+        // Escape abandons a mouse drag. A terminal that loses the button-up (the pointer left the
+        // window, the terminal dropped a frame) would otherwise strand the preview over the panes.
+        if (_dragActive && e.KeyInfo.Key == ConsoleKey.Escape)
+        {
+            e.Handled = true;
+            _paneDrag.Reset(); // no mouse frame ends this one, so the gesture has to be dropped here
+            EndDrag();
+            return null;
         }
 
         if (!_prefixArmed)
         {
-            // Draft-safe history recall on ↑/↓ — our own, so a half-typed draft survives (see InputHistory).
-            if (!_palette.IsOpen && !_settings.IsOpen)
+            // A modal surface owns the keyboard while it is up. Both are separate windows, so the
+            // framework already routes keys to them and this handler is not raised at all — the guard is
+            // here because "a macro must not fire while a screen is open" is a rule of this app, not a
+            // consequence of how the framework happens to dispatch, and the next surface may not be modal.
+            if (_palette.IsOpen || _settings.IsOpen)
             {
-                TryRecallKey(e);
+                return null;
             }
 
-            return;
+            if (DispatchMacro(e.KeyInfo) is { } sent)
+            {
+                e.Handled = true;
+                return sent;
+            }
+
+            // Draft-safe history recall on ↑/↓ — our own, so a half-typed draft survives (see InputHistory).
+            TryRecallKey(e);
+            return null;
         }
 
         _prefixArmed = false;
@@ -1480,6 +2268,57 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         _header.SetContent(new List<string> { HeaderMarkup() });
+        return null;
+    }
+
+    /// <summary>
+    /// Runs the macro bound to a keystroke and returns the command it sent, or null when this key is not
+    /// one the app acts on. This is the wire the F4 screen has always drawn and nothing ever connected:
+    /// <see cref="MacroEngine"/> and <see cref="WorldSession.HandleKeyAsync"/> were written and tested,
+    /// and no key press had ever reached either of them.
+    /// <para>
+    /// It sits on the main window's <c>PreviewKeyPressed</c>, which is the one place with all three
+    /// properties a macro needs: it runs <em>before</em> the focused control, so a binding beats the
+    /// prompt; it is not raised while a modal (a settings screen, the command surface) holds the
+    /// keyboard; and it runs <em>after</em> the global shortcuts, so the chords the app claims for
+    /// itself never arrive here — which is why <see cref="MacroKeys.Verdict"/> reports those as taken
+    /// rather than the screen pretending a macro could outrank them.
+    /// </para>
+    /// <para>
+    /// The macro is resolved before it is sent because the answer decides whether the keystroke is
+    /// swallowed, and <see cref="WorldSession.HandleKeyAsync"/> only reports that after it has already
+    /// sent. The send itself still goes through that method: it is the one path from a key to the wire,
+    /// and a second one here would be a second thing to keep in step. Nothing connected means nothing to
+    /// send to, so the key falls through to whatever would have had it.
+    /// </para>
+    /// </summary>
+    private string? DispatchMacro(ConsoleKeyInfo key)
+    {
+        if (_active is not { } session || MacroKeys.Descriptor(key) is not { } descriptor)
+        {
+            return null;
+        }
+
+        if (session.Macros.Resolve(descriptor) is not { Command.Length: > 0 } macro)
+        {
+            return null;
+        }
+
+        _ = session.HandleKeyAsync(descriptor);
+        return macro.Command;
+    }
+
+    /// <summary>
+    /// Opens the session for a world and binds it <em>without connecting</em> — the pair of calls
+    /// <see cref="StartAsync"/> makes before it dials. It exists so the key → macro → command path can be
+    /// driven end to end without a socket: <see cref="WorldSession.HandleKeyAsync"/> resolves and reports
+    /// a binding whether or not there is a transport under it to write to.
+    /// </summary>
+    internal WorldSession BindWorldWithoutConnecting(WorldDefinition world)
+    {
+        var session = OpenSession(world);
+        BindSession(session);
+        return session;
     }
 
     /// <summary>
@@ -1527,6 +2366,16 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return;
         }
 
+        // Arrows pick the edge to split the target toward — the keyboard stand-in for dropping on a
+        // pane's edge rather than its middle. Pressing the same arrow again returns to a tab drop.
+        if (MoveEdgeFor(key) is { } edge)
+        {
+            _moveEdge = _moveEdge == edge ? null : edge;
+            RebuildPaneArea();
+            SetStatus(MovePromptMarkup());
+            return;
+        }
+
         if (ch is >= 'a' and <= 'j')
         {
             // Only retarget on a real match — an unmapped letter must not clear the current target.
@@ -1540,17 +2389,29 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
     }
 
+    /// <summary>The split edge an arrow key selects in move mode, or null for any other key.</summary>
+    private static Edge? MoveEdgeFor(ConsoleKey key) => key switch
+    {
+        ConsoleKey.LeftArrow => Edge.Left,
+        ConsoleKey.RightArrow => Edge.Right,
+        ConsoleKey.UpArrow => Edge.Top,
+        ConsoleKey.DownArrow => Edge.Bottom,
+        _ => null,
+    };
+
     /// <summary>Applies (or cancels) the move and leaves move mode.</summary>
     private void ExitMoveMode(bool commit)
     {
-        if (commit && _moveWindowId is { } win && _moveTargetPaneId is { } pane && pane != _workspace.Layout.FindWindow(win)?.Id)
+        if (commit && _moveWindowId is { } win && _moveTargetPaneId is { } pane)
         {
-            _workspace.Layout.MoveWindowToPane(win, pane);
+            // The same commit the mouse drop uses, so both routes land identically.
+            PaneDrop.Apply(_workspace.Layout, win, pane, _moveEdge);
         }
 
         _moveMode = false;
         _moveWindowId = null;
         _moveTargetPaneId = null;
+        _moveEdge = null;
         _moveLetters.Clear();
         RebuildPaneArea();
         UpdateStatus();
@@ -1560,7 +2421,204 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private string MovePromptMarkup()
     {
         var name = _moveWindowId is { } id && _workspace.FindWindow(id) is { } w ? Escape(w.Title) : "window";
-        return $"[#e5c07b]MOVE[/] [bold]{name}[/]   [dim]a–j pane · ←↑↓→ edge · ⏎ commit · Esc cancel[/]";
+        return $"[#e5c07b]MOVE[/] [bold]{name}[/] [dim]→[/] [#00f5b7]{DropLabel(_moveTargetPaneId, _moveEdge)}[/]"
+            + "   [dim]a–j pane · ←↑↓→ edge · ⏎ commit · Esc cancel[/]";
+    }
+
+    /// <summary>Human-readable description of a pending drop, for the move prompt and drag preview.</summary>
+    private string DropLabel(string? paneId, Edge? edge)
+    {
+        if (paneId is null)
+        {
+            return "no target";
+        }
+
+        var name = PaneLabel(paneId);
+        return edge switch
+        {
+            Edge.Left => $"split {name} left",
+            Edge.Right => $"split {name} right",
+            Edge.Top => $"split {name} top",
+            Edge.Bottom => $"split {name} bottom",
+            _ => $"tab in {name}",
+        };
+    }
+
+    /// <summary>The rail's friendly name for a pane ("main" for the first, "pane N" after it).</summary>
+    private string PaneLabel(string paneId)
+    {
+        var index = 0;
+        foreach (var pane in _workspace.Layout.Panes)
+        {
+            if (pane.Id == paneId)
+            {
+                return index == 0 ? "main" : $"pane {index + 1}";
+            }
+
+            index++;
+        }
+
+        return paneId;
+    }
+
+    /// <summary>
+    /// The adapter between the console driver's raw mouse frames and the tested
+    /// <see cref="PaneDragTracker"/>. Deliberately thin: it decides nothing, it only hands the frame
+    /// over (with a geometry snapshot the tracker asks for at most once per gesture) and marshals the
+    /// tracker's verdict onto the UI thread. Driver events arrive on the input thread.
+    /// </summary>
+    private void OnDriverMouseEvent(object sender, List<MouseFlags> flags, System.Drawing.Point point)
+    {
+        // Overlays own the whole screen while they're up; a drag underneath them would target panes
+        // the user can't even see.
+        if (_palette.IsOpen || _settings.IsOpen || _moveMode)
+        {
+            return;
+        }
+
+        var result = _paneDrag.Handle(flags, point.X, point.Y, PaneSnapshot);
+        if (result.Action == PaneDragAction.None)
+        {
+            return;
+        }
+
+        OnUiThread(() => ApplyDragResult(result));
+    }
+
+    /// <summary>
+    /// Reads the pane area's live geometry back out of the framework's arranged layout, in desktop
+    /// cells. A control's <see cref="SharpConsoleUI.Layout.LayoutNode.AbsoluteBounds"/> is in
+    /// window-content space, so the window's own origin and inset are added back on.
+    /// Internal so a headless test can check the mapping against the framework's own hit testing —
+    /// it is the one part of the drag that no pure unit test can pin down.
+    /// </summary>
+    internal PaneDragSurface PaneSnapshot()
+    {
+        var origin = ContentOrigin();
+        var rects = new Dictionary<string, PaneRect>(StringComparer.Ordinal);
+        var windows = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        KeyValuePair<string, TabControl>[] realised;
+        lock (_paneTabsLock)
+        {
+            realised = _paneTabs.ToArray();
+        }
+
+        foreach (var (paneId, tabs) in realised)
+        {
+            if (_window.GetLayoutNode(tabs) is not { } node)
+            {
+                continue;
+            }
+
+            var bounds = node.AbsoluteBounds;
+            rects[paneId] = new PaneRect(origin.X + bounds.X, origin.Y + bounds.Y, bounds.Width, bounds.Height);
+
+            if (_workspace.Layout.FindPane(paneId)?.ActiveTab is { } windowId)
+            {
+                windows[paneId] = windowId;
+            }
+        }
+
+        return new PaneDragSurface(rects, windows);
+    }
+
+    /// <summary>
+    /// The desktop cell that window-content coordinate (0,0) paints at: the window's position, offset
+    /// past any top desktop panel and the window's own frame + padding. Mirrors the framework's own
+    /// <c>InsetLeft</c>/<c>InsetTop</c> (frame thickness plus padding), which are internal to it.
+    /// </summary>
+    private System.Drawing.Point ContentOrigin()
+    {
+        var frame = _window.BorderStyle == BorderStyle.Frameless ? 0 : 1;
+        return new System.Drawing.Point(
+            _window.Left + frame + _window.Padding.Left,
+            _window.Top + _system.DesktopUpperLeft.Y + frame + _window.Padding.Top);
+    }
+
+    /// <summary>Applies a tracker verdict: paint, tear down, or commit the drop and rebuild.</summary>
+    private void ApplyDragResult(PaneDragResult result)
+    {
+        switch (result.Action)
+        {
+            case PaneDragAction.Begin:
+            case PaneDragAction.Update:
+                _dragActive = true;
+                _dragTargetPaneId = result.TargetPaneId;
+                _dragEdge = result.Edge;
+                RebuildPaneArea();
+                SetStatus(DragPromptMarkup(result.WindowId, result.TargetPaneId, result.Edge));
+                break;
+
+            case PaneDragAction.Commit:
+                if (result.WindowId is { } windowId && result.TargetPaneId is { } paneId)
+                {
+                    if (PaneDrop.Apply(_workspace.Layout, windowId, paneId, result.Edge))
+                    {
+                        _workspace.ActivateWindow(windowId);
+                    }
+                }
+
+                EndDrag();
+                break;
+
+            default:
+                EndDrag();
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Leaves the drag preview and restores the real pane area and status line. It deliberately does
+    /// not reset the tracker: the tracker ends its own gesture, and a press that lands mid-preview
+    /// both cancels the stale drag and arms the next one in the same frame.
+    /// </summary>
+    private void EndDrag()
+    {
+        _dragActive = false;
+        _dragTargetPaneId = null;
+        _dragEdge = null;
+        RebuildPaneArea();
+        UpdateStatus();
+    }
+
+    /// <summary>The status line shown while a pane drag is in flight.</summary>
+    private string DragPromptMarkup(string? windowId, string? targetPaneId, Edge? edge)
+    {
+        var name = windowId is { } id && _workspace.FindWindow(id) is { } window ? Escape(window.Title) : "window";
+        return $"[#e5c07b]DRAG[/] [bold]{name}[/] [dim]→[/] [{PaneDropRenderer.ZoneColor}]{DropLabel(targetPaneId, edge)}[/]"
+            + "   [dim]release to drop · Esc cancel[/]";
+    }
+
+    /// <summary>A pane rendered as a live drop target, sized from the drag's frozen geometry.</summary>
+    private IWindowControl BuildDragPane(PaneNode pane)
+    {
+        var rect = _paneDrag.Surface?.RectOf(pane.Id) ?? default;
+        var hovered = pane.Id == _dragTargetPaneId;
+        var lines = PaneDropRenderer.Render(
+            PaneLabel(pane.Id),
+            DropLabel(pane.Id, _dragEdge),
+            rect.Width,
+            rect.Height,
+            hovered,
+            _dragEdge);
+
+        return new MarkupControl(lines) { HorizontalAlignment = HorizontalAlignment.Stretch };
+    }
+
+    /// <summary>
+    /// Runs UI work on the UI thread. Headless (snapshot and test) runs have no main loop to drain the
+    /// queue, and are single-threaded anyway, so they run it inline.
+    /// </summary>
+    private void OnUiThread(Action action)
+    {
+        if (_headless || _system.IsOnUIThread)
+        {
+            action();
+            return;
+        }
+
+        _system.EnqueueOnUIThread(action);
     }
 
     /// <summary>A pane rendered as a move-mode target: a big letter over the dimmed window list.</summary>
@@ -1573,6 +2631,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         lines.Add($"     [bold {color}]▌ {char.ToUpperInvariant(letter)} ▐[/]");
         lines.Add($"     [bold {color}]▙▄▄▟[/]");
         lines.Add(string.Empty);
+        if (selected)
+        {
+            lines.Add($"     [{PaneDropRenderer.ZoneColor}]{DropLabel(pane.Id, _moveEdge)}[/]");
+            lines.Add(string.Empty);
+        }
+
         foreach (var windowId in pane.Tabs)
         {
             if (_workspace.FindWindow(windowId) is { } window)
@@ -1603,7 +2667,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _suppressInputChanged = true;
         try
         {
-            _input.Input = _drafts.GetValueOrDefault(ActiveWindowId(), string.Empty);
+            _input.Input = _drafts.Recall(ActiveWindowId());
         }
         finally
         {
@@ -1624,7 +2688,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         _panes.Remove(id);
-        _drafts.Remove(id);
+        _drafts.Clear(id);
         _lines.Remove(id);         // don't resurrect old scrollback if a same-id spawn reopens
         _freezePoints.Remove(id);
         _workspace.CloseWindow(id);
@@ -1818,8 +2882,6 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>Marshals an action onto the UI thread (session events fire on background threads).</summary>
     private void OnUi(Action action) => _system.EnqueueOnUIThread(action);
 
-    private static string Escape(string text) => text.Replace("[", "[[").Replace("]", "]]");
-
     private static SColor ToColor(Rgb rgb) => new(rgb.R, rgb.G, rgb.B, 255);
 
     /// <summary>
@@ -1838,6 +2900,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _system.ConsoleDriver.MouseEvent -= OnDriverMouseEvent;
+        _webImageCts?.Cancel();
+        _webImageCts?.Dispose();
+        _imageLoader.Dispose();
         _fetcher.Dispose();
         await _sessions.DisposeAsync().ConfigureAwait(false);
     }

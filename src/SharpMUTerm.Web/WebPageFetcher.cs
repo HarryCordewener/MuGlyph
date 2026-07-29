@@ -54,8 +54,9 @@ public sealed class WebPageFetcher : IDisposable
             if (contentType.Contains("html", StringComparison.OrdinalIgnoreCase) || contentType.Length == 0)
             {
                 var renderer = new HtmlStyledRenderer(finalUri.ToString());
-                var lines = renderer.Render(body, width);
-                return new WebPage(finalUri.ToString(), HtmlStyledRenderer.GetTitle(body), lines);
+                var rendered = renderer.RenderDocument(body, width);
+                return new WebPage(
+                    finalUri.ToString(), HtmlStyledRenderer.GetTitle(body), rendered.Lines, rendered.Images);
             }
 
             // Non-HTML: render as plain text lines.

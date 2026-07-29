@@ -1,0 +1,80 @@
+namespace SharpMUTerm.Tui;
+
+/// <summary>
+/// The undo log behind a settings screen's Cancel/Save bar. Screens edit the live configuration in
+/// place — cloning <see cref="SharpMUTerm.Core.Configuration.AppConfiguration"/> would silently drop
+/// the fields that deliberately don't round-trip (a character's in-memory password is
+/// <c>[JsonIgnore]</c>) — so "discard" is a replayed undo rather than a swapped object. Each applied
+/// toggle or committed field pushes the restore action captured *before* it ran; Esc replays them
+/// newest-first, ⏎ drops them. Pure state, so the semantics are unit-testable without a window.
+/// </summary>
+internal sealed class ScreenEdits
+{
+    private readonly List<Action> _undo = new();
+
+    /// <summary>Whether anything has been changed since the screen opened or last saved.</summary>
+    internal bool IsDirty => _undo.Count > 0;
+
+    /// <summary>How many changes are pending — the footer's dirty count.</summary>
+    internal int Count => _undo.Count;
+
+    /// <summary>Flips a checkbox, recording how to put it back.</summary>
+    internal void Apply(ScreenToggle toggle)
+    {
+        _undo.Add(toggle.Snapshot());
+        toggle.Flip();
+    }
+
+    /// <summary>
+    /// Writes a typed value to a field, recording how to put the old one back — the same undo entry a
+    /// toggle pushes, so Esc restores an edited host exactly as it restores a flipped checkbox.
+    /// Nothing is written and nothing is recorded when the value doesn't validate: returns null when
+    /// the value was accepted, otherwise why it was refused. This is the only path from a buffer into
+    /// config, which is what keeps an invalid value out of it.
+    /// </summary>
+    internal string? Apply(ScreenField field, string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+
+        if (field.Validate(value) is { } error)
+        {
+            return error;
+        }
+
+        _undo.Add(field.Snapshot());
+        field.Set(value);
+        return null;
+    }
+
+    /// <summary>
+    /// Runs a button, recording the undo it hands back — the same entry a toggle or a committed field
+    /// pushes, so Esc unmakes a deleted world exactly as it unmakes a typed host. Returns where the
+    /// button wants the cursor left, or null when it doesn't care.
+    /// <para>
+    /// A structural change is recorded *after* the fact rather than snapshotted before it, because
+    /// only the button knows what it did — see <see cref="ScreenButton"/>. Adding and removing rows
+    /// is why the undo log replays newest-first: an index captured by a removal is only meaningful
+    /// against the list as it stood at that moment.
+    /// </para>
+    /// </summary>
+    internal int? Apply(ScreenButton button)
+    {
+        var press = button.Run();
+        _undo.Add(press.Undo);
+        return press.Select;
+    }
+
+    /// <summary>Undoes every pending change, newest first, so overlapping edits unwind correctly.</summary>
+    internal void Revert()
+    {
+        for (var i = _undo.Count - 1; i >= 0; i--)
+        {
+            _undo[i]();
+        }
+
+        _undo.Clear();
+    }
+
+    /// <summary>Accepts every pending change; the log is dropped and there is nothing left to undo.</summary>
+    internal void Commit() => _undo.Clear();
+}

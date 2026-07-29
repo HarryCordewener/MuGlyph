@@ -73,17 +73,34 @@ internal static class DemoScene
             Description = "channel + page routing",
             Triggers =
             {
+                // The F2 screen opens on this rule, so it is the one that has to exercise the editor
+                // pane: a capture group to reference, a rewrite that uses it, an attribute, a script
+                // callback, and case-sensitive matching. Its `respond` is deliberately left off — the
+                // frame should show both states of an action, not four filled wells.
                 new Trigger
                 {
                     Name = "public",
-                    Pattern = @"^\[public\]",
-                    Actions = new TriggerActions { SpawnTarget = "Chat", HighlightForeground = teal },
+                    Pattern = @"^\[public\] (.+)$",
+                    CaseSensitive = true,
+                    Actions = new TriggerActions
+                    {
+                        SpawnTarget = "Chat",
+                        HighlightForeground = teal,
+                        AddAttributes = TextAttributes.Bold,
+                        Rewrite = "» $1",
+                        ScriptCallback = "onChannel",
+                    },
                 },
                 new Trigger
                 {
                     Name = "page",
-                    Pattern = @"^\w+ pages:",
-                    Actions = new TriggerActions { SpawnTarget = "pages", HighlightForeground = pink },
+                    Pattern = @"^(\w+) pages:",
+                    Actions = new TriggerActions
+                    {
+                        SpawnTarget = "pages",
+                        HighlightForeground = pink,
+                        SendResponse = "page $1=afk, back shortly",
+                    },
                 },
                 new Trigger
                 {
@@ -98,7 +115,20 @@ internal static class DemoScene
                 new Alias { Name = "say", Pattern = @"^'(.*)", Substitution = "say $1" },
                 new Alias { Name = "wtf", Pattern = @"^wtf\s+(.+)$", Substitution = "who\nfinger $1" },
             },
-            Macros = { new Macro { Key = "Num5", Command = "look" }, new Macro { Key = "Ctrl+F1", Command = "score" } },
+            // A movement keypad: enough bound keys, of differing command lengths, to actually show
+            // the 3x3 grid doing its job (and one command long enough to be ellipsised).
+            Macros =
+            {
+                new Macro { Name = "walk NW", Key = "Num7", Command = "northwest" },
+                new Macro { Name = "walk N", Key = "Num8", Command = "north" },
+                new Macro { Name = "walk NE", Key = "Num9", Command = "northeast" },
+                new Macro { Name = "walk W", Key = "Num4", Command = "west" },
+                new Macro { Name = "look", Key = "Num5", Command = "look" },
+                new Macro { Name = "walk E", Key = "Num6", Command = "east" },
+                new Macro { Name = "altar", Key = "Num1", Command = "look at altar" },
+                new Macro { Name = "walk S", Key = "Num2", Command = "south" },
+                new Macro { Name = "score", Key = "Ctrl+F1", Command = "score" },
+            },
             Timers = { new TimerDefinition { Name = "keepalive", IntervalSeconds = 60, Command = "@@idle" } },
         });
 
@@ -116,6 +146,20 @@ internal static class DemoScene
                 },
             },
             Timers = { new TimerDefinition { Name = "market", IntervalSeconds = 300, Command = "prices", OneShot = false } },
+        });
+
+        // A third set, and deliberately a lopsided one. Two sets is enough to show that rules belong to
+        // a set; it is not enough to show what the set screens have to cope with, which is that a set
+        // holds four *kinds* of thing and rarely holds all four. Combat has no triggers and no timers, so
+        // F2 and F6 draw it as a set with nothing of theirs in it — the one state a flattened pane could
+        // not show at all before, and the state a set is in the moment it is created. It is also left
+        // unassigned, so the F5 checklist shows both states of the checkbox on one character.
+        config.TriggerSets.Add(new TriggerSet
+        {
+            Name = "Combat",
+            Description = "hp + damage tracking",
+            Aliases = { new Alias { Name = "hp", Pattern = @"^hp$", Substitution = "score\nconsider" } },
+            Macros = { new Macro { Name = "flee", Key = "Ctrl+F2", Command = "flee" } },
         });
     }
 

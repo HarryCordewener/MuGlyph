@@ -26,6 +26,10 @@ public sealed class WorldSession : IAsyncDisposable
     private readonly ILineParser _parser;
     private readonly EmojiSubstitutor? _emoji;
     private readonly ILogSink? _log;
+    private readonly TextSettings? _text;
+    private readonly InputSettings? _input;
+    private readonly TimerDefinition[] _timers;
+    private readonly List<IDisposable> _timerHandles = new();
     private ITelnetSession? _telnet;
 
     /// <summary>
@@ -33,6 +37,13 @@ public sealed class WorldSession : IAsyncDisposable
     /// is composed from the union of <paramref name="triggerSets"/> — resolve them for a character
     /// via <see cref="AppConfiguration.ResolveTriggerSets"/>. A null character yields an anonymous
     /// session (e.g. an ad-hoc command-line connection) with no auto-login.
+    /// <para>
+    /// <paramref name="text"/> and <paramref name="input"/> are the app-wide rendering and input
+    /// preferences the F7/F8 screens edit. They are held by reference and read <em>per line</em>, not
+    /// copied at construction, because those screens edit the live configuration object in place —
+    /// copying them here is exactly how a checkbox ends up needing a restart to mean anything. Null
+    /// (the default, and what a Core test that doesn't care passes) means "the built-in defaults".
+    /// </para>
     /// </summary>
     public WorldSession(
         WorldDefinition world,
@@ -40,12 +51,16 @@ public sealed class WorldSession : IAsyncDisposable
         IReadOnlyList<TriggerSet>? triggerSets = null,
         Func<ConnectionOptions, ITelnetSession>? sessionFactory = null,
         ILogSink? log = null,
-        int scrollbackCapacity = 20_000)
+        int scrollbackCapacity = 20_000,
+        TextSettings? text = null,
+        InputSettings? input = null)
     {
         World = world ?? throw new ArgumentNullException(nameof(world));
         Character = character;
         _sessionFactory = sessionFactory ?? DefaultSessionFactory;
         _log = log;
+        _text = text;
+        _input = input;
         _parser = CreateParser(world.ContentFormat);
         _emoji = world.Emoji.Enabled
             ? new EmojiSubstitutor(world.Emoji.Emoticons, world.Emoji.Shortcodes)
@@ -56,6 +71,7 @@ public sealed class WorldSession : IAsyncDisposable
         Triggers = new TriggerEngine(sets.SelectMany(s => s.Triggers));
         Aliases = new AliasEngine(sets.SelectMany(s => s.Aliases));
         Macros = new MacroEngine(sets.SelectMany(s => s.Macros));
+        _timers = sets.SelectMany(s => s.Timers).ToArray();
         ScriptFiles = sets.SelectMany(s => s.ScriptFiles)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
@@ -148,6 +164,7 @@ public sealed class WorldSession : IAsyncDisposable
             SetState(ConnectionState.Connected, null);
             PrintSystem("*** Connected.");
             await SendLoginAsync(cancellationToken).ConfigureAwait(false);
+            StartTimers();
         }
         catch (Exception ex)
         {
@@ -162,7 +179,8 @@ public sealed class WorldSession : IAsyncDisposable
         if (e.IsPrompt)
         {
             _parser.Feed(e.Text);
-            var prompt = ApplyEmoji(_parser.Flush() ?? StyledLine.Empty);
+            var raw = _parser.Flush() ?? StyledLine.Empty;
+            var prompt = ApplyEmoji(_text?.StripIncomingColour == true ? StyledText.StripColour(raw) : raw);
             CurrentPrompt = prompt;
             PromptChanged?.Invoke(this, prompt);
             return;
@@ -182,6 +200,13 @@ public sealed class WorldSession : IAsyncDisposable
 
     private void ProcessOutputLine(StyledLine line)
     {
+        // Colour is stripped from what the *server* sent, before the triggers run: a highlight rule
+        // and this client's own system/echo lines are not "incoming ANSI colour" and keep theirs.
+        if (_text?.StripIncomingColour == true)
+        {
+            line = StyledText.StripColour(line);
+        }
+
         var result = Triggers.Process(line);
 
         foreach (var invocation in result.ScriptInvocations)
@@ -208,9 +233,15 @@ public sealed class WorldSession : IAsyncDisposable
     /// <summary>
     /// Substitutes emoji across the whole line when enabled for this world (preserving word
     /// boundaries across span seams and each span's style/interaction); a no-op otherwise.
+    /// <para>
+    /// The world opts in and says <em>which</em> substitutions it wants
+    /// (<see cref="WorldDefinition.Emoji"/>); F7's <c>emoji substitution</c> is the app-wide off
+    /// switch over the top of it, read here rather than at construction so unticking it stops the
+    /// next line rather than the next session.
+    /// </para>
     /// </summary>
     private StyledLine ApplyEmoji(StyledLine line) =>
-        _emoji is null ? line : _emoji.ApplyToLine(line);
+        _emoji is null || _text?.EmojiSubstitution == false ? line : _emoji.ApplyToLine(line);
 
     /// <summary>Handles a line of user input: alias expansion, local echo, and send.</summary>
     public async Task SendUserInputAsync(string input, CancellationToken cancellationToken = default)
@@ -218,7 +249,11 @@ public sealed class WorldSession : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(input);
 
         var expansion = Aliases.Expand(input);
-        if (World.LocalEcho)
+
+        // Two switches, and both have to be on: the world's (some servers echo for you, some don't)
+        // and F8's app-wide one. The app-wide one is read per line, not captured, so unticking it
+        // stops the echo on the next command rather than the next session.
+        if (World.LocalEcho && _input?.LocalEcho != false)
         {
             Print(StyledLine.FromText(input, EchoStyle));
         }
@@ -258,6 +293,60 @@ public sealed class WorldSession : IAsyncDisposable
         {
             await SendRawAsync(command, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Realises the active trigger sets' <see cref="TimerDefinition"/>s on the session's
+    /// <see cref="Scheduler"/>. Called once the connection is up, because a timer's whole job is to
+    /// send something, and cancelled again on disconnect (<see cref="StopTimers"/>) so a dropped
+    /// session doesn't keep firing into a closed socket.
+    /// <para>
+    /// <see cref="TimerDefinition.Enabled"/> and <see cref="TimerDefinition.Command"/> are read
+    /// <em>inside</em> the callback rather than here, so flipping the F6 checkbox or retyping the
+    /// command takes effect on the next firing. The interval and one-shot flag are baked into the
+    /// schedule itself and so apply from the next connect — a running <see cref="Timer"/> cannot be
+    /// re-periodised without being torn down, and tearing one down mid-cycle would silently reset
+    /// every other timer's phase.
+    /// </para>
+    /// </summary>
+    private void StartTimers()
+    {
+        StopTimers();
+
+        foreach (var timer in _timers)
+        {
+            if (timer.IntervalSeconds <= 0)
+            {
+                continue;
+            }
+
+            var definition = timer;
+            var interval = TimeSpan.FromSeconds(definition.IntervalSeconds);
+            void Fire()
+            {
+                if (!definition.Enabled || string.IsNullOrWhiteSpace(definition.Command))
+                {
+                    return;
+                }
+
+                _ = SendRawAsync(definition.Command);
+            }
+
+            _timerHandles.Add(definition.OneShot
+                ? Scheduler.After(interval, Fire, definition.Name)
+                : Scheduler.Every(interval, Fire, definition.Name));
+        }
+    }
+
+    /// <summary>Cancels every schedule <see cref="StartTimers"/> created, leaving script timers alone.</summary>
+    private void StopTimers()
+    {
+        foreach (var handle in _timerHandles)
+        {
+            handle.Dispose();
+        }
+
+        _timerHandles.Clear();
     }
 
     /// <summary>Splits a semicolon-separated command string, trimming and dropping blank segments.</summary>
@@ -320,6 +409,7 @@ public sealed class WorldSession : IAsyncDisposable
 
     private void OnDisconnected(object? sender, SessionDisconnectedEventArgs e)
     {
+        StopTimers();
         SetState(e.IsClean ? ConnectionState.Disconnected : ConnectionState.Faulted, e.Error);
         PrintSystem(e.IsClean ? "*** Disconnected." : $"*** Connection lost: {e.Error?.Message}");
     }
@@ -338,11 +428,24 @@ public sealed class WorldSession : IAsyncDisposable
         StateChanged?.Invoke(this, new ConnectionStateChangedEventArgs(state, error));
     }
 
-    private static ITelnetSession DefaultSessionFactory(ConnectionOptions options) =>
-        new TelnetSession(new TcpTransport(options));
+    /// <summary>
+    /// The real transport + telnet stack for this world, with the world's own
+    /// <see cref="WorldDefinition.Encoding"/> at the head of the CHARSET preference order — otherwise
+    /// a world set to Latin-1 would still negotiate UTF-8 and the F5 field would be decoration.
+    /// Instance-level (not static) for exactly that reason: the factory has to see the world.
+    /// </summary>
+    private ITelnetSession DefaultSessionFactory(ConnectionOptions options) =>
+        new TelnetSession(
+            new TcpTransport(options),
+            options: new TelnetSessionOptions
+            {
+                CharsetOrder = TelnetSessionOptions.PreferEncoding(World.Encoding),
+                KeepaliveInterval = TelnetSessionOptions.ResolveKeepalive(World.KeepaliveSeconds),
+            });
 
     public async ValueTask DisposeAsync()
     {
+        StopTimers();
         Scheduler.Dispose();
         _log?.Dispose();
         if (_telnet is not null)

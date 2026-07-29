@@ -8,16 +8,31 @@ namespace SharpMUTerm.Core.Automation;
 /// </summary>
 public sealed class TimerDefinition
 {
-    public string Name { get; init; } = string.Empty;
+    /// <summary>
+    /// What the timer is called, for the lists that show it. Settable so the F6 screen can rename one
+    /// live; nothing is derived from it — the <see cref="IntervalScheduler"/> is handed a callback and
+    /// an interval, and never looks a timer up by name — so there is no cache to drop.
+    /// </summary>
+    public string Name { get; set; } = string.Empty;
 
-    /// <summary>Seconds between firings. Values ≤ 0 are treated as disabled.</summary>
-    public double IntervalSeconds { get; init; }
+    /// <summary>
+    /// Seconds between firings. Values ≤ 0 are treated as disabled. Settable so the F6 screen can edit
+    /// it live; the <see cref="IntervalScheduler"/> reads it when the timer is realised, so a change
+    /// applies on the next run.
+    /// </summary>
+    public double IntervalSeconds { get; set; }
 
-    /// <summary>The command sent on each firing (blank when a script callback is used instead).</summary>
-    public string Command { get; init; } = string.Empty;
+    /// <summary>
+    /// The command sent on each firing (blank when a script callback is used instead). Settable so the
+    /// F6 screen can edit it live; it is read per firing, so a change applies to the next one.
+    /// </summary>
+    public string Command { get; set; } = string.Empty;
 
-    /// <summary>Fire only once after the interval rather than repeating.</summary>
-    public bool OneShot { get; init; }
+    /// <summary>
+    /// Fire only once after the interval rather than repeating. Settable so the F6 screen can flip it
+    /// live; the scheduler reads it when the timer is realised, so a change applies on the next run.
+    /// </summary>
+    public bool OneShot { get; set; }
 
     public bool Enabled { get; set; } = true;
 

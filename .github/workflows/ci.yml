@@ -61,7 +61,7 @@ jobs:
         shell: bash
         run: |
           dotnet run -c Release --no-build --project src/SharpMUTerm.Tui/SharpMUTerm.Tui.csproj -- \
-            --snapshot --size 120x30 --out snapshot.ans </dev/null
+            --snapshot --demo-config --size 120x30 --out snapshot.ans </dev/null
           test -s snapshot.ans || { echo "snapshot produced no output"; exit 1; }
           for token in CONNECTIONS Aetherfall Corvid palette; do
             grep -qF "$token" snapshot.ans || { echo "snapshot missing token: $token"; exit 1; }

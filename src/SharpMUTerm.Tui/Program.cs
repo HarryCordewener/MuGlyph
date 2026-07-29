@@ -27,9 +27,12 @@ internal static class Program
             // the snapshot is deterministic however it's launched (terminal, pipe, or CI redirect).
             Console.SetIn(TextReader.Null);
 
-            // With no real config on disk, drive the snapshot off the demo configuration — worlds,
-            // trigger sets, and a saved LastSession the app resumes exactly like a returning user's.
-            if (config.Worlds.Count == 0)
+            // A snapshot shows your own configuration, like every other way of running the client.
+            // `--demo-config` swaps in the built-in demo worlds instead: that is what the docs images
+            // and golden frames use, because a golden file that changes with the developer's own
+            // worlds isn't one. Opting in keeps the demo where it belongs — an explicit request,
+            // never the default state of the app.
+            if (args.Contains("--demo-config"))
             {
                 config = DemoScene.Build();
             }
@@ -151,9 +154,11 @@ internal static class Program
         Console.WriteLine("  --tls                Connect over TLS.");
         Console.WriteLine("  --insecure           Accept invalid TLS certificates.");
         Console.WriteLine("  --name <name>        Display name for the world.");
-        Console.WriteLine("  --snapshot           Render one demo frame (ANSI) headlessly and exit.");
+        Console.WriteLine("  --snapshot           Render one frame (ANSI) headlessly and exit.");
         Console.WriteLine("  --size <WxH>         Snapshot size in cells (default 160x48).");
         Console.WriteLine("  --view <name>        Snapshot an overlay (e.g. 'settings') over the workspace.");
+        Console.WriteLine("                       '<name>-edit' opens that settings screen mid field edit.");
+        Console.WriteLine("  --demo-config        Snapshot the built-in demo worlds instead of your own.");
         Console.WriteLine("  --out <file>         Write the snapshot to a file instead of stdout.");
         Console.WriteLine("  -h, --help           Show this help.");
         Console.WriteLine();
@@ -161,5 +166,6 @@ internal static class Program
         Console.WriteLine("With no host, the first configured world is used (if any).");
         Console.WriteLine();
         Console.WriteLine("In-app: Up/Down history · Ctrl+N next window · Ctrl+O next pane · Ctrl+W close · Ctrl+P palette · Ctrl+Q quit.");
+        Console.WriteLine("Panes:  drag a pane's tab strip onto another pane — middle drops it as a tab, an edge splits there.");
     }
 }
