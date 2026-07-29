@@ -657,10 +657,26 @@ categories, and where each control sits:
   wants a reconnect, like every other rule. The numpad specifically **still cannot
   fire** — see *Which keys can actually fire* under Critical Gotchas — and F4 now
   says so on the row rather than leaving it to be discovered.
-- **Still inert, and why.** A world's `keepalive` seconds only picks the status
-  bar's fake ack figure — there is no keepalive, and adding one wants a raw
-  `IAC NOP` write that bypasses the interpreter's escaping (`ITelnetSession` has no
-  such path today).
+- **Still inert, but no longer blocked.** A world's `keepalive` seconds only picks
+  the status bar's fake ack figure — nothing sends a keepalive. The upstream half is
+  done: TelnetNegotiationCore
+  [PR #52](https://github.com/HarryCordewener/TelnetNegotiationCore/pull/52) adds an
+  opt-in idle-reset `IAC NOP` keepalive, `.WithKeepAlive(TimeSpan)`, bounded to
+  1s–24h, defaulting to 30s.
+  <br>
+  **This field cannot be wired until that ships as 2.6.0.** The API doesn't exist in
+  the pinned 2.5.3, and it can't be reached through a conditional project reference
+  the way SharpConsoleUI is: that trick works only because both paths expose the same
+  API, and here the package path would not compile. So this waits on the release, not
+  on more design. When 2.6.0 lands: bump `Directory.Packages.props`, pass the world's
+  interval into `TelnetSessionOptions`, and hold the setting **by reference** like
+  `TextSettings`/`InputSettings` so changing it doesn't need a reconnect.
+  <br>
+  Note what it will and won't do: `IAC NOP` proves the socket write succeeded, not
+  that the peer answered. TIMING-MARK (RFC 860, option 6) is the negotiated option
+  that verifies a peer is alive, and it isn't implemented upstream either — so a
+  keepalive here will keep a NAT from evicting an idle connection, and will not
+  detect a server that has stopped responding.
 
 **The shell connects as the world's first configured character**
 (`SharpMUTermApp.OpenSession`). Before that it opened an *anonymous* session, which
