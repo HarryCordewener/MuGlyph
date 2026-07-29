@@ -186,8 +186,14 @@ internal sealed class InputBarControl : BaseControl, IInteractiveControl, IFocus
     /// <b>Ctrl+A is move-to-line-start, not select-all</b>, and it is not up for grabs. The same parser
     /// limitation makes Ctrl+Shift+A indistinguishable from Ctrl+A, so there is no second chord to move
     /// line-start onto: handing ⌃A to a selection would simply remove it from the readline set
-    /// (⌃A ⌃E ⌃K ⌃U ⌃W) that is the only way around a wrapped, multi-row command line. Selection is
-    /// wanted and unbuilt; see <c>docs/HANDOFF.md</c> §5 for what it needs and which chord it should get.
+    /// (⌃A ⌃E ⌃K ⌃U ⌃W) that is the only way around a wrapped, multi-row command line.
+    /// </para>
+    /// <para>
+    /// Selection is wanted and unbuilt. What it actually needs, if it is picked up: an anchor+extent on
+    /// <c>InputBuffer</c>, selection painting in <see cref="PaintDOM"/>, ⌃C copying via
+    /// <c>ClipboardHelper</c>, typing and paste replacing the selection, and Shift+arrows to extend it —
+    /// a selection you can only create and never adjust is worse than none. It wants its own chord, one
+    /// this host <em>can</em> deliver: a function key, or a ⌃B-prefixed one. Do not half-build it.
     /// </para>
     /// </summary>
     public bool ProcessKey(ConsoleKeyInfo key)

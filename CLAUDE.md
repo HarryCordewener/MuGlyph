@@ -32,7 +32,7 @@ fallbacks) for inline images/maps.
 ## Repository state
 
 **M1 delivered, plus substantial M2–M4 work.** `SharpMUTerm.slnx` builds all ten projects on
-`net10.0`; the solution has **1367 tests**, all passing. In place:
+`net10.0`, with the full test suite passing. In place:
 
 - **Core** — `AnsiParser` (SGR 16/256/truecolor), styled-line + `ScrollbackBuffer` model,
   `TcpTransport` (TLS + IPv6), `TelnetSession` (wraps TelnetNegotiationCore **2.5.3**),
@@ -43,7 +43,11 @@ fallbacks) for inline images/maps.
   probe, and `InlineImagePolicy` — the Kitty → Sixel → half-block → text degradation chain (no UI
   dependency). Inside the TUI the *pixels* are drawn by SharpConsoleUI's `ImageControl`; ours
   supplies the policy, because only the framework's renderer can put an image into compositor cells.
-  See `docs/HANDOFF.md` §2 for why, including the framework's missing Sixel back-end.
+  **Sixel inside the compositor is blocked upstream:** at SharpConsoleUI 2.5.14 `IImageRenderer` is
+  `internal` and `ImageControl.ResolveRenderer()` is private, so no Sixel back-end can be injected —
+  and the framework ships none. Reopening it needs an upstream PR making `IImageRenderer` public and
+  `ResolveRenderer` overridable; nothing on our side unblocks it. `InlineImagePolicy` therefore
+  degrades a Sixel-only terminal to half-block explicitly rather than pretending.
 - **Scripting** — sandboxed MoonSharp `ScriptHost` (world/output/trigger/alias/timer/gmcp/log).
 - **Tui** — **SharpConsoleUI** app: a `TabControl` of output windows (main + trigger-routed **spawn
   windows** + web view, with unread badges), each a `MarkupControl` fed StyledLine → Spectre-style
