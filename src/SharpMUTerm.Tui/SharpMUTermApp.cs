@@ -175,6 +175,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private readonly CommandPalette _palette;
     private readonly SettingsOverlay _settings;
 
+    /// <summary>The ⌃Q confirmation. Nothing ends the loop except a yes it collected.</summary>
+    private readonly QuitOverlay _quit;
+
+    /// <summary>Whether a confirmed quit has asked the loop to end — the headless view of the exit.</summary>
+    private bool _exiting;
+
     /// <summary>Per-world accents when a world hasn't set its own, keyed by position.</summary>
     internal static readonly TerminalColor[] AccentPalette =
     {
@@ -252,10 +258,18 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // "SharpMU...lient" and nothing else. Both restate what the app's own header band already
         // says, both cost a row of the workspace, and neither was ever visible in a snapshot (they
         // were off in headless only), so the frames we verify against now match a real terminal.
+        //
+        // ExitKey off. The framework carries a quit-from-anywhere key of its own, defaulting to the very
+        // chord we register (ConsoleWindowSystemOptions.ExitKey, InputCoordinator.cs:144), and it calls
+        // RequestExit with nothing in between. Ours wins today only because an application global
+        // shortcut is tried first and ours returns true — a second door standing open behind the
+        // confirmation, which is one refactor away from being the door that gets used. There is exactly
+        // one way out of this client now, and it goes through QuitOverlay.
         var options = new ConsoleWindowSystemOptions(
             ShowTopPanel: false,
             ShowBottomPanel: false,
-            EnableAnimations: !headless);
+            EnableAnimations: !headless,
+            ExitKey: null);
         _system = new ConsoleWindowSystem(driver ?? new NetConsoleDriver(RenderMode.Buffer), options);
 
         _header = Controls.Markup(HeaderMarkup()).StickyTop().Build();
@@ -311,6 +325,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
         _palette = new CommandPalette(_system, BuildCatalog, () => _active?.SessionKey, DispatchCommand);
         _settings = new SettingsOverlay(_system, SaveConfiguration);
+        _quit = new QuitOverlay(_system, QuitFactsNow, Quit);
 
         _window.OnResize += (_, _) =>
         {
@@ -508,6 +523,22 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             }
 
             _palette.Toggle();
+        }
+
+        // The ⌃Q confirmation, over a workspace that has something to lose: a second world marked
+        // connected (the demo scene's own way of saying so, and what the header's "n/m connected" reads),
+        // a line typed into the command line through the bar's real change notification, and then the
+        // registered shortcut itself — so the frame shows what pressing ⌃Q does, not an impression of it.
+        if (string.Equals(view, "quit", StringComparison.OrdinalIgnoreCase))
+        {
+            if (_config.Worlds.ElementAtOrDefault(1) is { Characters.Count: > 0 } second)
+            {
+                _connectedKeys.Add($"{second.Name}.{second.Characters[0].Name}");
+                _header.SetContent(new List<string> { HeaderMarkup() }); // the band counts them: 2/2
+            }
+
+            _input.SetAndNotify("say back in a moment — kettle's on");
+            _shortcuts[(ConsoleModifiers.Control, ConsoleKey.Q)]();
         }
 
         // Settings screens (composed-control or markup — SettingsView hands back a control factory
@@ -1383,7 +1414,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
         return claim.Key switch
         {
-            ConsoleKey.Q => () => { _system.RequestExit(0); return true; },
+            // ⌃Q asks first. A second ⌃Q dismisses the question rather than answering it — the same
+            // toggle every other surface in this client is on, and the only reading under which a held
+            // or twice-fumbled chord cannot quit on its own. See QuitPrompt.
+            ConsoleKey.Q => () => { _quit.Toggle(); return true; },
             // Next window (Ctrl+N, plus Ctrl+Tab where the terminal reports it) and close window (Ctrl+W).
             ConsoleKey.N or ConsoleKey.Tab => () => { NextWindow(); return true; },
             ConsoleKey.W => () => { CloseActiveWindow(); return true; },
@@ -1394,6 +1428,62 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _ => null,
         };
     }
+
+    /// <summary>Ends the UI loop. The one caller is a confirmed <see cref="QuitOverlay"/>.</summary>
+    private void Quit()
+    {
+        _exiting = true;
+        _system.RequestExit(0);
+    }
+
+    /// <summary>
+    /// What a quit would end, as of the keystroke asking: the worlds it disconnects, the lines it throws
+    /// away unsent, and the settings edits that were never saved. Gathered here because only the app can
+    /// see any of it; <see cref="QuitPrompt"/> turns it into the question.
+    /// <para>
+    /// Drafts are counted per command line, not per window. A window says only that it is holding
+    /// something (<see cref="WorkspaceWindow.HasUnsentInput"/>, the same fact its tab's ✎ is drawn from),
+    /// which is one draft — but the active window's two bars are right here to be read, and a second bar
+    /// holding an OOC line is exactly the draft a per-window count would hide.
+    /// </para>
+    /// </summary>
+    private QuitFacts QuitFactsNow()
+    {
+        var activeId = ActiveWindowId();
+        var holding = _workspace.Windows.Where(w => w.HasUnsentInput).ToList();
+        var bars = (_input.Buffer.IsEmpty ? 0 : 1) + (_second.Visible && !_second.Buffer.IsEmpty ? 1 : 0);
+        var drafts = holding.Count(w => w.Id != activeId) + bars;
+
+        // A screen with nothing typed into it costs nothing to close, so the edit count travels with the
+        // title and QuitPrompt drops the line when it is zero.
+        var screen = _settings.OpenKey is { } key
+            ? SettingsScreens().FirstOrDefault(s => s.Key == key).Title
+            : null;
+
+        return new QuitFacts(
+            ConnectedWorlds(),
+            drafts,
+            holding.Select(w => w.Title).ToList(),
+            screen,
+            _settings.PendingEdits);
+    }
+
+    /// <summary>
+    /// The worlds a quit would disconnect. Live sessions are the truth; the demo scene opens no sockets
+    /// at all, so when there is no session to ask, the rail's connected keys — which are what the header
+    /// counts and the snapshot frame shows — answer instead.
+    /// </summary>
+    private IReadOnlyList<string> ConnectedWorlds() =>
+        _sessions.Sessions.Count > 0
+            ? _sessions.Sessions.Where(s => s.IsConnected)
+                .Select(s => s.World.Name)
+                .Distinct(StringComparer.Ordinal)
+                .ToList()
+            : _config.Worlds
+                .Where(w => _connectedKeys.Contains(w.Name)
+                    || w.Characters.Any(c => _connectedKeys.Contains($"{w.Name}.{c.Name}")))
+                .Select(w => w.Name)
+                .ToList();
 
     /// <summary>
     /// Persists the configuration the settings screens edit — the ⏎ Save action. The workspace layout
@@ -2707,7 +2797,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private void ArmPrefix()
     {
-        if (_palette.IsOpen || _settings.IsOpen)
+        if (_palette.IsOpen || _settings.IsOpen || _quit.IsOpen)
         {
             return;
         }
@@ -2809,6 +2899,31 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>The status line's current markup — where a pane command that had nothing to do says so.</summary>
     internal string StatusMarkup => _statusBar.Text;
 
+    /// <summary>Whether the ⌃Q confirmation is up.</summary>
+    internal bool QuitPromptOpen => _quit.IsOpen;
+
+    /// <summary>What the ⌃Q confirmation is asking — the rendered markup, for a headless test to read.</summary>
+    internal IReadOnlyList<string> QuitPromptLines => _quit.Lines;
+
+    /// <summary>
+    /// Feeds one key to the open confirmation, through the handler its <c>PreviewKeyPressed</c> raises.
+    /// The modal's keys cannot go in through <see cref="SimulateKey"/>: a modal window owns the keyboard
+    /// while it is up, and the framework's routing to it only exists inside <c>Run()</c>.
+    /// </summary>
+    internal void SimulateQuitKey(ConsoleKeyInfo key) => _quit.SimulateKey(key);
+
+    /// <summary>Feeds one key to the open settings screen, the way the <c>-edit</c> snapshot views do.</summary>
+    internal void SimulateSettingsKey(ConsoleKeyInfo key) => _settings.SimulateKey(key);
+
+    /// <summary>Whether a confirmed quit has ended the loop — what <c>RequestExit</c> did, observably.</summary>
+    internal bool ExitRequested => _exiting;
+
+    /// <summary>
+    /// The framework's own quit-from-anywhere key, which this app turns off so the confirmation is the
+    /// only way out. Read back by test, because the default is the exact chord we intercept.
+    /// </summary>
+    internal ConsoleKey? FrameworkExitKey => _system.Options.ExitKey;
+
     /// <summary>
     /// The main window's key handler: move mode, the drag escape, the ⌃B prefix, then a bound macro,
     /// then draft-safe history recall. Returns the macro command it dispatched, or null.
@@ -2837,7 +2952,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             // framework already routes keys to them and this handler is not raised at all — the guard is
             // here because "a macro must not fire while a screen is open" is a rule of this app, not a
             // consequence of how the framework happens to dispatch, and the next surface may not be modal.
-            if (_palette.IsOpen || _settings.IsOpen)
+            if (_palette.IsOpen || _settings.IsOpen || _quit.IsOpen)
             {
                 return null;
             }
@@ -3197,7 +3312,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     {
         // Overlays own the whole screen while they're up; a drag underneath them would target panes
         // the user can't even see.
-        if (_palette.IsOpen || _settings.IsOpen || _moveMode)
+        if (_palette.IsOpen || _settings.IsOpen || _quit.IsOpen || _moveMode)
         {
             return;
         }

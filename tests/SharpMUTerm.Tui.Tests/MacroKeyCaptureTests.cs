@@ -316,7 +316,7 @@ public class MacroKeyCaptureTests
     [Arguments(ConsoleKey.NumPad5, false, false, "no numpad key ever arrives")]
     [Arguments(ConsoleKey.K, false, false, "plain keys type into the prompt")]
     [Arguments(ConsoleKey.F4, false, false, "F4 opens this screen")]
-    [Arguments(ConsoleKey.Q, true, false, "Ctrl+Q quits")]
+    [Arguments(ConsoleKey.Q, true, false, "Ctrl+Q asks whether to quit")]
     [Arguments(ConsoleKey.I, true, false, "the terminal sends Tab instead")]
     [Arguments(ConsoleKey.O, false, true, "Alt+O is the terminal's own prefix")]
     public async Task AChordThatCouldNeverFireIsRefusedAtTheCapture(

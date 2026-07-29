@@ -85,7 +85,8 @@ HTML logging · GMCP / MSDP / MSSP / MCCP · MXP + Pueblo · Unicode/emoji.
   character-bound input prompt + destination/draft gutter. Output is truecolor markup with clickable
   MXP/Pueblo/web spans; every connected world is told its **own pane's** size over NAWS, on every
   resize and every layout change (rate-limited, with the settled size always delivered).
-  `Ctrl+N` next window · `Ctrl+O` next pane · `Ctrl+W` close · `Ctrl+Q` quit.
+  `Ctrl+N` next window · `Ctrl+O` next pane · `Ctrl+W` close · `Ctrl+Q` quit (asks first, naming the
+  connections and unsent drafts it would end).
 - **Web view** — an in-TUI text-mode browser (`SharpMUTerm.Web`, AngleSharp): fetch a URL or
   follow an MXP/Pueblo/HTML link and read the page as styled, word-wrapped text with clickable
   links you can navigate in-pane. `<img>` shows as a labelled link (graphics-terminal image
@@ -108,7 +109,7 @@ dotnet run --project src/SharpMUTerm.Tui -- <host> <port> [--tls] [--insecure] [
 sharpmuterm --help    # once published
 ```
 
-In-app: **Up/Down** input history · **Ctrl+N** next window · **Ctrl+W** close window · **Ctrl+Q** quit. (Windows/panes are mouse-resizable; each window keeps its own input draft.)
+In-app: **Up/Down** input history · **Ctrl+N** next window · **Ctrl+W** close window · **Ctrl+Q** quit (y/n confirmation). (Windows/panes are mouse-resizable; each window keeps its own input draft.)
 
 ## Testing
 

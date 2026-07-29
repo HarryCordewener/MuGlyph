@@ -65,7 +65,7 @@ internal static class MacroKeys
     /// </summary>
     internal static IReadOnlyList<AppShortcut> AppShortcuts { get; } = new AppShortcut[]
     {
-        new(ConsoleModifiers.Control, ConsoleKey.Q, "quits"),
+        new(ConsoleModifiers.Control, ConsoleKey.Q, "asks whether to quit"),
         new(ConsoleModifiers.Control, ConsoleKey.N, "picks the next window"),
         new(ConsoleModifiers.Control, ConsoleKey.Tab, "picks the next window"),
         new(ConsoleModifiers.Control, ConsoleKey.W, "closes the window"),
