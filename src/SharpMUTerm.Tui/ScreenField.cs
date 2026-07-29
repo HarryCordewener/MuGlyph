@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using SharpMUTerm.Core.Automation;
 using SharpMUTerm.Core.Text;
 
 namespace SharpMUTerm.Tui;
@@ -30,6 +31,12 @@ namespace SharpMUTerm.Tui;
 /// the windows in use; typing a fifth is how the fifth comes into being). The chrome says which,
 /// because a list drawn the same way for both would imply a closed set where anything is legal.
 /// </param>
+/// <param name="Capture">
+/// Whether the open field takes its value from the <em>next keystroke</em> rather than from a typed
+/// buffer — F4's key binding is the only one. It changes what the chrome draws (a prompt, not a caret)
+/// and what the hints promise (no ⏎, no ⇥: every key but Esc is a candidate), so it is carried on the
+/// edit rather than re-derived, the way <paramref name="ClosedChoices"/> is.
+/// </param>
 internal readonly record struct ScreenFieldEdit(
     int Field,
     string Text,
@@ -37,7 +44,8 @@ internal readonly record struct ScreenFieldEdit(
     string? Error,
     int RowFields = 1,
     IReadOnlyList<string>? Choices = null,
-    bool ClosedChoices = false)
+    bool ClosedChoices = false,
+    bool Capture = false)
 {
     /// <summary>Whether the open field knows any values at all, whatever the buffer currently is.</summary>
     internal bool HasChoices => Choices is { Count: > 0 };
@@ -77,6 +85,11 @@ internal readonly record struct ScreenFieldEdit(
 /// independently. It is carried here rather than inferred, because the chrome draws the two lists
 /// differently and a renderer guessing from the field's shape would eventually guess wrong.
 /// </param>
+/// <param name="Capture">
+/// Whether the value is taken from the next keystroke instead of typed. See <see cref="Key"/>: it is the
+/// one field on these screens whose vocabulary is the keyboard itself, so a text buffer could only ever
+/// be a place to mis-spell a key name.
+/// </param>
 internal readonly record struct ScreenField(
     string Label,
     Func<string> Get,
@@ -84,7 +97,8 @@ internal readonly record struct ScreenField(
     Action<string> Set,
     Func<Action> Snapshot,
     IReadOnlyList<string>? Choices = null,
-    bool ClosedChoices = false)
+    bool ClosedChoices = false,
+    bool Capture = false)
 {
     /// <summary>Longest rejection message kept; regex parser errors run to several lines otherwise.</summary>
     private const int MaxErrorLength = 44;
@@ -554,6 +568,41 @@ internal readonly record struct ScreenField(
             Restore(get, set),
             names,
             ClosedChoices: true);
+    }
+
+    /// <summary>
+    /// A key binding, taken from the keyboard rather than typed. Opening it arms a capture: the next
+    /// keystroke <em>is</em> the value, and Esc — the only key that is never a candidate — abandons it.
+    /// <para>
+    /// It is not a <see cref="Choice"/> over key names and not a <see cref="Text"/> field, because both
+    /// would ask the user to spell a chord they can simply press, and to know this client's spelling of
+    /// it. What comes back is always canonical (<see cref="MacroKey.Canonicalise"/>), so
+    /// <c>Ctrl+Shift+F1</c> is stored one way however the terminal reports it.
+    /// </para>
+    /// <para>
+    /// Two things are refused, and both are refused <em>here</em> rather than left to be discovered by
+    /// pressing the key and watching nothing happen. A chord this host cannot deliver — the whole numpad,
+    /// Ctrl+Alt, the app's own shortcuts — is refused with <see cref="MacroKeys.Verdict"/>'s reason. And
+    /// a chord another binding already holds is refused by <paramref name="taken"/>, because the engine
+    /// resolves one macro per key and the second of two would silently never run, which is exactly the
+    /// dead row this field exists to make impossible.
+    /// </para>
+    /// </summary>
+    /// <param name="taken">Names the binding already holding a descriptor, or null when it is free.</param>
+    internal static ScreenField Key(
+        string label, Func<string> get, Action<string> set, Func<string, string?> taken)
+    {
+        ArgumentNullException.ThrowIfNull(get);
+        ArgumentNullException.ThrowIfNull(set);
+        ArgumentNullException.ThrowIfNull(taken);
+
+        return new ScreenField(
+            label,
+            get,
+            value => MacroKeys.Verdict(value) is { Fires: false } verdict ? verdict.Reason : taken(value),
+            value => set(MacroKey.Canonicalise(value) ?? value.Trim()),
+            Restore(get, set),
+            Capture: true);
     }
 
     /// <summary>Captures a value of any type and returns the action that writes it back.</summary>

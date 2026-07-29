@@ -215,22 +215,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // The PromptControl otherwise measures to its content width, leaving the band short of the right
         // edge; pinning Width to the window makes the field fill (and its background paint) run edge-to-edge.
         SyncInputWidth();
-        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.Q, () => _system.RequestExit(0));
-        // Next window (Ctrl+N, plus Ctrl+Tab where the terminal reports it) and close window (Ctrl+W).
-        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.N, NextWindow);
-        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.Tab, NextWindow);
-        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.W, CloseActiveWindow);
-        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.O, CyclePane);
-        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.P, ToggleMenu);
-        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.B, ArmPrefix);
-        _system.RegisterGlobalShortcut(ConsoleModifiers.Control, ConsoleKey.F, ToggleFreeze);
         _window.PreviewKeyPressed += OnWindowKey;
         // Pane drag-and-drop listens at the driver, not at a control: SharpConsoleUI delivers mouse
         // frames to the control that was pressed (it captures on Button1Pressed), so a control-level
         // handler would only ever see the *source* pane. The driver stream carries every frame in
         // desktop cells, which is exactly what a drag between panes needs.
         _system.ConsoleDriver.MouseEvent += OnDriverMouseEvent;
-        RegisterSettingsShortcuts();
+        RegisterGlobalShortcuts();
         _system.AddWindow(_window);
     }
 
@@ -944,15 +935,73 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     };
 
     /// <summary>
-    /// Binds each screen's F-key to the full-screen settings overlay. Esc / the same F-key closes.
+    /// Binds every chord the app claims globally: the window/pane commands, and each settings screen's
+    /// F-key to the full-screen overlay (Esc / the same F-key closes it).
+    /// <para>
+    /// The chords come from <see cref="MacroKeys.AppShortcuts"/> rather than being written out here,
+    /// because F4 has to tell a user that a macro on <c>Ctrl+Q</c> will never fire, and it can only say
+    /// so honestly if the list it reads is the list that was registered. Registering <em>from</em> that
+    /// table makes the two the same list. Both directions are checked as it goes: a claim with no action
+    /// and a screen with no claim are both startup failures rather than a key that silently does nothing.
+    /// </para>
     /// </summary>
-    private void RegisterSettingsShortcuts()
+    private void RegisterGlobalShortcuts()
     {
-        foreach (var screen in SettingsScreens())
+        var screens = SettingsScreens().ToDictionary(s => s.Key, s => s.Open);
+        foreach (var claim in MacroKeys.AppShortcuts)
         {
-            var (key, open) = (screen.Key, screen.Open);
-            _system.RegisterGlobalShortcut((ConsoleModifiers)0, key, () => _settings.Toggle(key, open));
+            var action = ShortcutAction(claim, screens)
+                ?? throw new InvalidOperationException(
+                    $"MacroKeys.AppShortcuts claims {claim.Modifiers}+{claim.Key} but nothing runs on it");
+            _system.RegisterGlobalShortcut(claim.Modifiers, claim.Key, action);
         }
+
+        foreach (var key in screens.Keys)
+        {
+            if (!MacroKeys.AppShortcuts.Any(c => c.Modifiers == (ConsoleModifiers)0 && c.Key == key))
+            {
+                throw new InvalidOperationException(
+                    $"the {key} settings screen is not claimed in MacroKeys.AppShortcuts");
+            }
+        }
+    }
+
+    /// <summary>
+    /// What a claimed chord runs, or null when nothing does. Every one returns true: these are the keys
+    /// the app takes outright, and a global shortcut that returned false would hand the key back to the
+    /// window underneath — which is exactly what the keypad screen has just told the user does not happen.
+    /// </summary>
+    private Func<bool>? ShortcutAction(
+        AppShortcut claim, IReadOnlyDictionary<ConsoleKey, Func<ScreenBinding>> screens)
+    {
+        if (claim.Modifiers == (ConsoleModifiers)0)
+        {
+            if (!screens.TryGetValue(claim.Key, out var open))
+            {
+                return null;
+            }
+
+            var key = claim.Key;
+            return () => { _settings.Toggle(key, open); return true; };
+        }
+
+        if (claim.Modifiers != ConsoleModifiers.Control)
+        {
+            return null;
+        }
+
+        return claim.Key switch
+        {
+            ConsoleKey.Q => () => { _system.RequestExit(0); return true; },
+            // Next window (Ctrl+N, plus Ctrl+Tab where the terminal reports it) and close window (Ctrl+W).
+            ConsoleKey.N or ConsoleKey.Tab => () => { NextWindow(); return true; },
+            ConsoleKey.W => () => { CloseActiveWindow(); return true; },
+            ConsoleKey.O => () => { CyclePane(); return true; },
+            ConsoleKey.P => () => { ToggleMenu(); return true; },
+            ConsoleKey.B => () => { ArmPrefix(); return true; },
+            ConsoleKey.F => () => { ToggleFreeze(); return true; },
+            _ => null,
+        };
     }
 
     /// <summary>
@@ -1175,7 +1224,9 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// a report. The <c>logging</c> view opens F5 on the character pane, so it steps twice more to
     /// reach the log format — past the name and the on-connect line — because the character's log is
     /// the whole reason that view exists, and it is also this app's one <em>closed</em> list, so it is
-    /// what the closed presentation is checked against.
+    /// what the closed presentation is checked against. <c>keypad</c> steps twice in the other
+    /// direction, onto the binding's <em>key capture</em>: that is the one state on these screens no
+    /// amount of typing can reach, so a still frame is the only way to look at it.
     /// <para>
     /// <c>route</c> and <c>highlight</c> are F2 again, stopped at the two states a single frame of
     /// <c>triggers-edit</c> cannot also show: a buffer that has <em>narrowed</em> the list (<c>pa</c> →
@@ -1201,6 +1252,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         yield return Stroke('\r', ConsoleKey.Enter);
+
+        if (string.Equals(view, "keypad", StringComparison.OrdinalIgnoreCase))
+        {
+            // name → command → key, which is where the keyboard stops being a text buffer: the frame
+            // shows an armed capture, the one screen state that cannot be reached by typing anything.
+            yield return Stroke('\t', ConsoleKey.Tab);
+            yield return Stroke('\t', ConsoleKey.Tab);
+            yield break;
+        }
 
         if (string.Equals(view, "logging", StringComparison.OrdinalIgnoreCase))
         {
@@ -2110,12 +2170,27 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>Consumes the key after ⌃B and runs the matching pane command (tmux-style).</summary>
-    private void OnWindowKey(object? sender, KeyPressedEventArgs e)
+    private void OnWindowKey(object? sender, KeyPressedEventArgs e) => HandleWindowKey(e);
+
+    /// <summary>
+    /// Feeds one key to the very handler the main window's <c>PreviewKeyPressed</c> raises, and reports
+    /// the macro command it sent. It exists for the same reason
+    /// <see cref="SettingsOverlay.SimulateKey"/> does — the framework only pumps keys inside
+    /// <c>Run()</c>, which a headless test never enters — and it goes <em>through</em>
+    /// <see cref="HandleWindowKey"/> rather than around it, so what it proves is what a keystroke does.
+    /// </summary>
+    internal string? SimulateKey(ConsoleKeyInfo key) => HandleWindowKey(new KeyPressedEventArgs(key, false));
+
+    /// <summary>
+    /// The main window's key handler: move mode, the drag escape, the ⌃B prefix, then a bound macro,
+    /// then draft-safe history recall. Returns the macro command it dispatched, or null.
+    /// </summary>
+    private string? HandleWindowKey(KeyPressedEventArgs e)
     {
         if (_moveMode)
         {
             HandleMoveKey(e);
-            return;
+            return null;
         }
 
         // Escape abandons a mouse drag. A terminal that loses the button-up (the pointer left the
@@ -2125,18 +2200,29 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             e.Handled = true;
             _paneDrag.Reset(); // no mouse frame ends this one, so the gesture has to be dropped here
             EndDrag();
-            return;
+            return null;
         }
 
         if (!_prefixArmed)
         {
-            // Draft-safe history recall on ↑/↓ — our own, so a half-typed draft survives (see InputHistory).
-            if (!_palette.IsOpen && !_settings.IsOpen)
+            // A modal surface owns the keyboard while it is up. Both are separate windows, so the
+            // framework already routes keys to them and this handler is not raised at all — the guard is
+            // here because "a macro must not fire while a screen is open" is a rule of this app, not a
+            // consequence of how the framework happens to dispatch, and the next surface may not be modal.
+            if (_palette.IsOpen || _settings.IsOpen)
             {
-                TryRecallKey(e);
+                return null;
             }
 
-            return;
+            if (DispatchMacro(e.KeyInfo) is { } sent)
+            {
+                e.Handled = true;
+                return sent;
+            }
+
+            // Draft-safe history recall on ↑/↓ — our own, so a half-typed draft survives (see InputHistory).
+            TryRecallKey(e);
+            return null;
         }
 
         _prefixArmed = false;
@@ -2156,6 +2242,57 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         _header.SetContent(new List<string> { HeaderMarkup() });
+        return null;
+    }
+
+    /// <summary>
+    /// Runs the macro bound to a keystroke and returns the command it sent, or null when this key is not
+    /// one the app acts on. This is the wire the F4 screen has always drawn and nothing ever connected:
+    /// <see cref="MacroEngine"/> and <see cref="WorldSession.HandleKeyAsync"/> were written and tested,
+    /// and no key press had ever reached either of them.
+    /// <para>
+    /// It sits on the main window's <c>PreviewKeyPressed</c>, which is the one place with all three
+    /// properties a macro needs: it runs <em>before</em> the focused control, so a binding beats the
+    /// prompt; it is not raised while a modal (a settings screen, the command surface) holds the
+    /// keyboard; and it runs <em>after</em> the global shortcuts, so the chords the app claims for
+    /// itself never arrive here — which is why <see cref="MacroKeys.Verdict"/> reports those as taken
+    /// rather than the screen pretending a macro could outrank them.
+    /// </para>
+    /// <para>
+    /// The macro is resolved before it is sent because the answer decides whether the keystroke is
+    /// swallowed, and <see cref="WorldSession.HandleKeyAsync"/> only reports that after it has already
+    /// sent. The send itself still goes through that method: it is the one path from a key to the wire,
+    /// and a second one here would be a second thing to keep in step. Nothing connected means nothing to
+    /// send to, so the key falls through to whatever would have had it.
+    /// </para>
+    /// </summary>
+    private string? DispatchMacro(ConsoleKeyInfo key)
+    {
+        if (_active is not { } session || MacroKeys.Descriptor(key) is not { } descriptor)
+        {
+            return null;
+        }
+
+        if (session.Macros.Resolve(descriptor) is not { Command.Length: > 0 } macro)
+        {
+            return null;
+        }
+
+        _ = session.HandleKeyAsync(descriptor);
+        return macro.Command;
+    }
+
+    /// <summary>
+    /// Opens the session for a world and binds it <em>without connecting</em> — the pair of calls
+    /// <see cref="StartAsync"/> makes before it dials. It exists so the key → macro → command path can be
+    /// driven end to end without a socket: <see cref="WorldSession.HandleKeyAsync"/> resolves and reports
+    /// a binding whether or not there is a transport under it to write to.
+    /// </summary>
+    internal WorldSession BindWorldWithoutConnecting(WorldDefinition world)
+    {
+        var session = OpenSession(world);
+        BindSession(session);
+        return session;
     }
 
     /// <summary>

@@ -13,6 +13,13 @@ namespace SharpMUTerm.Tui;
 /// and the footer action bar. <see cref="KeypadScreenView"/> composes these into real panels (grids)
 /// for the live/snapshot view; <see cref="Render"/> merges the same blocks into a single line list
 /// for the unit tests. Pure so every block is testable.
+/// <para>
+/// Every drawn key carries <see cref="MacroKeys.Verdict"/>: a binding whose chord can never reach the
+/// app is marked on its own row and explained in the footer, and the numpad caption says the same for
+/// the grid as a whole. That is the screen's one hard rule — a list of bindings may not contain a row
+/// that quietly does nothing, and the only way to keep that promise is to ask what the keyboard can
+/// actually deliver rather than assuming a stored descriptor means something.
+/// </para>
 /// </summary>
 internal static class KeypadScreenRenderer
 {
@@ -24,13 +31,20 @@ internal static class KeypadScreenRenderer
 
     /// <summary>
     /// The binding row's field ordinals, in the order ⇥ steps through them. The name leads, as it does
-    /// on every list screen. The <em>key</em> is deliberately not among them: it is
-    /// <see cref="MacroEngine"/>'s lookup key, and rebinding it needs a key-capture mode rather than a
-    /// text buffer — which is also why <c>duplicate</c> is not offered here (see <see cref="Buttons"/>).
+    /// on every list screen.
     /// </summary>
     internal const int NameField = 0;
 
     internal const int CommandField = 1;
+
+    /// <summary>
+    /// The binding's key, as a <see cref="ScreenField.Key"/> capture: ⏎ ⇥ ⇥ arms it and the next
+    /// keystroke becomes the binding. It is <em>appended</em> rather than slotted in beside the key the
+    /// row draws first, because an ordinal is an address the renderer, the model, the tests and the
+    /// snapshot key scripts all use, and inserting one silently moves every caret after it — the same
+    /// rule that put F5's log fields and F2's action fields at the end of their rows.
+    /// </summary>
+    internal const int KeyField = 2;
 
     /// <summary>The label the binding list's add button carries; it names the key it will claim.</summary>
     internal const string AddBindingLabel = "+ binding";
@@ -121,24 +135,57 @@ internal static class KeypadScreenRenderer
         return new ScreenModel(ScreenModel.Rows(macros, macro => ScreenRow.Of(
             ScreenToggle.Bind(() => macro.Enabled, v => macro.Enabled = v),
             ScreenField.Name("name", () => macro.Name, v => macro.Name = v),
-            ScreenField.Text("command", () => macro.Command, v => macro.Command = v)))
+            ScreenField.Text("command", () => macro.Command, v => macro.Command = v),
+            ScreenField.Key("key", () => macro.Key, v => macro.Key = v, key => AlreadyBound(macros, macro, key))))
             .Concat(Buttons(sets, selected))
             .ToArray());
     }
 
     /// <summary>
-    /// The binding list's buttons. Adding claims the first unbound numpad digit and *says which*
-    /// (<c>[[+ binding]] Num3</c>): a <see cref="Macro"/> is identified by its
-    /// <see cref="Macro.Key"/>, which this screen deliberately cannot edit (rebinding wants a
-    /// key-capture mode, not a text buffer), so a button that created a binding on an unspecified or
-    /// already-taken key would produce a row that is dead and unfixable from here. When every numpad
-    /// digit is spoken for there is no free key to claim, so the button isn't drawn at all — the same
-    /// rule that keeps <c>[[- del]]</c> off a pane with nothing selected.
+    /// Whether another binding already holds a key, and which — the refusal a key capture needs. A
+    /// <see cref="MacroEngine"/> resolves one macro per key, so the second binding on a key never runs:
+    /// letting a capture create one would mint exactly the dead row the capture mode exists to remove,
+    /// and it would be a dead row with no symptom at all, since both rows would look alive.
     /// <para>
-    /// For the same reason there is no <c>duplicate</c>: a copy of a binding would land on the key its
-    /// original already holds, and the second of two macros on one key never fires
-    /// (<see cref="MacroEngine"/> is a dictionary). A button whose only possible result is a dead row
-    /// is worse than no button.
+    /// The comparison spans every set the screen was handed, not just the one the binding lives in. It is
+    /// deliberately the stricter reading: a session flattens the character's sets into one engine, so two
+    /// sets that are ever enabled together collide — and a screen that only refused collisions inside one
+    /// set would be right about the sets it could see and wrong about the runtime.
+    /// </para>
+    /// </summary>
+    private static string? AlreadyBound(IReadOnlyList<Macro> macros, Macro self, string key)
+    {
+        var canonical = MacroKey.Canonicalise(key) ?? key.Trim();
+        foreach (var macro in macros)
+        {
+            if (!ReferenceEquals(macro, self)
+                && string.Equals(macro.Key, canonical, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"already bound to {Identify(macro)}";
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The binding list's buttons. Adding claims the first unbound numpad digit and *says which*
+    /// (<c>[[+ binding]] Num3</c>), so a new binding always lands on a key the row can name. When every
+    /// numpad digit is spoken for there is no free key to claim, so the button isn't drawn at all — the
+    /// same rule that keeps <c>[[- del]]</c> off a pane with nothing selected.
+    /// <para>
+    /// The numpad is a <em>placeholder</em> now, not a working key: no numpad chord reaches this host
+    /// (see <see cref="MacroKeys"/>), so a fresh binding is drawn with the <c>▲</c> caveat every other
+    /// dead row gets, and the key capture on its own row (<see cref="KeyField"/>) is how it is made live.
+    /// That is a step, and it is visible; it stays this way only because the claimed key is what
+    /// <c>ScreenListButtonTests</c> pins, and moving the claim to the first free deliverable chord is a
+    /// change to an asserted value rather than to a behaviour nobody wrote down.
+    /// </para>
+    /// <para>
+    /// There is still no <c>duplicate</c>: a copy would land on the key its original already holds, and
+    /// two macros on one key means the second never runs — the capture refuses to create that state
+    /// (see <see cref="AlreadyBound"/>), so a button whose only possible result is that state would be
+    /// contradicting the field beside it.
     /// </para>
     /// </summary>
     private static List<ScreenRow> Buttons(IReadOnlyList<TriggerSet>? sets, int selected)
@@ -151,7 +198,7 @@ internal static class KeypadScreenRenderer
 
         var bound = sets.SelectMany(s => s.Macros).Select(m => m.Key).ToList();
         if (ScreenLists.Target(sets, s => s.Macros, selected) is { } target
-            && FreeNumpadKey(bound) is { } key)
+            && FreeBindableKey(bound) is { } key)
         {
             rows.Add(ScreenRow.Of(ScreenButton.Add(
                 AddBindingLabel,
@@ -172,14 +219,17 @@ internal static class KeypadScreenRenderer
     }
 
     /// <summary>
-    /// The lowest <c>Num0</c>..<c>Num9</c> nothing is bound to, or null when they are all taken.
+    /// The first chord a new binding can be born on: unbound, and one this client can actually be
+    /// reached by. It deliberately does <em>not</em> hand out a numpad key — no numpad key ever
+    /// arrives (see <see cref="MacroKeys"/>), so a binding created on one is dead from birth, and a
+    /// button whose whole job is to name the key it claims must not name a key that cannot fire.
+    /// Null when every candidate is taken, which is what stops the button being drawn at all.
     /// Comparison is case-insensitive because <see cref="MacroEngine"/>'s lookup is.
     /// </summary>
-    private static string? FreeNumpadKey(IReadOnlyList<string> bound)
+    private static string? FreeBindableKey(IReadOnlyList<string> bound)
     {
-        for (var digit = 0; digit <= 9; digit++)
+        foreach (var key in MacroKeys.Bindable)
         {
-            var key = "Num" + digit.ToString(CultureInfo.InvariantCulture);
             if (!bound.Contains(key, StringComparer.OrdinalIgnoreCase))
             {
                 return key;
@@ -227,20 +277,35 @@ internal static class KeypadScreenRenderer
         {
             var at = selected >= 0 ? selected : focus?.Pane == 0 ? focus.Value.Index : 0;
             at = Math.Clamp(at, 0, macros.Count - 1);
+
+            // The row can only spare a handful of cells for a reason; the footer has the width to give
+            // the whole one, for the binding the cursor is actually on.
+            var verdict = MacroKeys.Verdict(macros[at].Key);
             context = ScreenChrome.Context(
-                ScreenChrome.Position("binding", at, macros.Count), Escape(Identify(macros[at])));
+                ScreenChrome.Position("binding", at, macros.Count),
+                Escape(Identify(macros[at])),
+                verdict.Fires ? null : "▲ " + Escape(verdict.Reason));
         }
 
         var actions = ScreenChrome.Actions(focus: focus);
         return SpreadLR(" " + context, actions, width);
     }
 
-    /// <summary>The 3×3 numpad grid, in numpad order (7-8-9 on top), one row per line.</summary>
+    /// <summary>
+    /// The 3×3 numpad grid, in numpad order (7-8-9 on top), one row per line.
+    /// <para>
+    /// Its caption carries the whole grid's verdict, because on this host that verdict is the same for
+    /// every cell: nothing sends a numpad key here (see <see cref="MacroKeys"/>). Nine diagrams of keys
+    /// that cannot fire, drawn without saying so, is the exact shape of the lie this screen was audited
+    /// for — and the caption is <em>derived</em> from the verdict rather than written, so a host that
+    /// could one day deliver the numpad would drop the disclaimer without anyone remembering to.
+    /// </para>
+    /// </summary>
     internal static List<string> NumpadColumn(IReadOnlyList<Macro> macros)
     {
         ArgumentNullException.ThrowIfNull(macros);
 
-        var lines = new List<string> { "[dim]NUMPAD[/]" };
+        var lines = new List<string> { $"[dim]NUMPAD[/]{Caveat(MacroKeys.Verdict("Num5"))}" };
         foreach (var row in NumpadRows)
         {
             lines.Add(NumpadRow(row, macros));
@@ -259,7 +324,7 @@ internal static class KeypadScreenRenderer
         ArgumentNullException.ThrowIfNull(macros);
 
         var cursor = focus ?? ScreenFocus.None;
-        var lines = new List<string> { "[dim]HOTKEYS[/]" };
+        var lines = new List<string> { $"[dim]HOTKEYS[/]{DeadCount(macros)}" };
         if (macros.Count == 0)
         {
             lines.Add("  [dim]no hotkeys[/]");
@@ -268,7 +333,11 @@ internal static class KeypadScreenRenderer
         for (var i = 0; i < macros.Count; i++)
         {
             lines.Add(ScreenChrome.Cursor(
-                Hotkey(macros[i], cursor.EditOn(0, i, NameField), cursor.EditOn(0, i, CommandField)),
+                Hotkey(
+                    macros[i],
+                    cursor.EditOn(0, i, NameField),
+                    cursor.EditOn(0, i, CommandField),
+                    cursor.EditOn(0, i, KeyField)),
                 cursor.IsOn(0, i),
                 ColumnWidth));
         }
@@ -309,22 +378,58 @@ internal static class KeypadScreenRenderer
     }
 
     /// <summary>
-    /// One row of the binding list: <c>tick key name → command</c>. The name and the command are both
-    /// welled, because both are edited here — this screen has no editor pane to draw them in, and the
-    /// well is the affordance that says which values the keyboard can change (see
-    /// <see cref="ScreenChrome.ReadOnly"/>, and the numpad grid, which has none). The key sits between
-    /// them unwelled, which is exactly what it is: the one part of a binding this screen cannot change.
+    /// One row of the binding list: <c>tick key name → command</c>. All three values are welled, because
+    /// all three are edited here — this screen has no editor pane to draw them in, and the well is the
+    /// affordance that says which values the keyboard can change (see <see cref="ScreenChrome.ReadOnly"/>,
+    /// and the numpad grid, which has none). The key was the one unwelled value on the screen until it
+    /// grew a capture mode; it is welled now because the claim the well makes has become true.
+    /// <para>
+    /// A binding whose chord can never reach the app is drawn in the muted ink behind a <c>▲</c>, with
+    /// the reason after the command — the read-only treatment, used for what it means: this row is not
+    /// what it looks like. The well stays, because the key genuinely <em>is</em> editable here; the two
+    /// marks answer different questions, and the answer to "can I change this" is yes even when the
+    /// answer to "does this do anything" is no.
+    /// </para>
     /// </summary>
-    private static string Hotkey(Macro macro, ScreenFieldEdit? name, ScreenFieldEdit? command)
+    private static string Hotkey(Macro macro, ScreenFieldEdit? name, ScreenFieldEdit? command, ScreenFieldEdit? key)
     {
+        var verdict = MacroKeys.Verdict(macro.Key);
         var tick = macro.Enabled ? $"[{Accent}]✓[/]" : "[dim]·[/]";
-        var key = $"[bold]{Escape(macro.Key).PadRight(KeyColumnWidth)}[/]";
+        var chord = verdict.Fires
+            ? $"[bold]{Escape(macro.Key)}[/]"
+            : $"[{Muted}]▲ {Escape(macro.Key)}[/]";
+        var bound = ScreenChrome.Field(PadVisible(chord, KeyColumnWidth), key);
+
         // A binding that has never been named still gets its well — the name is editable whether or not
         // one is set — but with the same em-dash placeholder an unbound numpad cell uses, so the column
         // reads as an empty field rather than as a slab of background.
         var label = string.IsNullOrWhiteSpace(macro.Name) ? "[dim]—[/]" : $"[{Value}]{Escape(macro.Name)}[/]";
         var named = ScreenChrome.Field(PadVisible(label, NameColumnWidth), name);
-        return $"{tick} {key} {named} → {ScreenChrome.Field(Escape(macro.Command), command)}";
+        return $"{tick} {bound} {named} → {ScreenChrome.Field(Escape(macro.Command), command)}";
+    }
+
+    /// <summary>
+    /// What a verdict adds to a <em>caption</em>: nothing when it fires, and otherwise the muted
+    /// <c>▲ reason</c> in full. One helper, so a caption and the footer cannot phrase the same fact two
+    /// ways.
+    /// </summary>
+    private static string Caveat(MacroKeyVerdict verdict) =>
+        verdict.Fires ? string.Empty : $"  [{Muted}]▲ {Escape(verdict.Reason)}[/]";
+
+    /// <summary>
+    /// How many of the drawn bindings can never fire, on the list's own caption. The rows carry the
+    /// <c>▲</c> and the footer carries the reason for the one the cursor is on; the reason is
+    /// deliberately <em>not</em> repeated per row, because the reasons differ, they are longer than the
+    /// column has cells, and eight copies of the same sentence is how a warning stops being read. A
+    /// count, though, is the one thing neither the rows nor the footer can say: how much of this list is
+    /// scenery.
+    /// </summary>
+    private static string DeadCount(IReadOnlyList<Macro> macros)
+    {
+        var dead = macros.Count(m => !MacroKeys.Verdict(m.Key).Fires);
+        return dead == 0
+            ? string.Empty
+            : $"  [{Muted}]▲ {dead} of {macros.Count} cannot fire[/]";
     }
 
     private static Macro? FindByKey(IReadOnlyList<Macro> macros, string key)

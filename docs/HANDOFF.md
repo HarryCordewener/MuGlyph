@@ -4,8 +4,8 @@ Context for whoever (human or agent) picks up this work next.
 
 - **Repository:** `SharpMUSH/SharpMUTerm`
 - **Start from:** a fresh branch off `main`
-- **Tests:** 999 across the solution (375 Core / 83 Graphics / 42 Scripting /
-  28 Web / 471 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
+- **Tests:** 1071 across the solution (396 Core / 83 Graphics / 42 Scripting /
+  28 Web / 522 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
   from this repo; building against a local SharpConsoleUI clone surfaces 2 upstream
   NuGet advisory warnings for AngleSharp, which are the framework's, not ours)
 
@@ -35,13 +35,23 @@ works.
   the total is asserted separately.
 - **No `duplicate` on F6 or F4, deliberately.** A timer is three values, two of
   which you would change in the copy, so `[+ timer]` and typing is no slower. A
-  macro is identified by its `Key`, which this screen cannot edit — a copy would
-  land on the key its original already holds, and the second macro on a key never
-  fires (`MacroEngine` is a dictionary), so the button's only possible result is a
-  dead row.
-- **F4's add button claims a numpad key and says which** (`[+ binding] Num3`),
-  because a binding created on an unnamed key would be unfixable from this screen.
-  Once all ten digits are bound the button isn't drawn at all.
+  macro copy would land on the key its original already holds, and the second
+  macro on a key never fires — which is now a state the F4 key capture actively
+  *refuses* to create, so a button whose only possible result is that state would
+  be contradicting the field beside it.
+- **F4's add button claims a numpad key and says which** (`[+ binding] Num3`).
+  Once all ten digits are bound the button isn't drawn at all. **That claim is now
+  the wrong one** — no numpad chord reaches this host (see *Which keys can
+  actually fire*), so a fresh binding is born dead and has to be rebound on its
+  own row before it does anything. It still claims a digit only because the claimed
+  key is a pinned assertion (`ScreenListButtonTests.AddingABindingClaimsTheLowestFree
+  NumpadKeyAndNamesIt` asserts `Num0`, then `Num1`), and moving the claim to the
+  first free *deliverable* chord (`F1`, `F10`–`F12`, then `Ctrl+F1`…) means
+  changing an asserted value. **That is the next thing to do on this screen.**
+- **A macro's key is editable**, as the binding row's *third* field
+  (`KeypadScreenRenderer.KeyField`, appended so the name and command ordinals did
+  not move) and as a **key capture** rather than a text buffer — see *Key capture*
+  under Critical Gotchas.
 - **New items:** trigger and alias arrive enabled, timer arrives **disabled**. A
   timer is the only one of the four that acts without being provoked; the others
   wait for output or for a keypress.
@@ -68,11 +78,11 @@ works.
   `Name` went `init` → `set`; none of them has cached derived state (checked:
   the engines match on patterns and `MacroEngine` is keyed by `Macro.Key`), which
   `AutomationCloneTests.RenamingLeavesTheCompiledMatcherAlone` pins.
-- **Rows still not editable** (deliberately): a macro's *key* (rebinding needs a
-  key-capture mode, not a text buffer), a character's password (it is
+- **Rows still not editable** (deliberately): a character's password (it is
   `[JsonIgnore]` and belongs in a credential store), and everything derived (the
   numpad grid, the session/state readouts). **All of them now say so on screen** —
-  see *Editable vs read-only rows* under Critical Gotchas.
+  see *Editable vs read-only rows* under Critical Gotchas. A macro's key used to be
+  on this list and no longer is.
 - **A world's TLS and certificate flags are live**, as the two checkboxes of F5's
   fourth pane, drawn where the read-only `security  TLS on · certs strict` line
   used to be. Two booleans is two checkboxes and a `ScreenRow` carries one, so it
@@ -189,8 +199,10 @@ Things that will waste your time if you don't know them.
   `keypad`, `textansi`, `input`, `logging`, `freeze`, `spawn`, `split`, `move`,
   `drag`, `history`, `menu`, `menu-split`, plus the default (no `--view`) workspace.
   Extra state toggles: `collapsed`, `prefix`, `timestamps`. Any settings screen also
-  takes a `-edit` suffix (`worlds-edit`, `logging-edit`, …), which opens it and
-  drives real keys in so the frame shows a field mid-edit.
+  takes a `-edit` suffix (`worlds-edit`, `logging-edit`, `keypad-edit`, …), which
+  opens it and drives real keys in so the frame shows a field mid-edit —
+  `keypad-edit` steps to the binding's **key capture**, the one screen state no
+  amount of typing can reach.
 - **Send the user the `.svg`** — they view it fine. Do **not** rely on your own
   SVG→PNG for pixel checks near the bottom (see next point).
 - **SVG→PNG clipping trap:** Chromium clips the bottom of a bare `.svg` file
@@ -383,7 +395,9 @@ What the framework actually provides (read at v2.5.14, not assumed):
   abandons the buffer and leaves the screen up. Inside an edit: typing inserts,
   Backspace/Delete remove, ←→/Home/End move the caret, ↑↓ walk the drawn candidate
   list (typing narrows it),
-  ⇥ commits and steps to the row's next field, ⏎ commits.
+  ⇥ commits and steps to the row's next field, ⏎ commits. **One field kind takes the
+  keyboard whole** — F4's key capture, where only Esc means anything else; see *Key
+  capture* below.
 - **Validation is at commit, not per keystroke.** Any character can be typed;
   ⏎/⇥/⌃S validate. A rejected value keeps the edit open, marks the field with the
   reason, and writes nothing — `ScreenEdits.Apply(field, value)` is the only path
@@ -443,9 +457,13 @@ What the framework actually provides (read at v2.5.14, not assumed):
   `idx:N` and `none` typed in full — a `TerminalColor` already in config may be a
   colour no short palette names, and a picker that refused the value it was
   showing would make an existing highlight uneditable.
-- **Making a Core property settable? Check for cached derived state.**
-  `Trigger.Pattern`, `Alias.Pattern` and now **`Trigger.CaseSensitive`** drop their
-  compiled `Regex` on write, like `Alias.CaseSensitive` always did — otherwise the
+- **Making a Core property settable? Check for cached derived state.** The cache is
+  not always on the object: **`Macro.Key`** had none of its own, and the thing
+  holding a stale copy was `MacroEngine`'s *dictionary key*. Making it settable meant
+  dropping the dictionary. Look at what indexes the property, not only at what the
+  property computes. `Trigger.Pattern`, `Alias.Pattern` and
+  **`Trigger.CaseSensitive`** drop their compiled `Regex` on write, like
+  `Alias.CaseSensitive` always did — otherwise the
   rule goes on matching the pattern (or the casing) it no longer has, invisibly,
   until a line arrives. The other four that became settable for F2's action fields
   — `Rewrite`, `SendResponse`, `ScriptCallback`, `AddAttributes` — carry no cache
@@ -502,19 +520,86 @@ categories, and where each control sits:
   (`SharpMUTermApp.OpenLog`), a timer's `interval`/`one-shot`, and **adding or
   removing** any rule (the engines were handed the list once). Reconnect, don't
   restart.
-- **Still inert, and why.** F4's numpad **bindings never fire**: nothing maps a key
-  press to `WorldSession.HandleKeyAsync`, and SharpConsoleUI's input parser never
-  produces `ConsoleKey.NumPad0..9` at all (grep it — there are no occurrences), so
-  the fix is application-keypad decoding in the driver, i.e. upstream. A world's
-  `keepalive` seconds only picks the status bar's fake ack figure — there is no
-  keepalive, and adding one wants a raw `IAC NOP` write that bypasses the
-  interpreter's escaping (`ITelnetSession` has no such path today).
+- **Live, as of the macro-dispatch work.** F4's **bindings fire**, for the chords
+  this host can actually deliver — `SharpMUTermApp.DispatchMacro`, on the main
+  window's `PreviewKeyPressed`, resolves the key through the *session's*
+  `MacroEngine` and sends it with `WorldSession.HandleKeyAsync`. Editing a
+  binding's key, name, command or enabled state applies to the next keystroke; the
+  engine no longer caches the descriptor. **Adding or removing** a binding still
+  wants a reconnect, like every other rule. The numpad specifically **still cannot
+  fire** — see *Which keys can actually fire* under Critical Gotchas — and F4 now
+  says so on the row rather than leaving it to be discovered.
+- **Still inert, and why.** A world's `keepalive` seconds only picks the status
+  bar's fake ack figure — there is no keepalive, and adding one wants a raw
+  `IAC NOP` write that bypasses the interpreter's escaping (`ITelnetSession` has no
+  such path today).
 
 **The shell connects as the world's first configured character**
 (`SharpMUTermApp.OpenSession`). Before that it opened an *anonymous* session, which
 is why so much of F2–F6 was unreachable however correct Core was: no character
 meant no trigger sets, no auto-login, no log. Picking a *different* character still
 has no UI.
+
+### Which keys can actually fire (read the parser, don't assume)
+
+Read out of SharpConsoleUI 2.5.14's `AnsiInputParser` (Unix) and
+`NetConsoleDriver.MapAnsiToConsoleKeyInfo` (Windows), not guessed. `MacroKeys`
+holds the verdicts and is the **one** definition — `MacroKeys.Descriptor`, which
+the dispatcher binds on, is literally `MacroKeys.Capture` filtered by
+`MacroKeys.Verdict`, which is what F4 draws. So the screen and the handler cannot
+drift, and `MacroKeyCaptureTests` asserts that over every `ConsoleKey`.
+
+- **Deliverable:** `F1`–`F12` with any modifiers (`ESC[1;5P`, `ESC[15;5~` —
+  `AnsiInputParser.cs:505,553-564` + `ParseModifiers` at `:661-680`);
+  Ctrl+letter (raw control byte, `:199-206`); Alt+anything (ESC prefix, `:264-273`);
+  modified arrows/Home/End/PgUp/PgDn/Ins/Del (`:494-501,547-552`).
+- **Never arrives:** **the whole numpad.** `grep -rn NumPad` over the framework
+  returns nothing; it sends no DECKPAM, and `ProcessSs3` (`:325-349`) decodes only
+  `P/Q/R/S/A–D/H/F`, so application-keypad `ESC O p…y` is *discarded*. In numeric
+  mode a numpad digit arrives as `ConsoleKey.D5`, indistinguishable from the main
+  row. Also never: Ctrl+Alt+letter (emits a bare Escape *then* Ctrl+letter,
+  `:275-279`), Ctrl+Shift+letter (the control byte carries no Shift), Ctrl+I/M/J/H
+  (they *are* Tab/Enter/Enter/Backspace, `:187-198`), Ctrl+digit (`0x1C`–`0x1F` are
+  dropped at `:241`), and Alt+O (swallowed as the SS3 introducer, `:248-262`).
+- **Taken:** every chord in `MacroKeys.AppShortcuts` — a global shortcut runs
+  *before* any window (`InputCoordinator.cs:131`), so a macro can never outrank
+  one. And unmodified letters/digits/arrows, which are the prompt's.
+- **The app registers from that same list.** `SharpMUTermApp.RegisterGlobalShortcuts`
+  walks `MacroKeys.AppShortcuts` and throws at startup if a claim has no action **or**
+  if a settings screen's F-key isn't claimed. Add a shortcut in one place only.
+- **Ctrl+Tab is registered and does not arrive on Unix** (Tab is `0x09` with no
+  modifiers; `CSI Z` is Shift+Tab). Left in place — the Windows `Console.ReadKey`
+  path does report it — but don't count on it.
+
+### Key capture (F4's rebinding mode)
+
+- **`ScreenField.Key` is a field whose value is a keystroke.** ⏎ ⇥ ⇥ on a binding
+  row arms it; `SettingsSession.HandleCapture` turns the next key into a canonical
+  descriptor and commits it through the ordinary undo log. There is no second modal
+  state and no new key-routing layer — it is the existing edit with its buffer fed
+  by one keystroke instead of many.
+- **Esc is never a candidate**, and is the only key that isn't. It is the way out of
+  every modal state these screens have; ⏎ and ⇥ can't be the escape hatch because
+  both are chords someone might reasonably want to bind. A key with no descriptor at
+  all (a lone modifier) is swallowed and the capture stays armed.
+- **Two refusals, both at the moment the key is pressed**, because the alternative
+  is a row that looks bound, is bound, and does nothing: a chord that cannot fire
+  (the verdict's own words), and a chord another binding already holds
+  (`already bound to <name>`). The capture stays armed carrying the reason, so the
+  answer is another keystroke rather than a lost edit.
+- **The chrome swaps wholesale while armed** — `press any key to bind it · Esc
+  cancels`, and `[any key] Bind` in the footer. It may not offer `⏎ commit`,
+  `⇥ next field` or `F4 close`: all three mean something else for as long as the
+  prompt is up, and all three would be refused as bindings if pressed.
+- **`Macro.Key` is `set` now, and `MacroEngine` holds macros rather than a
+  dictionary keyed on their descriptors.** The dictionary was a cache of the one
+  property that became editable; a rebound macro went on answering to its old key
+  until the next reconnect. Same trap as `Trigger.Pattern`'s compiled `Regex`, and
+  the same answer — except here there is nothing left to drop.
+- **`MacroKey.Canonicalise`** settles spelling (`shift+ctrl+f1` → `Ctrl+Shift+F1`,
+  `NumPad5` → `Num5`) and leaves `Ctrl+F1`/`Num5` — the two shapes already in
+  configurations — untouched. A key name it doesn't know is kept verbatim rather
+  than renamed.
 
 ### Dropdowns (a field's candidate list)
 
@@ -556,7 +641,8 @@ has no UI.
   value whose vocabulary this screen doesn't own.
 - **Snapshot states:** `triggers-edit` (open list, mark moved), `route-edit`
   (narrowed to one), `highlight-edit` (17 capped to 6), `logging-edit` (closed,
-  drawn upward). **There is no `textansi-edit` / `input-edit` any more** — F7 and F8
+  drawn upward), `keypad-edit` (an armed key capture — no list at all, since the
+  vocabulary is the keyboard). **There is no `textansi-edit` / `input-edit` any more** — F7 and F8
   are all checkboxes now, and ⏎ on a checkbox row saves and closes, so driving one
   would snapshot a workspace with no screen on it. `EditSnapshotKeys` returns nothing
   for those two views rather than a keystroke that closes the thing being framed.
@@ -604,7 +690,8 @@ has no UI.
 | `src/SharpMUTerm.Tui/SettingsSession.cs` | Key → action for an open settings screen (the whole interaction contract, testable) |
 | `src/SharpMUTerm.Tui/ScreenSelection.cs` | Pure pane/cursor state machine for the settings screens |
 | `src/SharpMUTerm.Tui/ScreenModel.cs` | A screen's navigable panes; a `ScreenRow` is a stop, a checkbox, a record of editable fields, or both |
-| `src/SharpMUTerm.Tui/ScreenField.cs` | One editable value: read / validate / write / snapshot, plus the text, number, regex, choice and enum kinds |
+| `src/SharpMUTerm.Tui/ScreenField.cs` | One editable value: read / validate / write / snapshot, plus the text, number, regex, choice, enum and **key-capture** kinds |
+| `src/SharpMUTerm.Tui/MacroKeys.cs` | What the host can deliver: per-chord verdicts, the app's own claimed shortcuts, and the descriptor the macro dispatcher acts on |
 | `src/SharpMUTerm.Tui/ScreenEdits.cs` | The undo log behind Cancel/Save |
 | `src/SharpMUTerm.Tui/PaneDragTracker.cs` | Pure drag gesture state machine + `MouseFlags` decoding |
 | `src/SharpMUTerm.Tui/PaneDragSurface.cs` | Pane rectangles + active windows, frozen at press |

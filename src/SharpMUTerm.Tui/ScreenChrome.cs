@@ -29,6 +29,15 @@ internal static class ScreenChrome
     {
         if (focus?.Edit is { } edit)
         {
+            // A capture answers to nothing else: every key but Esc is a candidate binding, so ⏎ does not
+            // commit, ⇥ does not step, and the screen's own F-key does not close it — it is offered as a
+            // binding and refused like any other claimed chord. Advertising any of the three would name
+            // a key that means something different for as long as the prompt is up.
+            if (edit.Capture)
+            {
+                return $"[{ScreenPalette.Label}]{CaptureHints}[/]";
+            }
+
             var editing = EditingHints
                 + (edit.VisibleChoices.Count > 0 ? ChoiceHint : string.Empty)
                 + (edit.RowFields > 1 ? NextFieldHint : string.Empty);
@@ -66,6 +75,12 @@ internal static class ScreenChrome
     /// <summary>The hints that replace a screen's own while a field edit is open.</summary>
     internal const string EditingHints = "⏎ commit · Esc revert";
 
+    /// <summary>
+    /// The hints that replace even those while a key capture is armed. They are the whole keyboard
+    /// contract at that moment: one key gets you out, everything else is the value.
+    /// </summary>
+    internal const string CaptureHints = "press any key to bind it · Esc cancels";
+
     /// <summary>Added to <see cref="EditingHints"/> only when the row has another field to step to.</summary>
     internal const string NextFieldHint = " · ⇥ next field";
 
@@ -96,6 +111,13 @@ internal static class ScreenChrome
     internal const string CommitAction = "[[⏎]] Commit";
 
     /// <summary>
+    /// What the ⏎ chip becomes while a key capture is armed. ⏎ is not the key that commits there — it is
+    /// merely one of the keys that could be bound — so the chip names what actually finishes the capture,
+    /// which is any key at all.
+    /// </summary>
+    internal const string BindAction = "[[any key]] Bind";
+
+    /// <summary>
     /// The right-hand actions of a footer bar. <paramref name="accent"/> lets a screen with a
     /// context colour (F5's per-world accent) tint the ⏎ chip; it defaults to the app accent.
     /// <para>
@@ -109,8 +131,9 @@ internal static class ScreenChrome
     internal static string Actions(string? accent = null, ScreenFocus? focus = null)
     {
         var editing = focus?.Edit is not null;
+        var capturing = focus?.Edit is { Capture: true };
         var escape = editing ? RevertAction : CancelAction;
-        var enter = editing ? CommitAction : SaveAction;
+        var enter = capturing ? BindAction : editing ? CommitAction : SaveAction;
 
         return $"[{ScreenPalette.Label}] {escape} [/]  "
             + $"[{ScreenPalette.Ink} on {accent ?? ScreenPalette.Accent}] {enter} [/] ";
@@ -150,6 +173,11 @@ internal static class ScreenChrome
             return Well(display);
         }
 
+        if (open.Capture)
+        {
+            return Capture(open);
+        }
+
         var caret = Math.Clamp(open.Caret, 0, open.Text.Length);
         var before = MarkupText.Escape(open.Text[..caret]);
         var under = caret < open.Text.Length ? MarkupText.Escape(open.Text[caret].ToString()) : " ";
@@ -170,6 +198,23 @@ internal static class ScreenChrome
     /// where the caret goes the moment ⏎ opens the field, so the well doesn't jump sideways under it.
     /// </summary>
     private static string Well(string display) => $"[on {ScreenPalette.FieldBg}]{display} [/]";
+
+    /// <summary>What an armed key capture puts where the value was — and the only way out of it.</summary>
+    internal const string CapturePrompt = "press a key · Esc cancels";
+
+    /// <summary>
+    /// An armed key capture: the value is replaced outright by the prompt, in the accent block the caret
+    /// is drawn in, because there is no buffer to show a caret inside — the next keystroke <em>is</em>
+    /// the value. A refused key keeps the capture armed and says why beside it, exactly as a refused
+    /// buffer does, so "that key cannot be bound" and "press another" are one state and not two.
+    /// </summary>
+    private static string Capture(ScreenFieldEdit open)
+    {
+        var prompt = $"[{ScreenPalette.Ink} on {ScreenPalette.Accent}] {CapturePrompt} [/]";
+        return open.Error is { } error
+            ? $"{prompt}  [{ScreenPalette.Warn}]▲ {MarkupText.Escape(error)}[/]"
+            : prompt;
+    }
 
     /// <summary>
     /// The block caret <see cref="Field"/> paints, which is what <see cref="Choices"/> hangs the

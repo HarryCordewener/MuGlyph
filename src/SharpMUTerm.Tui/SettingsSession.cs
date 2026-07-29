@@ -43,6 +43,10 @@ internal enum ScreenAction
 /// candidate list (narrowing it is what typing does), ⇥ commits and steps to the row's next field, ⏎
 /// commits, and Esc reverts.
 /// </para>
+/// <para>
+/// One field kind takes the keyboard whole: a <see cref="ScreenField.Key"/> capture (F4's binding), where
+/// the next keystroke is the value and only Esc means anything else. See <see cref="HandleCapture"/>.
+/// </para>
 /// </summary>
 internal sealed class SettingsSession
 {
@@ -96,7 +100,8 @@ internal sealed class SettingsSession
                 open.Error,
                 model.RowAt(open.Pane, open.Index).FieldCount,
                 field?.Choices,
-                field?.ClosedChoices ?? false)
+                field?.ClosedChoices ?? false,
+                field?.Capture ?? false)
             : (ScreenFieldEdit?)null;
 
         return new ScreenFocus(Selection.Pane, Selection.Index, edit);
@@ -262,6 +267,11 @@ internal sealed class SettingsSession
             return ScreenAction.Redraw;
         }
 
+        if (field.Capture)
+        {
+            return HandleCapture(key, field);
+        }
+
         switch (key.Key)
         {
             case ConsoleKey.Escape:
@@ -314,6 +324,37 @@ internal sealed class SettingsSession
 
                 return ScreenAction.None;
         }
+    }
+
+    /// <summary>
+    /// A keystroke while a key capture is armed. There is no buffer to type into here: the keystroke
+    /// <em>is</em> the value, so it is written into the edit and committed at once, and the field's own
+    /// validator does the refusing — a chord this host cannot deliver, or one another binding already
+    /// holds, leaves the capture armed carrying the reason instead of writing a row that would never fire.
+    /// <para>
+    /// <b>Esc is never a candidate.</b> It is the way out of every modal state these screens have, and a
+    /// capture that swallowed it would be the one trap this whole mode could set: nothing else on screen
+    /// ends the prompt, because ⏎ and ⇥ are themselves keys someone might reasonably want to bind. A key
+    /// with no descriptor at all (a lone modifier, an undecoded sequence) is swallowed and the capture
+    /// stays armed — it is a keystroke that never happened as far as any binding is concerned.
+    /// </para>
+    /// </summary>
+    private ScreenAction HandleCapture(ConsoleKeyInfo key, ScreenField field)
+    {
+        if (key.Key == ConsoleKey.Escape)
+        {
+            _edit = null;
+            return ScreenAction.Redraw;
+        }
+
+        if (MacroKeys.Capture(key) is not { } descriptor)
+        {
+            return ScreenAction.Consumed;
+        }
+
+        _edit!.Replace(descriptor);
+        Commit(field);
+        return ScreenAction.Redraw;
     }
 
     /// <summary>

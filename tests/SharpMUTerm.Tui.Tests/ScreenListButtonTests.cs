@@ -327,49 +327,54 @@ public class ScreenListButtonTests
 
     /// <summary>
     /// F4's add button is the one that cannot simply append. A <see cref="Macro"/> is identified by its
-    /// <see cref="Macro.Key"/>, which this screen deliberately cannot edit, so the button claims the
-    /// lowest free numpad digit and says which one on its own row — a binding created on a key the user
-    /// couldn't see and couldn't change would be unfixable from here.
+    /// <see cref="Macro.Key"/>, so the button claims a free one and says which on its own row. It claims
+    /// from <see cref="MacroKeys.Bindable"/> rather than the numpad: no numpad key ever reaches this
+    /// client, so a binding born on one could never fire, and a button whose whole job is to name the
+    /// key it takes must not name a dead one.
     /// </summary>
     [Test]
-    public async Task AddingABindingClaimsTheLowestFreeNumpadKeyAndNamesIt()
+    public async Task AddingABindingClaimsAFreeKeyThatCanActuallyFire_AndNamesIt()
     {
         var sets = Sets();
         var button = ButtonNamed(
             KeypadScreenRenderer.Model(sets[0].Macros, sets, 0), 0, KeypadScreenRenderer.AddBindingLabel);
 
-        await Assert.That(button.Target).IsEqualTo("Num0");
+        var first = MacroKeys.Bindable[0];
+        await Assert.That(button.Target).IsEqualTo(first);
+        await Assert.That(MacroKeys.Verdict(first).Fires).IsTrue();
 
         new ScreenEdits().Apply(button);
-        await Assert.That(sets[0].Macros[^1].Key).IsEqualTo("Num0");
+        await Assert.That(sets[0].Macros[^1].Key).IsEqualTo(first);
 
-        // The next one takes the next free digit, not the same one again.
+        // The next one takes the next free key, not the same one again.
         var again = ButtonNamed(
             KeypadScreenRenderer.Model(sets.SelectMany(s => s.Macros).ToList(), sets, 0),
             0,
             KeypadScreenRenderer.AddBindingLabel);
-        await Assert.That(again.Target).IsEqualTo("Num1");
+        await Assert.That(again.Target).IsEqualTo(MacroKeys.Bindable[1]);
     }
 
     /// <summary>
-    /// With every numpad digit spoken for there is no free key to claim, so the add button isn't drawn
-    /// — the same rule that keeps <c>[[- del]]</c> off a pane with nothing selected. Delete still works,
-    /// which is how you make room.
+    /// With every bindable chord spoken for there is no free key to claim, so the add button isn't
+    /// drawn — the same rule that keeps <c>[[- del]]</c> off a pane with nothing selected. Delete still
+    /// works, which is how you make room.
     /// </summary>
     [Test]
-    public async Task NoBindingCanBeAddedOnceEveryNumpadKeyIsBound()
+    public async Task NoBindingCanBeAddedOnceEveryBindableKeyIsTaken()
     {
         var sets = new List<TriggerSet> { new() { Name = "All" } };
-        for (var digit = 0; digit <= 9; digit++)
+        foreach (var key in MacroKeys.Bindable)
         {
-            sets[0].Macros.Add(new Macro { Name = "n" + digit, Key = "Num" + digit, Command = "look" });
+            sets[0].Macros.Add(new Macro { Name = key, Key = key, Command = "look" });
         }
 
         var model = KeypadScreenRenderer.Model(sets[0].Macros, sets, 0);
+        var bindings = MacroKeys.Bindable.Count;
 
-        await Assert.That(model.Sizes[0]).IsEqualTo(11); // 10 bindings + [- del] and nothing else
-        await Assert.That(model.ButtonAt(0, 10)!.Value.Label).IsEqualTo(KeypadScreenRenderer.RemoveBindingLabel);
-        await Assert.That(model.ButtonAt(0, 11)).IsNull();
+        await Assert.That(model.Sizes[0]).IsEqualTo(bindings + 1); // the bindings + [- del], nothing else
+        await Assert.That(model.ButtonAt(0, bindings)!.Value.Label)
+            .IsEqualTo(KeypadScreenRenderer.RemoveBindingLabel);
+        await Assert.That(model.ButtonAt(0, bindings + 1)).IsNull();
     }
 
     /// <summary>
@@ -395,7 +400,8 @@ public class ScreenListButtonTests
 
         var bindings = KeypadScreenRenderer.HotkeysColumn(sets[0].Macros, null, sets, 0);
         await Assert.That(bindings.Any(l => l.Contains("[[- del]]") && l.Contains("Look"))).IsTrue();
-        await Assert.That(bindings.Any(l => l.Contains("[[+ binding]]") && l.Contains("Num0"))).IsTrue();
+        await Assert.That(bindings.Any(l => l.Contains("[[+ binding]]") && l.Contains(MacroKeys.Bindable[0])))
+            .IsTrue();
     }
 
     /// <summary>
