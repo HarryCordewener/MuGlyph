@@ -1,10 +1,14 @@
+using Microsoft.Extensions.Logging;
 using SharpMUTerm.Core.Commands;
 using SharpMUTerm.Core.Automation;
 using SharpMUTerm.Core.Configuration;
+using SharpMUTerm.Core.Diagnostics;
 using SharpMUTerm.Core.Input;
 using SharpMUTerm.Core.Logging;
 using SharpMUTerm.Core.Session;
+using SharpMUTerm.Core.Telnet;
 using SharpMUTerm.Core.Text;
+using SharpMUTerm.Core.Transport;
 using SharpMUTerm.Core.Theming;
 using SharpMUTerm.Core.Workspaces;
 using SharpMUTerm.Graphics;
@@ -175,6 +179,9 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private readonly CommandPalette _palette;
     private readonly SettingsOverlay _settings;
 
+    /// <summary>The ⌃P ▸ <c>Show client messages</c> viewer over the diagnostics log.</summary>
+    private readonly MessageLogOverlay _messageLog;
+
     /// <summary>Per-world accents when a world hasn't set its own, keyed by position.</summary>
     internal static readonly TerminalColor[] AccentPalette =
     {
@@ -183,6 +190,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         TerminalColor.FromRgb(0x9d, 0x7c, 0xff), // violet
         TerminalColor.FromRgb(0x5f, 0xaf, 0xff), // sky
     };
+
+    /// <summary>The client diagnostics pipeline: the message log, the rolling file, the level switch.</summary>
+    private readonly ClientDiagnostics _diagnostics;
+
+    /// <summary>Whether this app built its own pipeline (and so must dispose it) or was handed one.</summary>
+    private readonly bool _ownsDiagnostics;
+
+    /// <summary>The capped in-memory history behind ⌃P ▸ <c>Show client messages</c>.</summary>
+    private readonly ClientMessageLog _messages;
 
     private WorldSession? _active;
     private WorldDefinition? _pendingWorld;
@@ -224,15 +240,26 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// passes a manual provider so "the trailing update lands once the frames stop" is an assertion
     /// rather than a sleep.
     /// </param>
+    /// <param name="diagnostics">
+    /// The client diagnostics pipeline (see <see cref="ClientDiagnostics"/>): where transient status
+    /// notices are recorded and where the telnet stack's own logging arrives. Defaults to a
+    /// memory-only one, so constructing an app in a test or a snapshot leaves no file behind; the real
+    /// entry point passes one with a rolling file.
+    /// </param>
     public SharpMUTermApp(
         AppConfiguration config,
         TerminalCapabilities capabilities,
         IConsoleDriver? driver = null,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        ClientDiagnostics? diagnostics = null)
     {
         _config = config;
         _capabilities = capabilities;
         _time = time ?? TimeProvider.System;
+        _diagnostics = diagnostics ?? ClientDiagnostics.InMemory();
+        _ownsDiagnostics = diagnostics is null;
+        _messages = _diagnostics.Messages;
+        _sessions.Logger = _diagnostics.For("SharpMUTerm.Session");
         _theme = ResolveTheme(config);
         _formatter = new MarkupFormatter(_theme, config.Text);
         _drafts = new DraftStore(() => config.Input.KeepDrafts);
@@ -309,7 +336,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             .AddControl(_statusBar)
             .Build();
 
-        _palette = new CommandPalette(_system, BuildCatalog, () => _active?.SessionKey, DispatchCommand);
+        _palette = new CommandPalette(_system, BuildCatalog, () => _active?.SessionKey, id => DispatchCommand(id));
+        _messageLog = new MessageLogOverlay(_system, _diagnostics);
         _settings = new SettingsOverlay(_system, SaveConfiguration);
 
         _window.OnResize += (_, _) =>
@@ -508,6 +536,18 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             }
 
             _palette.Toggle();
+        }
+
+        // The client message viewer, over a demo scene that has said a few things. It is the only way to
+        // look at the surface without a terminal, and the messages are seeded here rather than faked in
+        // the view: what the snapshot shows is what Notice actually records.
+        if (string.Equals(view, "messages", StringComparison.OrdinalIgnoreCase))
+        {
+            RefusePrefix("nothing to split — a split moves this pane's other tabs across, and it has none");
+            RefuseCommand("nothing to reconnect — pick a character first (⌃P ▸ Switch to …)");
+            Notice("switched to Corvid · offline — ⌃P ▸ Reconnect connects it", MessageSeverity.Info, "⌃P");
+            Notice("could not connect to aetherfall.mux:4201 — no route to host", MessageSeverity.Error, "⌃P");
+            _messageLog.Toggle();
         }
 
         // Settings screens (composed-control or markup — SettingsView hands back a control factory
@@ -723,7 +763,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     {
         if (world is null)
         {
-            SetStatus("No world configured. Pass a host/port on the command line.");
+            Notice("No world configured. Pass a host/port on the command line, or add one on F5.");
             return;
         }
 
@@ -748,23 +788,27 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
-    /// Builds the session for a world: as its <em>first configured character</em> when it has one, so
-    /// the character's trigger sets, auto-login, on-connect lines and log actually reach the runtime.
-    /// A world with no characters still connects, anonymously, which is what a host typed on the
-    /// command line is.
+    /// Builds the session for a world as a given <paramref name="character"/> — or, with none named, as
+    /// its <em>first configured character</em> — so the character's trigger sets, auto-login, on-connect
+    /// lines and log actually reach the runtime. A world with no characters still connects, anonymously,
+    /// which is what a host typed on the command line is.
     /// <para>
     /// This is the seam the F2/F3/F5/F6 screens all hang off: the session holds the <em>same</em>
     /// <see cref="Trigger"/>/<see cref="Alias"/>/<see cref="TimerDefinition"/> objects the screens
     /// edit, so editing one is seen by the next line without a reload. Adding or removing a rule is
-    /// not — the engines were handed the list at construction — and neither is picking a different
-    /// character; both need a reconnect.
+    /// not — the engines were handed the list at construction — so that still needs a reconnect.
+    /// </para>
+    /// <para>
+    /// Picking a <em>different</em> character is <see cref="SwitchToCharacter"/>: it opens a second
+    /// session through here rather than re-pointing this one, because a session's automation, log and
+    /// scrollback all belong to the character it was opened as.
     /// </para>
     /// </summary>
-    private WorldSession OpenSession(WorldDefinition world)
+    private WorldSession OpenSession(WorldDefinition world, CharacterDefinition? character = null)
     {
-        var character = world.Characters.FirstOrDefault();
+        character ??= world.Characters.FirstOrDefault();
         return character is null
-            ? _sessions.Open(world, _config.ScrollbackLines, _config.Text, _config.Input)
+            ? _sessions.Open(world, _config.ScrollbackLines, _config.Text, _config.Input, TelnetFactory)
             : _sessions.Open(
                 world,
                 character,
@@ -772,8 +816,16 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 _config.ScrollbackLines,
                 OpenLog(world, character),
                 _config.Text,
-                _config.Input);
+                _config.Input,
+                TelnetFactory);
     }
+
+    /// <summary>
+    /// The transport every session this app opens connects through. Null (the default) is the real
+    /// telnet stack. Internal because a headless test dispatching <c>Reconnect</c> has to be able to
+    /// watch a connect happen without one reaching the network.
+    /// </summary>
+    internal Func<ConnectionOptions, ITelnetSession>? TelnetFactory { get; set; }
 
     /// <summary>
     /// Opens the character's log sink for this session, per its <see cref="LoggingSettings"/> — the
@@ -786,18 +838,26 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// which is what the screen says.
     /// </para>
     /// </summary>
-    private ILogSink? OpenLog(WorldDefinition world, CharacterDefinition character)
+    /// <summary>
+    /// Where a character's session log is written: its own configured folder, or the app's default
+    /// <c>logs</c> directory. The same folder the client's diagnostics file lives in, and deliberately
+    /// not the same file — one is a transcript someone keeps, the other is client chrome.
+    /// </summary>
+    private static string LogFolder(CharacterDefinition? character) =>
+        string.IsNullOrWhiteSpace(character?.Logging.Directory)
+            ? Path.Combine(Path.GetDirectoryName(ConfigurationStore.DefaultPath)!, "logs")
+            : character!.Logging.Directory!;
+
+    private ILogSink? OpenLog(WorldDefinition world, CharacterDefinition? character, LogFormat? forceFormat = null)
     {
-        var format = character.Logging.Format;
+        var format = forceFormat ?? character?.Logging.Format ?? LogFormat.None;
         if (format == LogFormat.None)
         {
             return null;
         }
 
-        var folder = string.IsNullOrWhiteSpace(character.Logging.Directory)
-            ? Path.Combine(Path.GetDirectoryName(ConfigurationStore.DefaultPath)!, "logs")
-            : character.Logging.Directory!;
-        var stem = $"{world.Name}.{character.Name}-{DateTime.Now:yyyyMMdd-HHmmss}"
+        var folder = LogFolder(character);
+        var stem = $"{world.Name}.{character?.Name ?? "anonymous"}-{DateTime.Now:yyyyMMdd-HHmmss}"
             .Replace(Path.DirectorySeparatorChar, '_')
             .Replace(Path.AltDirectorySeparatorChar, '_');
 
@@ -818,26 +878,32 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
         {
-            SetStatus($"[red]could not open the log:[/] {Escape(ex.Message)}");
+            Notice($"could not open the log: {ex.Message}", MessageSeverity.Error);
             return null;
         }
     }
 
-    private void BindSession(WorldSession session)
+    /// <summary>
+    /// Makes a session the active one and wires its output into <paramref name="windowId"/> — the main
+    /// window for the session the shell starts with, and a tab of its own for every character switched
+    /// to afterwards. The window id is a parameter rather than the constant it used to be because the
+    /// routing and the NAWS registry have to name the same window: report a pane the session doesn't
+    /// print into and the server is told the size of something else.
+    /// </summary>
+    private void BindSession(WorldSession session, string? windowId = null)
     {
-        // The window this session's output lands in. It is a local rather than the constant used four
-        // times over because the routing and the NAWS registry have to name the same window: report a
-        // pane the session doesn't print into and the server is told the size of something else.
-        var windowId = MainWindowId;
+        windowId ??= MainWindowId;
 
         _active = session;
         AttachSession(session, windowId);
-        if (_workspace.FindWindow(windowId) is { } mainWindow)
+        if (_workspace.FindWindow(windowId) is { } window)
         {
-            mainWindow.Title = session.World.Name;
+            // The main window is titled for the world (it is the shell's own window); a character's own
+            // window is titled for the character, which is what tells two of them apart in a tab strip.
+            window.Title = windowId == MainWindowId ? session.World.Name : SessionTitle(session);
         }
 
-        var main = _panes[windowId];
+        var main = PaneContentFor(windowId, session.World.Name);
         foreach (var line in session.Scrollback.Snapshot())
         {
             main.AppendLine(_formatter.ToMarkup(line));
@@ -875,6 +941,114 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         ArgumentException.ThrowIfNullOrEmpty(windowId);
         _sessionWindows[session] = windowId;
         _sizeReports.Remove(session);
+    }
+
+    /// <summary>The session printing into a window, or null when the window belongs to no connection.</summary>
+    private WorldSession? SessionFor(string windowId)
+    {
+        foreach (var (session, id) in _sessionWindows)
+        {
+            if (string.Equals(id, windowId, StringComparison.Ordinal))
+            {
+                return session;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>What a session's own window is called: its character, or the world for an anonymous one.</summary>
+    private static string SessionTitle(WorldSession session) =>
+        session.Character?.Name ?? session.World.Name;
+
+    /// <summary>The window id a switched-to character's session prints into.</summary>
+    private static string CharacterWindowId(string sessionKey) => $"char:{sessionKey}";
+
+    /// <summary>The configured world + character a <c>world.character</c> session key names, or null.</summary>
+    private (WorldDefinition World, CharacterDefinition Character)? FindCharacter(string sessionKey)
+    {
+        foreach (var world in _config.Worlds)
+        {
+            foreach (var character in world.Characters)
+            {
+                if (string.Equals($"{world.Name}.{character.Name}", sessionKey, StringComparison.Ordinal))
+                {
+                    return (world, character);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The command surface's <c>Switch to …</c>: makes a configured character the active session — the
+    /// one the command line talks to, the one the status line and rail describe, and the one
+    /// <c>Reconnect</c> acts on. It was the one entry the catalog offered and nothing implemented, so
+    /// selecting a character fell through to the "isn't wired" arm — which, reporting through the
+    /// active session, said nothing at all when there wasn't one.
+    /// <para>
+    /// A character with no session yet gets one opened here, as itself (its trigger sets, auto-login and
+    /// log), and a window to print into: the main window while that is still free, otherwise a tab of
+    /// its own, because two characters sharing one buffer would interleave their output.
+    /// </para>
+    /// <para>
+    /// <strong>Switching does not connect.</strong> A character whose session exists but is offline is
+    /// focused exactly like a connected one, and the status row says which it is and what connects it.
+    /// Switching is navigation — the command that dials is <c>Reconnect</c>, and a "switch" that also
+    /// opened a socket would make choosing a character to <em>look</em> at impossible.
+    /// </para>
+    /// </summary>
+    private void SwitchToCharacter(string sessionKey)
+    {
+        var session = _sessions.Find(sessionKey);
+        if (session is null)
+        {
+            if (FindCharacter(sessionKey) is not { } found)
+            {
+                Notice($"no character called {sessionKey} is configured — F5 adds one", key: "⌃P");
+                return;
+            }
+
+            session = OpenSession(found.World, found.Character);
+            BindSession(session, OpenSessionWindow(session));
+        }
+        else
+        {
+            _active = session;
+        }
+
+        // Its tab can have been closed since it was bound; OpenSessionWindow puts it back rather than
+        // switching to a session with nowhere to print.
+        Activate(OpenSessionWindow(session));
+        UpdateStatus();
+        UpdateInputChrome();
+
+        var state = session.IsConnected
+            ? "connected"
+            : "offline — ⌃P ▸ Reconnect connects it";
+        Notice($"switched to {SessionTitle(session)} · {state}", MessageSeverity.Info, "⌃P");
+    }
+
+    /// <summary>
+    /// Ensures a session has a workspace window and returns its id: the main window while nothing else
+    /// has claimed it (the shell starts there), otherwise a tab of the character's own. Realises the tab
+    /// before anything tries to activate it.
+    /// </summary>
+    private string OpenSessionWindow(WorldSession session)
+    {
+        var windowId = _sessionWindows.TryGetValue(session, out var known)
+            ? known
+            : SessionFor(MainWindowId) is null ? MainWindowId : CharacterWindowId(session.SessionKey);
+
+        if (_workspace.FindWindow(windowId) is null)
+        {
+            _workspace.OpenWindow(windowId, SessionTitle(session), WindowKind.Main, session.SessionKey);
+            PaneContentFor(windowId, SessionTitle(session));
+            RebuildPaneArea();
+        }
+
+        return windowId;
     }
 
     /// <summary>The optional output-view timestamp gutter, or null when the column is off. Headless
@@ -1265,7 +1439,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private (string Character, string Host, int Port, string State)? _statusIdentity;
 
     /// <summary>Repaints the connection status bar from the stored identity, folding in the live char
-    /// count. A no-op while a transient status (move-mode prompt) owns the bar or nothing's connected.</summary>
+    /// count. A no-op while the move-mode prompt owns the bar or nothing's connected — a <see cref="Notice"/>
+    /// is displaced instead, so typing after a refusal puts the connection line back at once.</summary>
     private void RefreshStatusBar()
     {
         if (_moveMode || _statusIdentity is not { } id)
@@ -1413,7 +1588,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
         {
-            SetStatus($"[red]could not save settings:[/] {Escape(ex.Message)}");
+            Notice($"could not save settings: {ex.Message}", MessageSeverity.Error);
         }
     }
 
@@ -1885,7 +2060,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     internal IReadOnlyList<CommandItem> BuildCatalog()
     {
         var context = new CommandContext(
-            LoggingOn: false,
+            LoggingOn: _active?.IsLogging == true,
             Zoomed: _workspace.Layout.ZoomedPaneId is not null,
             Frozen: _workspace.Layout.FocusedPane.Frozen,
             TimestampsOn: _showTimestamps,
@@ -1913,16 +2088,53 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     internal ConsoleKey? OpenSettingsKey => _settings.OpenKey;
 
     /// <summary>
+    /// The <c>world.character</c> key of the session commands act on, or null when there is none —
+    /// which is the state the reported bug lived in. Internal so a headless test can assert that
+    /// <c>Switch to …</c> actually switched.
+    /// </summary>
+    internal string? ActiveSessionKey => _active?.SessionKey;
+
+    /// <summary>The open session with this key, or null. Internal for the same reason.</summary>
+    internal WorldSession? FindSession(string sessionKey) => _sessions.Find(sessionKey);
+
+    /// <summary>Every window in the workspace, by id — a test's view of which tabs a switch created.</summary>
+    internal IReadOnlyList<string> WindowIds() => _workspace.Windows.Select(w => w.Id).ToArray();
+
+    /// <summary>The live configuration this app is running on.</summary>
+    internal AppConfiguration Configuration => _config;
+
+    /// <summary>Whether the ⌃P client message viewer is up.</summary>
+    internal bool MessageLogIsOpen => _messageLog.IsOpen;
+
+    /// <summary>
     /// Runs a command-surface entry by its id, doing what the current shell supports. Internal so a
     /// headless test can dispatch an id the way the palette does, without opening the surface and
     /// typing at it.
+    /// <para>
+    /// Returns <see langword="false"/> for an id nothing here implements. That is not a nicety: the
+    /// catalog is generated from live state and this is a hand-written switch, so the two drift in
+    /// silence — <c>char:</c> was offered by the surface and implemented nowhere for as long as the
+    /// surface has existed. <c>CommandDispatchTests</c> dispatches every id the catalog can emit and
+    /// fails on a false, which is the only thing that makes them stay in step.
+    /// </para>
     /// </summary>
-    internal void DispatchCommand(string id)
+    internal bool DispatchCommand(string id)
     {
+        if (id.StartsWith(CharacterCommandPrefix, StringComparison.Ordinal))
+        {
+            SwitchToCharacter(id[CharacterCommandPrefix.Length..]);
+            return true;
+        }
+
         if (id.StartsWith("win:", StringComparison.Ordinal))
         {
-            Activate(id["win:".Length..]);
-            return;
+            var windowId = id["win:".Length..];
+            if (!Activate(windowId))
+            {
+                RefuseCommand($"{windowId} is not open any more");
+            }
+
+            return true;
         }
 
         // A settings entry opens the very screen its F-key opens, through the same Toggle: the palette
@@ -1933,9 +2145,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             if (SettingsScreens().FirstOrDefault(s => s.Views[0] == view) is { Open: not null } screen)
             {
                 _settings.Toggle(screen.Key, screen.Open);
+                return true;
             }
 
-            return;
+            RefuseCommand($"there is no settings screen called {view}");
+            return false;
         }
 
         switch (id)
@@ -1944,24 +2158,33 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             case "layout:unzoom":
                 _workspace.Layout.ToggleZoom();
                 RebuildPaneArea(); // zoom collapses the tree to one pane (or restores it)
-                return;
+                return true;
             case "layout:close":
                 CloseActiveWindow(); // rebuilds the pane area itself
-                return;
+                return true;
             case "layout:split-right":
                 SplitFocusedPane(PaneCommand.SplitRight); // reports when the pane has nothing to split
-                return;
+                return true;
             case "layout:split-down":
                 SplitFocusedPane(PaneCommand.SplitDown);
-                return;
+                return true;
             case "term:freeze":
             case "term:unfreeze":
                 ToggleFreeze();
-                return;
+                return true;
             case "term:input2-on":
             case "term:input2-off":
                 ToggleSecondBar();
-                return;
+                return true;
+            case "term:messages":
+                _messageLog.Toggle();
+                return true;
+            case "term:log-on":
+                StartLogging();
+                break;
+            case "term:log-off":
+                StopLogging();
+                break;
             case "term:clear":
                 if (_panes.TryGetValue(ActiveWindowId(), out var pane))
                 {
@@ -1974,17 +2197,186 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 _showTimestamps = !_showTimestamps;
                 break;
             case "world:reconnect":
-                _ = _active?.ConnectAsync();
+                Reconnect();
                 break;
             case "world:disconnect":
-                _ = _active?.DisconnectAsync();
+                Disconnect();
                 break;
             default:
-                _active?.PrintSystem($"*** '{id}' isn't wired in this build yet.");
-                break;
+                // On the status line, never through _active: an unwired command is exactly what you hit
+                // while nothing is connected, and a message that needs a session to be seen cannot
+                // report in the state it is being read in. That was the whole defect — the entry did
+                // nothing and said nothing.
+                RefuseCommand($"{id} isn't wired in this build yet");
+                RefreshTabTitles();
+                return false;
         }
 
         RefreshTabTitles();
+        return true;
+    }
+
+    /// <summary>The command id prefix carrying a character's <c>world.character</c> session key.</summary>
+    private const string CharacterCommandPrefix = "char:";
+
+    /// <summary>
+    /// Says on the status line why a command surface entry did not do what its label promised. It goes
+    /// through <see cref="Notice"/>, so it is visible with nothing connected and clears itself
+    /// afterwards, and it is echoed into the output window so a missed one is still findable.
+    /// </summary>
+    private void RefuseCommand(string reason) => Notice(reason, MessageSeverity.Warning, "⌃P");
+
+    /// <summary>
+    /// The task the last dispatched command started, or a completed one when it ran synchronously.
+    /// Internal so a headless test can await a connect it dispatched rather than poll for it; the app
+    /// itself never waits on a command — a UI that blocked on a socket would be the bug next door.
+    /// </summary>
+    internal Task LastCommand { get; private set; } = Task.CompletedTask;
+
+    /// <summary>
+    /// The command surface's <c>Reconnect</c>: drops the active session's connection if it has one and
+    /// dials it again.
+    /// <para>
+    /// It was <c>_ = _active?.ConnectAsync()</c> — three failures in one line. With no active session it
+    /// did nothing, silently, which is precisely the state someone reaching for <em>Reconnect</em> is
+    /// in; already connected it hit <c>ConnectAsync</c>'s early return and so did nothing there either,
+    /// while being labelled "Reconnect"; and fire-and-forget meant a refused connection threw into a
+    /// task nobody read. Now: it says when there is nothing to connect, it really does drop and redial
+    /// an open connection, and a failure is reported on the status line as well as printed in the
+    /// session's own window.
+    /// </para>
+    /// </summary>
+    private void Reconnect()
+    {
+        if (_active is not { } session)
+        {
+            RefuseCommand("nothing to reconnect — pick a character first (⌃P ▸ Switch to …)");
+            return;
+        }
+
+        LastCommand = ReconnectAsync(session);
+    }
+
+    private async Task ReconnectAsync(WorldSession session)
+    {
+        try
+        {
+            if (session.State is ConnectionState.Connected or ConnectionState.Connecting)
+            {
+                session.PrintSystem("*** Reconnecting...");
+                await session.DisconnectAsync().ConfigureAwait(false);
+            }
+
+            // ConnectAsync returns silently when the session still believes it is connected, so a
+            // transport that did not report its own disconnection would otherwise reproduce the exact
+            // bug this method exists to fix: a Reconnect that does nothing and says nothing.
+            if (session.State is ConnectionState.Connected or ConnectionState.Connecting)
+            {
+                OnUi(() => RefuseCommand(
+                    $"{SessionTitle(session)} would not drop its connection — Disconnect, then Reconnect"));
+                return;
+            }
+
+            await session.ConnectAsync().ConfigureAwait(false);
+
+            // A freshly connected session has never been told a size, and there is no guarantee of
+            // another frame soon enough to matter (see StartAsync).
+            OnUiThread(ReportPaneSizes);
+        }
+        catch (Exception ex)
+        {
+            // WorldSession has already printed the failure into its own window (and logged it); the
+            // status line says it too, because a fire-and-forget connect that only threw is exactly how
+            // this used to fail in silence.
+            OnUi(() => Notice(
+                $"could not connect to {session.World.Host}:{session.World.Port} — {ex.Message}",
+                MessageSeverity.Error,
+                "⌃P"));
+        }
+    }
+
+    /// <summary>
+    /// The command surface's <c>Disconnect</c>. Same treatment as <see cref="Reconnect"/>: nothing to
+    /// disconnect, or a connection that would not close, is said out loud rather than dropped.
+    /// </summary>
+    private void Disconnect()
+    {
+        if (_active is not { } session)
+        {
+            RefuseCommand("nothing to disconnect — pick a character first (⌃P ▸ Switch to …)");
+            return;
+        }
+
+        if (!session.IsConnected)
+        {
+            RefuseCommand($"{SessionTitle(session)} is not connected");
+            return;
+        }
+
+        LastCommand = DisconnectAsync(session);
+    }
+
+    private async Task DisconnectAsync(WorldSession session)
+    {
+        try
+        {
+            await session.DisconnectAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            OnUi(() => RefuseCommand($"could not disconnect {SessionTitle(session)} — {ex.Message}"));
+        }
+    }
+
+    /// <summary>
+    /// The command surface's <c>Start logging</c>. Uses the character's own format and folder (F5); a
+    /// character still on <see cref="LogFormat.None"/> — the default — gets a plain-text log, because
+    /// asking for one is what the command means. It was emitted by the catalog and handled nowhere, so
+    /// it did nothing at all, and the entry's label never flipped to <c>Pause logging</c> either.
+    /// </summary>
+    private void StartLogging()
+    {
+        if (_active is not { } session)
+        {
+            RefuseCommand("nothing to log — pick a character first (⌃P ▸ Switch to …)");
+            return;
+        }
+
+        if (session.IsLogging)
+        {
+            RefuseCommand($"{SessionTitle(session)} is already logging");
+            return;
+        }
+
+        var configured = session.Character?.Logging.Format ?? LogFormat.None;
+        var format = configured == LogFormat.None ? LogFormat.Plain : configured;
+        if (OpenLog(session.World, session.Character, format) is not { } sink)
+        {
+            // OpenLog has already said why on the status line.
+            return;
+        }
+
+        session.AttachLog(sink);
+        session.PrintSystem($"*** Logging to {LogFolder(session.Character)} ({format.ToString().ToLowerInvariant()}).");
+    }
+
+    /// <summary>The command surface's <c>Pause logging</c>: flushes and closes the sink.</summary>
+    private void StopLogging()
+    {
+        if (_active is not { } session)
+        {
+            RefuseCommand("nothing to stop — pick a character first (⌃P ▸ Switch to …)");
+            return;
+        }
+
+        if (!session.IsLogging)
+        {
+            RefuseCommand($"{SessionTitle(session)} is not logging");
+            return;
+        }
+
+        session.DetachLog();
+        session.PrintSystem("*** Logging paused.");
     }
 
     /// <summary>
@@ -2992,10 +3384,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
-    /// Says on the status line that a pane command had nothing to do. Transient, like the drag and move
-    /// prompts: the next <see cref="UpdateStatus"/> puts the connection line back.
+    /// Says on the status line that a pane command had nothing to do. It goes through
+    /// <see cref="Notice"/>, which is what makes it go away again: it used to be a bare
+    /// <see cref="SetStatus"/> whose comment claimed "the next <see cref="UpdateStatus"/> puts the
+    /// connection line back" — true only while something was connected, because nothing else calls
+    /// that. On a fresh client the refusal sat on the row for the rest of the session.
     /// </summary>
-    private void RefusePrefix(string reason) => SetStatus($"[#e5c07b]⌃B[/] [dim]{Escape(reason)}[/]");
+    private void RefusePrefix(string reason) => Notice(reason, MessageSeverity.Warning, "⌃B");
 
     /// <summary>
     /// Runs the macro bound to a keystroke and returns the command it sent, or null when this key is not
@@ -3070,7 +3465,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         RebuildPaneArea();
-        SetStatus(MovePromptMarkup());
+        SetStatus(MovePromptMarkup(), displace: true);
     }
 
     /// <summary>Handles a key while in move mode: pick pane (a–j), edge (arrows), commit (⏎), cancel (Esc).</summary>
@@ -3098,7 +3493,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         {
             _moveEdge = _moveEdge == edge ? null : edge;
             RebuildPaneArea();
-            SetStatus(MovePromptMarkup());
+            SetStatus(MovePromptMarkup(), displace: true);
             return;
         }
 
@@ -3110,7 +3505,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             {
                 _moveTargetPaneId = match.Key;
                 RebuildPaneArea();
-                SetStatus(MovePromptMarkup());
+                SetStatus(MovePromptMarkup(), displace: true);
             }
         }
     }
@@ -3319,7 +3714,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 _dragTargetPaneId = result.TargetPaneId;
                 _dragEdge = result.Edge;
                 RebuildPaneArea();
-                SetStatus(DragPromptMarkup(result.WindowId, result.TargetPaneId, result.Edge));
+                SetStatus(DragPromptMarkup(result.WindowId, result.TargetPaneId, result.Edge), displace: true);
                 break;
 
             case PaneDragAction.Commit:
@@ -3526,12 +3921,30 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         RebuildPaneArea();
     }
 
-    /// <summary>Makes a window active in its hosting pane (model + view) and focuses that pane.</summary>
-    private void Activate(string id)
+    /// <summary>
+    /// Makes a window active in its hosting pane (model + view) and focuses that pane. Returns false
+    /// when the window is not placed in any pane, so a caller acting on a user's request can say so
+    /// instead of appearing to do nothing.
+    /// <para>
+    /// A window that belongs to a session makes that session the active one. The command line talks to
+    /// whichever character you are looking at, which is the same rule <see cref="SwitchToCharacter"/>
+    /// applies — a tab that showed one character's output while ⏎ sent to another would be a worse
+    /// version of the bug this came from. Windows with no session of their own (spawns, the web view)
+    /// leave the active session alone.
+    /// </para>
+    /// </summary>
+    private bool Activate(string id)
     {
         if (!_workspace.ActivateWindow(id))
         {
-            return;
+            return false;
+        }
+
+        if (SessionFor(id) is { } session && !ReferenceEquals(session, _active))
+        {
+            _active = session;
+            UpdateStatus();
+            UpdateInputChrome();
         }
 
         if (_workspace.Layout.FindWindow(id) is { } pane &&
@@ -3548,6 +3961,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         RefreshTabTitles();
+        return true;
     }
 
     /// <summary>Repaints every pane's tab headers from window titles + unread/unsent badges.</summary>
@@ -3792,14 +4206,149 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
     }
 
-    private void SetStatus(string markup) => _statusBar.SetContent(new List<string> { markup });
+    /// <summary>Writes one line of markup onto the status row. The only thing that paints it.</summary>
+    private void PaintStatus(string markup) => _statusBar.SetContent(new List<string> { markup });
+
+    /// <summary>
+    /// Sets what the status row says <em>at rest</em>: the connection identity, a mode prompt, the
+    /// not-connected line. Remembered as well as painted, so a <see cref="Notice"/> laid over the top of
+    /// it can be lifted off again without anyone recomputing what was underneath — the dependency that
+    /// made a ⌃B refusal permanent on a client with nothing connected.
+    /// <para>
+    /// While a notice is up this <em>records without painting</em>, so the row keeps the message for its
+    /// few seconds and then reveals the latest state. That matters more than it sounds: the resting line
+    /// is repainted by every chrome refresh — <see cref="RefreshTabTitles"/> ends in
+    /// <see cref="UpdateInputChrome"/> — so a notice raised by a command would otherwise be wiped by the
+    /// same dispatch that raised it, before a single frame carried it.
+    /// </para>
+    /// </summary>
+    /// <param name="displace">
+    /// True for a line that must be seen <em>now</em> — the move and drag prompts, which are a mode the
+    /// user just entered rather than a background repaint.
+    /// </param>
+    private void SetStatus(string markup, bool displace = false)
+    {
+        _restingStatus = markup;
+        if (displace)
+        {
+            ForgetNotice();
+        }
+
+        if (_notice is null)
+        {
+            PaintStatus(markup);
+        }
+    }
+
+    /// <summary>What the status row says with no notice over it. Kept in step by <see cref="SetStatus"/>.</summary>
+    private string _restingStatus = "[dim]not connected[/]";
+
+    /// <summary>
+    /// How long a <see cref="Notice"/> holds the status row. tmux's <c>display-time</c> is well under a
+    /// second, which suits a word or two; ours are sentences ("nothing to split — a split moves this
+    /// pane's other tabs across, and it has none" is eighty characters), and eighty characters is about
+    /// five seconds of unhurried reading. Six gives that a margin without a refusal outstaying the thing
+    /// it refused. Nothing is lost to it either way: every notice is echoed into the output window.
+    /// </summary>
+    internal static readonly TimeSpan NoticeDuration = TimeSpan.FromSeconds(6);
+
+    /// <summary>The transient message currently laid over the resting row, or null when there is none.</summary>
+    private string? _notice;
+    private ITimer? _noticeTimer;
+
+    /// <summary>
+    /// Says something on the status row that is <em>news</em> rather than state: a refused pane command,
+    /// a command surface entry this build cannot run, a connection that would not open. tmux's
+    /// <c>display-message</c> model — it holds the row for <see cref="NoticeDuration"/> and then the
+    /// resting line comes back on its own.
+    /// <para>
+    /// Two rules, both learned from bugs of exactly this shape. It must be sayable with <em>nothing
+    /// connected</em> — which is why it is here and not <c>WorldSession.PrintSystem</c>: a message
+    /// reported through the active session says nothing at all in the one state a user meets these
+    /// messages in. And it must retire <em>itself</em>: the refusals used to wait for the next
+    /// <see cref="UpdateStatus"/> to displace them, and that only ever runs off a session event, so on a
+    /// client with no connection they stayed on the row for the rest of the run. The timer runs on the
+    /// injected clock, so a test advances it instead of sleeping for it — and it is a timer rather than
+    /// anything hung off a frame for the reason the NAWS flush is: repaints stop, clocks don't.
+    /// </para>
+    /// <para>
+    /// Every notice is also recorded in <see cref="_messages"/> — a capped, in-memory client message log
+    /// read by ⌃P ▸ <c>Show client messages</c> — because a message that dismisses itself needs
+    /// somewhere it can be found again. It is <em>not</em> the output window: that is the server's
+    /// stream, and <c>WorldSession.PrintSystem</c> writes what it prints into the character's log sink,
+    /// so a UI refusal about pane splits would land in a transcript someone keeps for roleplay or
+    /// evidence. Client chrome gets its own surface. Recording happens here, before anything touches a
+    /// session or a window, so a notice raised with nothing connected and nothing focused is still kept.
+    /// </para>
+    /// </summary>
+    /// <param name="text">The message, as plain text — the log keeps this, and the row's markup is built from it.</param>
+    /// <param name="severity">How loud it is; the viewer colours and labels rows by this.</param>
+    /// <param name="key">An optional leading chip naming the surface that refused (<c>⌃B</c>, <c>⌃P</c>).</param>
+    private void Notice(string text, MessageSeverity severity = MessageSeverity.Warning, string? key = null)
+    {
+        // Through the logger, not straight into the buffer: the client's own messages and the telnet
+        // stack's diagnostics then share one ordered history (and one rolling file), which is the point
+        // of there being a pipeline at all.
+        _diagnostics.Logger.Log(
+            severity switch
+            {
+                MessageSeverity.Error => LogLevel.Error,
+                MessageSeverity.Warning => LogLevel.Warning,
+                _ => LogLevel.Information,
+            },
+            "{Notice:l}", // :l renders the string literally; the default quotes it, and a quoted sentence reads as data
+            key is null ? text : $"{key} {text}");
+
+        var body = severity == MessageSeverity.Error
+            ? $"[{ScreenPalette.Warn}]{Escape(text)}[/]"
+            : $"[dim]{Escape(text)}[/]";
+        var markup = key is null ? body : $"[#e5c07b]{Escape(key)}[/] {body}";
+
+        _notice = markup;
+        PaintStatus(markup);
+        _noticeTimer ??= _time.CreateTimer(
+            _ => OnUiThread(ClearNotice), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        _noticeTimer.Change(NoticeDuration, Timeout.InfiniteTimeSpan);
+    }
+
+    /// <summary>
+    /// Everything <see cref="Notice"/> has said this run, capped. Internal so a headless test can assert
+    /// that a message which dismissed itself was still recorded.
+    /// </summary>
+    internal ClientMessageLog Messages => _messages;
+
+    /// <summary>Lifts the notice off the row, putting the resting line back under it.</summary>
+    private void ClearNotice()
+    {
+        if (_notice is null)
+        {
+            return;
+        }
+
+        ForgetNotice();
+        PaintStatus(_restingStatus);
+    }
+
+    /// <summary>Forgets the notice and disarms its timer, without painting — for callers about to paint.</summary>
+    private void ForgetNotice()
+    {
+        _notice = null;
+        _noticeTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+    }
+
+    /// <summary>The resting status row of a client with nothing connected.</summary>
+    private string NotConnectedMarkup() =>
+        $"[dim]not connected · Graphics {Escape(_capabilities.Protocol.ToString())} · ⌃P palette · ⌃Q quit[/]";
 
     private void UpdateStatus()
     {
         var session = _active;
         if (session is null)
         {
-            SetStatus($"[dim]not connected · Graphics {Escape(_capabilities.Protocol.ToString())} · ⌃P palette · ⌃Q quit[/]");
+            // Clear the identity too: leaving a stale one behind means the next RefreshStatusBar
+            // repaints a connection that is no longer there.
+            _statusIdentity = null;
+            SetStatus(NotConnectedMarkup());
             return;
         }
 
@@ -3953,10 +4502,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     {
         _system.ConsoleDriver.MouseEvent -= OnDriverMouseEvent;
         _sizeFlushTimer?.Dispose(); // nothing left to tell a server we are shutting down to
+        _noticeTimer?.Dispose();    // and no row left to put a notice back on
         _webImageCts?.Cancel();
         _webImageCts?.Dispose();
         _imageLoader.Dispose();
         _fetcher.Dispose();
         await _sessions.DisposeAsync().ConfigureAwait(false);
+        if (_ownsDiagnostics)
+        {
+            _diagnostics.Dispose(); // only the pipeline this app built; a supplied one outlives it
+        }
     }
 }

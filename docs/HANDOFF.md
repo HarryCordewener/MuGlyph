@@ -4,8 +4,8 @@ Context for whoever (human or agent) picks up this work next.
 
 - **Repository:** `SharpMUSH/SharpMUTerm`
 - **Start from:** a fresh branch off `main`
-- **Tests:** 1256 across the solution (416 Core / 83 Graphics / 42 Scripting /
-  30 Web / 685 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
+- **Tests:** 1283 across the solution (424 Core / 83 Graphics / 42 Scripting /
+  30 Web / 704 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
   from this repo; building against a local SharpConsoleUI clone surfaces 2 upstream
   NuGet advisory warnings for AngleSharp, which are the framework's, not ours)
 
@@ -217,8 +217,10 @@ Things that will waste your time if you don't know them.
 - **Snapshot view names:** `worlds`/`settings`, `triggers`, `route`, `highlight`,
   `aliases`, `timers`,
   `keypad`, `set`, `textansi`, `input`, `logging`, `freeze`, `spawn`, `split`, `move`,
-  `drag`, `history`, `draft`, `draft2`, `menu`, `menu-split`, `web`, plus the default
-  (no `--view`) workspace. (`input` is the **F8 settings screen**; `draft`/`draft2` are the
+  `drag`, `history`, `draft`, `draft2`, `menu`, `menu-split`, `messages`, `web`, plus the
+  default (no `--view`) workspace. (`messages` is the ⌃P **client message viewer**, over a
+  scene seeded by raising four real notices — so the frame shows what `Notice` records, not
+  a mock.) (`input` is the **F8 settings screen**; `draft`/`draft2` are the
   **command line** itself — a wrapped draft that has grown the bar, and the same with the
   per-window second bar raised and ⏎ armed on it.)
   **`web`** renders a page whose `<img>` is a `data:` URI through the real
@@ -520,6 +522,62 @@ What the framework actually provides (read at v2.5.14, not assumed):
   emit only the changed cells. The frame includes the host's auto-repeat frames,
   because a real mouse never reaches the drop without passing through several.
 
+### The status row: state at rest, notices on top
+
+Two reported bugs met here, and they were the same bug from opposite ends: an unwired
+command reported through `_active` and so said *nothing* with no session, while a ⌃B
+refusal was a bare `SetStatus` waiting for the next `UpdateStatus` to displace it — and
+`UpdateStatus` only ever runs off a session event, so with nothing connected the refusal
+stayed on the row for the rest of the run. A client with no connection is the normal
+first-run state and both feedback paths were broken in it.
+
+- **`SetStatus` is the row at rest** (connection identity, mode prompt, not-connected line).
+  It *records* what it paints in `_restingStatus`, so a notice can be lifted off without
+  anyone recomputing what was underneath. That "restore, don't recompute" is the whole fix:
+  restoring needs no session event.
+- **`Notice(text, severity, key)` is news**, tmux's `display-message`: it holds the row for
+  `SharpMUTermApp.NoticeDuration` (6 s — the longest refusal is ~80 characters, about five
+  seconds of unhurried reading) and the resting line comes back **on a timer**, on the
+  injected `TimeProvider`. A timer, not a frame hook, for the reason the NAWS flush is one:
+  repaints stop, clocks don't. `ManualTimeProvider` advances it in the tests.
+- **Every transient sender goes through it** — all nine `RefusePrefix` refusals,
+  `RefuseCommand` (unwired/refused ⌃P entries), the connection failure, the settings-save
+  and log-open failures, "no world configured". Adding a new one means calling `Notice`, or
+  the class of bug comes back one sender at a time.
+- **While a notice is up, `SetStatus` records without painting.** Not a nicety:
+  `RefreshTabTitles` ends in `UpdateInputChrome` → `RefreshStatusBar`, so a notice raised by
+  a command was wiped by the same dispatch that raised it, before a frame ever carried it.
+  The move/drag prompts pass `displace: true` — a mode the user just entered must be seen now.
+- **Nothing transient goes through `PrintSystem`.** That writes to the character's log sink,
+  so a UI refusal about pane splits would land in a transcript someone keeps for roleplay or
+  evidence. Client chrome stays out of the output window.
+
+### Client diagnostics (Serilog behind `ILogger`)
+
+- **`ClientDiagnostics` is the only file that names Serilog.** Everything else — the app,
+  `WorldSession`, `TelnetSession` — logs through `Microsoft.Extensions.Logging.ILogger`.
+  Packages added to `Directory.Packages.props`: `Serilog` 4.3.1,
+  `Serilog.Extensions.Logging` 10.0.0, `Serilog.Sinks.File` 7.0.0, referenced only by
+  `SharpMUTerm.Tui`.
+- **Two sinks and never a console one.** A console sink writes to the screen this app owns
+  and visibly wrecks the compositor's output. What there is: an in-memory
+  `ClientMessageLog` (Core, capped at 200, oldest dropped) behind ⌃P ▸ *Show client
+  messages*, and a rolling `client-diagnostics-*.log` in the same `logs` folder as the
+  session transcripts but plainly not one of them.
+- **The telnet stack's diagnostics were being discarded.** `TelnetSession` takes an
+  `ILogger?` and `WorldSession.DefaultSessionFactory` never passed one, so every negotiation
+  trace and protocol error went to `NullLogger`. `WorldSession.Logger` (set by
+  `SessionManager.Logger`, set by the app) now carries it, and it lands in the same ordered
+  history as our own notices.
+- **The level filter is the load-bearing part.** The interpreter logs at `Trace` per byte and
+  per state transition; unfiltered that fills the buffer with NOP transitions. Default is
+  `Information`, and the viewer's `+`/`-` move it live, because the workflow is "turn tracing
+  on, reproduce, look" and all three happen in front of that window.
+- **Kept deliberately simple:** the viewer is a modal list with a level switch and Esc. No
+  filtering, no search, no selection, no persistence of the in-memory buffer across runs (the
+  file is the persistence). `ClientMessageRenderer` is pure and unit-tested; the modal itself
+  is verified by the `messages` snapshot.
+
 ### The ⌃B pane prefix
 
 - **It was reported dead, and the dispatch was fine.** `⌃B` armed, the strip
@@ -552,6 +610,14 @@ What the framework actually provides (read at v2.5.14, not assumed):
   palette at once — a row carries its own title and F-key, so the surface cannot
   advertise a key nothing is registered on. Its first `--view` name doubles as the
   command id (`screen:worlds`); `CommandSurfaceSettingsTests` reads both ends.
+- **Every id the catalog can emit must be handled, and a test says so.**
+  `CommandCatalog.Build` is generated from live state while `DispatchCommand` is a
+  hand-written switch, so the two drift *in silence*: `char:` was offered and implemented
+  nowhere for as long as the surface has existed, and `term:log-on`/`term:log-off` were
+  found the same way while fixing it. `DispatchCommand` therefore returns **false** for an
+  id nothing implements, and `CommandDispatchTests.EveryCatalogIdIsHandled` dispatches
+  every emitted id for real and fails on a false. Add a catalog entry with no case and
+  that test names it.
 - **Panes are sized from the space available, not from constants.** Three pure
   rules in `ScreenChrome`, pinned in `ScreenLayoutTests`:
   - **`SplitWidth(width, desired, minimum, companion)`** — a two-column screen's
@@ -886,8 +952,43 @@ categories, and where each control sits:
 **The shell connects as the world's first configured character**
 (`SharpMUTermApp.OpenSession`). Before that it opened an *anonymous* session, which
 is why so much of F2–F6 was unreachable however correct Core was: no character
-meant no trigger sets, no auto-login, no log. Picking a *different* character still
-has no UI.
+meant no trigger sets, no auto-login, no log.
+
+**Picking a *different* character now works** — ⌃P ▸ `Switch to <name>`
+(`SharpMUTermApp.SwitchToCharacter`), which was the entry the catalog had always
+offered and nothing had ever implemented. What it does:
+
+- **It opens that character's own session** (its trigger sets, auto-login and log)
+  if there isn't one, and re-uses the open one if there is. Two characters never
+  share a session, because a session's automation, scrollback and log belong to the
+  character it was opened as.
+- **The first session keeps the main window; every character switched to afterwards
+  gets a tab of its own** (`char:World.Name`), since two characters printing into
+  one buffer would interleave. The tab is put back if it was closed.
+- **Switching does not connect.** A character whose session exists but is offline is
+  focused exactly like a connected one, and the status row says so and names what
+  connects it. Switching is navigation; the command that dials is `Reconnect`. A
+  "switch" that opened a socket would make choosing a character to *look* at
+  impossible.
+- **Activating a window activates its session** (`Activate`), so the command line
+  always talks to the character you are looking at — a tab showing one character's
+  output while ⏎ sent to another is a worse version of the same bug.
+
+**`Reconnect` really reconnects.** It was `_ = _active?.ConnectAsync()`: a silent
+no-op with no active session (exactly the state you reach for *Reconnect* in), a
+silent no-op when already connected (`ConnectAsync` returns early), and
+fire-and-forget, so a refused connection threw into a task nobody read. It now
+drops and redials a live connection, reports a refusal on the status row as well as
+in the session's own window, and says *why* when there is nothing to reconnect.
+`SharpMUTermApp.LastCommand` is the awaitable seam the tests use.
+
+**`Start logging` / `Pause logging` work too**, and were the other emitted-but-unhandled
+pair the audit turned up: `term:log-on`/`term:log-off` were dispatched into nothing, and
+`BuildCatalog` hard-coded `LoggingOn: false`, so the label never flipped either. A log can
+now be attached and detached mid-session (`WorldSession.AttachLog`/`DetachLog`, which flush
+and close what they replace); the catalog reads `WorldSession.IsLogging`. A character still
+on `LogFormat.None` — the default — gets a plain-text log, because asking for one is what
+the command means; the folder is the character's own (F5) or the app's `logs` directory.
 
 ### Which keys can actually fire (read the parser, don't assume)
 

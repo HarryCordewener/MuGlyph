@@ -1,5 +1,9 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SharpMUTerm.Core.Configuration;
 using SharpMUTerm.Core.Logging;
+using SharpMUTerm.Core.Telnet;
+using SharpMUTerm.Core.Transport;
 
 namespace SharpMUTerm.Core.Session;
 
@@ -8,6 +12,13 @@ public sealed class SessionManager : IAsyncDisposable
 {
     private readonly List<WorldSession> _sessions = new();
     private readonly object _gate = new();
+
+    /// <summary>
+    /// The diagnostics logger handed to every session opened from here — and through it to the telnet
+    /// stack, whose negotiation and protocol errors would otherwise go to <c>NullLogger</c>. Set once by
+    /// the app; sessions added by <see cref="Add"/> keep whatever logger they were built with.
+    /// </summary>
+    public ILogger Logger { get; set; } = NullLogger.Instance;
 
     public event EventHandler<WorldSession>? SessionAdded;
 
@@ -29,15 +40,25 @@ public sealed class SessionManager : IAsyncDisposable
     /// Used for ad-hoc command-line connections and for a world that has no characters configured.
     /// Does not connect it.
     /// </summary>
+    /// <param name="sessionFactory">
+    /// The transport this session connects through. Null (the default) means the real telnet stack;
+    /// a caller supplies one so a session can be driven without a network.
+    /// </param>
     public WorldSession Open(
         WorldDefinition world,
         int scrollbackCapacity = 20_000,
         TextSettings? text = null,
-        InputSettings? input = null)
+        InputSettings? input = null,
+        Func<ConnectionOptions, ITelnetSession>? sessionFactory = null)
     {
         ArgumentNullException.ThrowIfNull(world);
         var session = new WorldSession(
-            world, scrollbackCapacity: scrollbackCapacity, text: text, input: input);
+            world,
+            sessionFactory: sessionFactory,
+            scrollbackCapacity: scrollbackCapacity,
+            text: text,
+            input: input);
+        session.Logger = Logger;
         Add(session);
         return session;
     }
@@ -51,6 +72,10 @@ public sealed class SessionManager : IAsyncDisposable
     /// that is the whole point of them.
     /// </para>
     /// </summary>
+    /// <param name="sessionFactory">
+    /// The transport this session connects through. Null (the default) means the real telnet stack;
+    /// a caller supplies one so a session can be driven without a network.
+    /// </param>
     public WorldSession Open(
         WorldDefinition world,
         CharacterDefinition character,
@@ -58,7 +83,8 @@ public sealed class SessionManager : IAsyncDisposable
         int scrollbackCapacity = 20_000,
         ILogSink? log = null,
         TextSettings? text = null,
-        InputSettings? input = null)
+        InputSettings? input = null,
+        Func<ConnectionOptions, ITelnetSession>? sessionFactory = null)
     {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(character);
@@ -67,10 +93,12 @@ public sealed class SessionManager : IAsyncDisposable
             world,
             character,
             triggerSets,
+            sessionFactory: sessionFactory,
             log: log,
             scrollbackCapacity: scrollbackCapacity,
             text: text,
             input: input);
+        session.Logger = Logger;
         Add(session);
         return session;
     }

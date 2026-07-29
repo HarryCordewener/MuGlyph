@@ -57,7 +57,13 @@ internal static class Program
         }
 
         var world = ResolveWorld(args, config);
-        var liveApp = new SharpMUTermApp(config, capabilities);
+
+        // Client diagnostics: an in-memory history behind ⌃P ▸ Show client messages, plus a rolling
+        // file beside the session logs but plainly not one of them (client-diagnostics-*.log next to
+        // the World.Character-*.log transcripts). Never a console sink — this app owns the screen.
+        using var diagnostics = ClientDiagnostics.Create(
+            Path.Combine(Path.GetDirectoryName(ConfigurationStore.DefaultPath)!, "logs"));
+        var liveApp = new SharpMUTermApp(config, capabilities, diagnostics: diagnostics);
         var exitCode = liveApp.Run(world); // blocks on the SharpConsoleUI main loop until exit
 
         // Persist the workspace so the next launch resumes where this one left off.
