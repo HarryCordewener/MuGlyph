@@ -181,12 +181,15 @@ public class InputAreaEndToEndTests
     public async Task BothBarsKeepTheirOwnDraftPerWindow()
     {
         var (app, _) = Demo();
-        ToggleSecondBar(app);
 
-        Type(app, "pose smiles.");
-        app.SimulateKey(Chord(ConsoleKey.Tab));
+        // Raising the second bar arms it, so the OOC line is typed first and ⇥ goes back to the IC one.
+        ToggleSecondBar(app);
         await Assert.That(app.SecondBarArmed).IsTrue();
         Type(app, "ooc back in five");
+
+        app.SimulateKey(Chord(ConsoleKey.Tab));
+        await Assert.That(app.SecondBarArmed).IsFalse();
+        Type(app, "pose smiles.");
 
         app.SimulateWindowChange(ChatWindow);
         app.SimulateWindowChange(MainWindow);
@@ -218,8 +221,7 @@ public class InputAreaEndToEndTests
     public async Task HidingTheArmedSecondBar_RearmsTheFirst()
     {
         var (app, _) = Demo();
-        ToggleSecondBar(app);
-        app.SimulateKey(Chord(ConsoleKey.Tab));
+        ToggleSecondBar(app); // raising it arms it — no ⇥ needed to get there
         await Assert.That(app.SecondBarArmed).IsTrue();
 
         ToggleSecondBar(app);
@@ -257,6 +259,120 @@ public class InputAreaEndToEndTests
         app.SimulateKey(Chord(ConsoleKey.UpArrow));
 
         await Assert.That(app.ArmedInputText).IsEqualTo("look");
+    }
+
+    /// <summary>A terminal paste lands in the command line, at the caret, newlines and all.</summary>
+    [Test]
+    public async Task APasteReachesTheArmedBar()
+    {
+        var (app, _) = Demo();
+        Type(app, "say ");
+
+        app.SimulatePaste("hello there");
+
+        await Assert.That(app.ArmedInputText).IsEqualTo("say hello there");
+    }
+
+    /// <summary>
+    /// The reported defect, and the reason it hid for so long. Anything that takes the keyboard focus —
+    /// a click in the output pane, ⇥ with one bar up — hands it to a control that does not accept
+    /// paste, and the next paste was dropped without a trace. Typing masked it: the app routes
+    /// keystrokes to the armed bar itself and puts the focus back on the way past, so the very act of
+    /// checking whether the client was alive repaired the state that broke paste. Proven against the
+    /// real binary under a pty before it was written down — a click, then a bracketed paste, then
+    /// nothing on the command line.
+    /// </summary>
+    [Test]
+    public async Task APasteAfterFocusIsTakenOffTheBar_StillReachesTheArmedBar()
+    {
+        var (app, _) = Demo();
+
+        app.SimulateFocusSteal();
+        await Assert.That(app.ArmedBarHasFocus).IsTrue();
+
+        app.SimulatePaste("pose waves.");
+
+        await Assert.That(app.ArmedInputText).IsEqualTo("pose waves.");
+    }
+
+    /// <summary>
+    /// With two command lines up, a paste goes to the one ⏎ sends from — the only answer that is not
+    /// arbitrary. Asserted on the second bar because the primary is where a paste would land by accident.
+    /// </summary>
+    [Test]
+    public async Task APasteGoesToTheArmedBarWhenTheSecondOneIsUp()
+    {
+        var (app, _) = Demo();
+        ToggleSecondBar(app);
+        await Assert.That(app.SecondBarArmed).IsTrue();
+
+        app.SimulatePaste("ooc kettle");
+
+        await Assert.That(app.SecondaryInputText).IsEqualTo("ooc kettle");
+        await Assert.That(app.PrimaryInputText).IsEqualTo(string.Empty);
+
+        // …and back the other way, so neither bar is passing by being the default.
+        app.SimulateKey(Chord(ConsoleKey.Tab));
+        app.SimulatePaste("say hello");
+
+        await Assert.That(app.PrimaryInputText).IsEqualTo("say hello");
+        await Assert.That(app.SecondaryInputText).IsEqualTo("ooc kettle");
+    }
+
+    /// <summary>
+    /// Raising the second bar arms it: it is the line that was just asked for, and the caret goes with
+    /// ⏎ rather than staying on the bar above while a new empty one appears below it.
+    /// </summary>
+    [Test]
+    public async Task RaisingTheSecondBar_ArmsItAndTakesTheCaret()
+    {
+        var (app, _) = Demo();
+
+        ToggleSecondBar(app);
+
+        await Assert.That(app.SecondBarArmed).IsTrue();
+        await Assert.That(app.ArmedBarHasFocus).IsTrue();
+        await Assert.That(app.CaretReported).IsEqualTo((false, true));
+
+        Type(app, "ooc");
+        await Assert.That(app.SecondaryInputText).IsEqualTo("ooc");
+        await Assert.That(app.PrimaryInputText).IsEqualTo(string.Empty);
+    }
+
+    /// <summary>
+    /// Hiding the second bar takes the caret off it. The bar goes invisible where it stands, so nothing
+    /// but this moves the terminal's cursor off a control the window no longer draws — which is how it
+    /// was reported: "the cursor blink remains where it was".
+    /// </summary>
+    [Test]
+    public async Task HidingTheSecondBar_TakesTheCaretOffIt()
+    {
+        var (app, _) = Demo();
+        ToggleSecondBar(app);
+        await Assert.That(app.CaretReported).IsEqualTo((false, true));
+
+        ToggleSecondBar(app);
+
+        await Assert.That(app.SecondBarShown).IsFalse();
+        await Assert.That(app.CaretReported).IsEqualTo((true, false));
+        await Assert.That(app.ArmedBarHasFocus).IsTrue();
+        await Assert.That(app.FocusIsOnAVisibleControl).IsTrue();
+    }
+
+    /// <summary>
+    /// ⇥ with a single command line up has no sibling to hand the caret to, so the framework walks focus
+    /// out of the input area entirely — and the caret went with it, leaving a client with no cursor at
+    /// all. The armed bar keeps both.
+    /// </summary>
+    [Test]
+    public async Task FocusWalkingOffTheCommandLine_TakesTheCaretWithItNoMore()
+    {
+        var (app, _) = Demo();
+
+        app.SimulateFocusSteal();
+
+        await Assert.That(app.ArmedBarHasFocus).IsTrue();
+        await Assert.That(app.CaretReported).IsEqualTo((true, false));
     }
 
     /// <summary>The ⌃B prefix, then <c>i</c> — the same two keystrokes the header advertises.</summary>

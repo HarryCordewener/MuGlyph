@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace SharpMUTerm.Tui;
 
 /// <summary>What a keystroke asked a settings screen to do.</summary>
@@ -75,6 +77,13 @@ internal sealed class SettingsSession
 
     /// <summary>Whether a field edit is open — the screens' one modal state.</summary>
     internal bool IsEditing => _edit is not null;
+
+    /// <summary>
+    /// Whether the open edit is a <see cref="ScreenField.Key"/> capture: the one state in these screens
+    /// where a chord is a <em>value</em> rather than a command, so nothing outside may intercept one.
+    /// </summary>
+    internal bool IsCapturingKey =>
+        _edit is { } edit && _model(Selection).FieldAt(edit.Pane, edit.Index, edit.Field) is { Capture: true };
 
     /// <summary>
     /// The cursor as the renderers should draw it, clamped to the rows that exist right now, carrying
@@ -327,6 +336,104 @@ internal sealed class SettingsSession
     }
 
     /// <summary>
+    /// Pastes a block of text into the open field edit — the same insert typing does, with a string
+    /// instead of a character. It is a separate entry point rather than a key because a paste arrives
+    /// as one atomic block from the terminal (or the clipboard) and never as keystrokes; see
+    /// <see cref="SettingsOverlay"/> for why the framework cannot deliver it to a screen itself.
+    /// <para>
+    /// A paste with no edit open is not ours: these screens have no text anywhere else, and opening one
+    /// on the user's behalf would put a clipboard into a field they had not chosen. A
+    /// <see cref="ScreenField.Capture"/> field swallows it for the same reason it swallows typing —
+    /// its value is a keystroke, and there is no buffer to insert into.
+    /// </para>
+    /// </summary>
+    internal ScreenAction Paste(string text)
+    {
+        if (string.IsNullOrEmpty(text) || _edit is not { } edit)
+        {
+            return ScreenAction.None;
+        }
+
+        // Same guard HandleEdit opens with: the row being edited can have gone away underneath the
+        // buffer, and pasting into nothing is worse than abandoning the edit.
+        if (_model(Selection).FieldAt(edit.Pane, edit.Index, edit.Field) is not { } field)
+        {
+            _edit = null;
+            return ScreenAction.Redraw;
+        }
+
+        if (field.Capture)
+        {
+            return ScreenAction.Consumed;
+        }
+
+        var flattened = Flatten(text);
+        if (flattened.Length == 0)
+        {
+            return ScreenAction.Consumed;
+        }
+
+        edit.Insert(flattened);
+        return ScreenAction.Redraw;
+    }
+
+    /// <summary>
+    /// Reduces pasted text to something a one-line field can hold: each run of line breaks becomes a
+    /// single space, every other control character is dropped, and the result is trimmed.
+    /// <para>
+    /// A settings field is one row of a fixed-width list — <see cref="ScreenField.Name"/> and the
+    /// window-name field already refuse control characters for exactly that reason — so a multi-line
+    /// clipboard has to be answered here rather than written through to a validator that would only
+    /// reject the lot. <b>Collapse, not delete:</b> removing the break outright would run the words on
+    /// either side together (<c>hello\nworld</c> → <c>helloworld</c>), quietly changing what was
+    /// pasted; a space keeps it readable and is what SharpConsoleUI's own single-line
+    /// <c>PromptControl</c> does. A <em>run</em> of breaks is one space rather than several, because a
+    /// blank line between two pasted lines is a paragraph, not two words apart. Trimming follows: the
+    /// leading or trailing space a break at either end would leave is an artefact of the flattening,
+    /// not something the user copied.
+    /// </para>
+    /// <para>
+    /// This is not a validation bypass. The flattened value is committed through
+    /// <see cref="Commit"/> exactly like a typed one and is refused there on the same terms — a paste
+    /// that flattens to nothing a field will accept still fails, and says why.
+    /// </para>
+    /// <para>
+    /// The rule is single-line fields, not paste in general: the main command line has rows for
+    /// newlines and <see cref="InputBarControl.Paste"/> deliberately keeps them.
+    /// </para>
+    /// </summary>
+    private static string Flatten(string text)
+    {
+        var flattened = new StringBuilder(text.Length);
+        var pendingBreak = false;
+        foreach (var c in text)
+        {
+            // \r, \n and \r\n are all one break; a run of them collapses to a single space, emitted only
+            // once something follows it (which is what keeps a trailing run from leaving one behind).
+            if (c is '\r' or '\n')
+            {
+                pendingBreak = flattened.Length > 0;
+                continue;
+            }
+
+            if (char.IsControl(c))
+            {
+                continue;
+            }
+
+            if (pendingBreak)
+            {
+                flattened.Append(' ');
+                pendingBreak = false;
+            }
+
+            flattened.Append(c);
+        }
+
+        return flattened.ToString().Trim();
+    }
+
+    /// <summary>
     /// A keystroke while a key capture is armed. There is no buffer to type into here: the keystroke
     /// <em>is</em> the value, so it is written into the edit and committed at once, and the field's own
     /// validator does the refusing — a chord this host cannot deliver, or one another binding already
@@ -467,10 +574,13 @@ internal sealed class SettingsSession
 
         internal string? Error { get; set; }
 
-        internal void Insert(char c)
+        internal void Insert(char c) => Insert(c.ToString());
+
+        /// <summary>Inserts a block at the caret — one paste, not a run of keystrokes.</summary>
+        internal void Insert(string text)
         {
-            Text = Text.Insert(Caret, c.ToString());
-            Caret++;
+            Text = Text.Insert(Caret, text);
+            Caret += text.Length;
             Error = null;
         }
 
