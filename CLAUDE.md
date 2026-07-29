@@ -95,10 +95,10 @@ python3 tools/ansi_frame_to_image.py frame.ansi frame.html   # or .svg
   worlds — you end up checking your own data and calling it the demo.
 - **Views:** `worlds`/`settings`, `triggers`, `route`, `highlight`, `aliases`, `timers`, `keypad`,
   `set`, `textansi`, `input`, `logging`, `freeze`, `spawn`, `split`, `move`, `drag`, `history`,
-  `draft`, `draft2`, `menu`, `menu-split`, `messages`, `quit`, `web`, `scrollback`, `scrollback-up`,
-  `freeze-scrollback`, plus the default workspace (no `--view`). Any settings screen also takes a
-  `-edit` suffix, which opens it and drives real keys in so the frame shows a field mid-edit. State
-  toggles: `collapsed`, `prefix`, `timestamps`.
+  `history-search`, `history-search-filter`, `draft`, `draft2`, `menu`, `menu-split`, `messages`,
+  `quit`, `web`, `scrollback`, `scrollback-up`, `freeze-scrollback`, plus the default workspace
+  (no `--view`). Any settings screen also takes a `-edit` suffix, which opens it and drives real
+  keys in so the frame shows a field mid-edit. State toggles: `collapsed`, `prefix`, `timestamps`.
 - **The three `scroll*` views are the only ones with more output than a pane holds.** Every other view
   fits, which is exactly why no snapshot caught the panes being unable to scroll at all. Reach for one
   of these (or `LoadLongScene`) whenever a change touches the output area.
@@ -183,6 +183,15 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   driver (`ScrollPaneUnderPointer`), for the same reason everything else in this window is: focus is
   pinned to the armed bar, so `ScrollablePanelControl.ProcessKey` — which returns false unless it has
   focus — would never see a key.
+- **Control chords collapse onto their ASCII bytes, so some are unbindable.** `AnsiInputParser`
+  decodes no CSI-u and enables no `modifyOtherKeys`: `Ctrl+H` arrives as `Backspace` with
+  `control: false` (byte 0x08), and I/M/J are Tab/Enter/Enter — the app cannot even tell the modifier
+  was held, so binding those breaks the plain key instead. `Alt+Backspace` is not available either:
+  ESC followed by a *control* byte is emitted as **two** keys (Escape, then Backspace), so only
+  `ESC` + a printable byte becomes an Alt chord. `MacroKeys.Verdict` is the readable form of all this.
+- **A global shortcut runs before any window**, so a chord in `MacroKeys.AppShortcuts` can never reach
+  a control's own key table. That is why the command line has no ⌃W (`CloseActiveWindow` claims it) and
+  why `InputBuffer.KillWordLeft` currently has no chord that can reach it.
 
 ## Other dependency notes
 

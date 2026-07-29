@@ -10,6 +10,7 @@ namespace SharpMUTerm.Tui.Tests;
 internal sealed class RecordingTelnetSession : ITelnetSession
 {
     private readonly List<(int Width, int Height)> _sizes = new();
+    private readonly List<string> _lines = new();
 
     public bool IsConnected { get; private set; }
 
@@ -35,6 +36,22 @@ internal sealed class RecordingTelnetSession : ITelnetSession
         }
     }
 
+    /// <summary>
+    /// Every line written to the wire, oldest first. Kept so a test can assert that something did
+    /// <em>not</em> reach the world — which is the whole claim behind "⏎ in the history surface inserts and
+    /// does not send", and one nothing else can see.
+    /// </summary>
+    public IReadOnlyList<string> Lines
+    {
+        get
+        {
+            lock (_lines)
+            {
+                return _lines.ToArray();
+            }
+        }
+    }
+
 #pragma warning disable CS0067 // Required by the interface; these tests drive sizes, not output.
     public event EventHandler<TelnetOutputEventArgs>? OutputReceived;
     public event EventHandler<GmcpMessageEventArgs>? GmcpReceived;
@@ -55,8 +72,15 @@ internal sealed class RecordingTelnetSession : ITelnetSession
         return Task.CompletedTask;
     }
 
-    public ValueTask SendLineAsync(string text, CancellationToken cancellationToken = default) =>
-        ValueTask.CompletedTask;
+    public ValueTask SendLineAsync(string text, CancellationToken cancellationToken = default)
+    {
+        lock (_lines)
+        {
+            _lines.Add(text);
+        }
+
+        return ValueTask.CompletedTask;
+    }
 
     public ValueTask SendAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default) =>
         ValueTask.CompletedTask;

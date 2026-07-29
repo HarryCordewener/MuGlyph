@@ -119,6 +119,12 @@ public static class CommandCatalog
         // output window (and so out of the session log) and readable here instead.
         items.Add(new CommandItem(
             CommandGroup.Terminal, "Show client messages", "term:messages", "status-line notices"));
+
+        // The command line's own history, browsable and searchable. Named here as well as bound to ⌃R
+        // because a chord nothing mentions is a chord nobody finds — the same reason every settings screen
+        // has a row even though each has an F-key.
+        items.Add(new CommandItem(
+            CommandGroup.Terminal, "Search command history", "term:history", "⌃R"));
         items.Add(context.TimestampsOn
             ? new CommandItem(CommandGroup.Terminal, "Hide timestamps", "term:timestamps-off")
             : new CommandItem(CommandGroup.Terminal, "Show timestamps", "term:timestamps-on"));

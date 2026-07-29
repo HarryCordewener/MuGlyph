@@ -1,5 +1,6 @@
 using System.Globalization;
 using SharpMUTerm.Core.Configuration;
+using SharpMUTerm.Core.Input;
 using static SharpMUTerm.Tui.MarkupText;
 using static SharpMUTerm.Tui.ScreenPalette;
 
@@ -282,6 +283,13 @@ internal static class OptionsScreenRenderer
     /// nothing.
     /// </para>
     /// <para>
+    /// <c>keep logins out of history</c> is the one row here that is about a secret rather than a
+    /// convenience: with history browsable and searchable (⌃R), a hand-typed
+    /// <c>connect &lt;name&gt; &lt;password&gt;</c> recorded in it is a password on display. It is
+    /// bash's <c>HISTIGNORE</c>, on by default, and the verbs it recognises are
+    /// <see cref="HistorySecrets.Verbs"/>. Nothing writes history to disk either way.
+    /// </para>
+    /// <para>
     /// There is still no <c>newline key</c> row, and now for the opposite reason to the one that took
     /// it away. The command line wraps and grows, so a newline can be typed — but only on chords this
     /// host delivers, and the interesting answers (Shift+⏎, Ctrl+⏎) are ones no Unix terminal reports
@@ -300,6 +308,8 @@ internal static class OptionsScreenRenderer
                 ScreenToggle.Bind(() => settings.LocalEcho, v => settings.LocalEcho = v)),
             new("keep per-tab drafts", null, settings.KeepDrafts, null,
                 ScreenToggle.Bind(() => settings.KeepDrafts, v => settings.KeepDrafts = v)),
+            new("keep logins out of history", null, settings.ExcludeCredentials, null,
+                ScreenToggle.Bind(() => settings.ExcludeCredentials, v => settings.ExcludeCredentials = v)),
             new(string.Empty, null, null),
             new("├ COMMAND LINE", null, null),
             new("height (lines)", settings.Rows.ToString(CultureInfo.InvariantCulture), null, null, null,

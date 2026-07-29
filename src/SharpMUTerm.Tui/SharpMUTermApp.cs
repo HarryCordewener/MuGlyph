@@ -65,14 +65,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private readonly Dictionary<string, MarkupControl> _frozenPanes = new(StringComparer.Ordinal);
     private readonly DraftStore _drafts;
     private readonly InputBarVisibility _secondBars;
-    private readonly InputHistory _history = new();
+    private readonly InputHistory _history;
 
     /// <summary>
     /// The second bar's own recall list. The bars exist to keep two lines apart (an IC one and an OOC
     /// one), and a shared history would put the other bar's sends under ↑ on both — which is the same
     /// mixing the second bar was added to stop.
     /// </summary>
-    private readonly InputHistory _secondHistory = new();
+    private readonly InputHistory _secondHistory;
 
     // Per-window markup line buffer (the scrollback source of truth) and, per frozen pane, the buffer
     // length of its active window at the moment it froze — the split point between pinned scrollback and
@@ -201,6 +201,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>The ⌃Q confirmation. Nothing ends the loop except a yes it collected.</summary>
     private readonly QuitOverlay _quit;
 
+    /// <summary>
+    /// The ⌃R history surface: the armed command line's own history, newest first, filtered by typing.
+    /// ⏎ there inserts an entry; it never sends one.
+    /// </summary>
+    private readonly HistorySurface _historySearch;
+
     /// <summary>Whether a confirmed quit has asked the loop to end — the headless view of the exit.</summary>
     private bool _exiting;
 
@@ -286,6 +292,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _formatter = new MarkupFormatter(_theme, config.Text);
         _drafts = new DraftStore(() => config.Input.KeepDrafts);
         _secondBars = new InputBarVisibility(() => config.Input.SecondBar);
+
+        // Both recall lists are built with the credential rule wired in, rather than filtering at the one
+        // call site that adds to them: the rule is an invariant of what history may contain, and a store
+        // that trusted its callers would be one bad call away from holding a password. The setting is read
+        // per line (see InputHistory's ctor), so unticking it takes effect on the next command.
+        _history = new InputHistory(ignore: IgnoreForHistory);
+        _secondHistory = new InputHistory(ignore: IgnoreForHistory);
         _armed = _input;
 
         // Resume the last session's workspace (panes/windows/focus) when the config carries one;
@@ -370,6 +383,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _messageLog = new MessageLogOverlay(_system, _diagnostics);
         _settings = new SettingsOverlay(_system, SaveConfiguration);
         _quit = new QuitOverlay(_system, QuitFactsNow, Quit);
+
+        // Everything the history surface needs is read at the moment it opens, so it is always the armed
+        // command line's own list — history is per bar, and the surface must not outlive that fact.
+        _historySearch = new HistorySurface(
+            _system,
+            () => HistoryFor(BarKind(ActiveBar())).Entries,
+            HistoryBarLabel,
+            InsertHistoryEntry);
 
         _window.OnResize += (_, _) =>
         {
@@ -574,6 +595,38 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             {
                 _input.Text = recalled;
                 UpdateInputChrome();
+            }
+        }
+
+        // The ⌃R history surface, over a command line that has a history to show. `history-search` is the
+        // state it opens in — the plain chronological list, newest first — and `history-search-filter`
+        // types a real query in through the surface's own key handler, so the frame shows the filter, the
+        // marked matches and the narrowed count rather than an impression of them. Deliberately not called
+        // `history`: that view is ↑/↓ recall in the command line, and this is the surface over it.
+        if (view is not null && view.StartsWith("history-search", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var command in new[]
+            {
+                "look",
+                "say Well met, traveller.",
+                "page Rookery = the courier came through the north gate",
+                "+who",
+                "pose leans on the fountain's rim, watching the plaza fill.",
+                "say the northern watch sent word",
+                "score",
+            })
+            {
+                _history.Add(command);
+            }
+
+            // A line nobody should find in the surface, entered exactly as a user would enter it. It is
+            // seeded here on purpose: the frame is where "the password is not in the list" is visible.
+            _history.Add("connect Corvid hunter2");
+
+            _historySearch.OpenForSnapshot();
+            if (view.EndsWith("-filter", StringComparison.OrdinalIgnoreCase))
+            {
+                _historySearch.SimulateTyping("north");
             }
         }
 
@@ -1387,6 +1440,83 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>The recall list belonging to a bar. Each keeps its own; see <see cref="_secondHistory"/>.</summary>
     private InputHistory HistoryFor(InputBar bar) => bar == InputBar.Secondary ? _secondHistory : _history;
 
+    /// <summary>
+    /// Whether a sent line must be kept out of history — the F8 switch over
+    /// <see cref="HistorySecrets.LooksLikeCredential"/>. Passed to both <see cref="InputHistory"/>
+    /// instances at construction and asked per line, so the setting takes effect on the next command.
+    /// <para>
+    /// Only hand-typed logins reach here. A configured character's connect string goes out through
+    /// <c>WorldSession.SendLoginAsync</c> → <c>SendRawAsync</c>, which never touches the UI's history at
+    /// all; the line this is for is the one someone types on a world they have not configured yet.
+    /// </para>
+    /// </summary>
+    private bool IgnoreForHistory(string command) =>
+        _config.Input.ExcludeCredentials && HistorySecrets.LooksLikeCredential(command);
+
+    /// <summary>
+    /// Which command line the ⌃R surface is showing the history of, in words — the second bar has its own
+    /// list, and a surface that did not say which one it was showing would be indistinguishable from a
+    /// surface showing the wrong one.
+    /// </summary>
+    private string HistoryBarLabel() =>
+        BarKind(ActiveBar()) == InputBar.Secondary ? "second command line" : "command line";
+
+    /// <summary>
+    /// Puts a history entry on the armed command line — what ⏎ in the ⌃R surface does, and the only thing
+    /// it does. It goes through <see cref="InputHistory.RecallAt"/> rather than assigning the text, so the
+    /// draft it displaces is parked exactly as <c>↑</c> parks it and <c>↓</c> still walks back to it; and
+    /// it records the line as this window's draft, for the same reason <see cref="TryRecallKey"/> does.
+    /// <para>
+    /// Nothing is sent. Assigning <c>Text</c> raises no change event (see <see cref="RecallDrafts"/>), so
+    /// the inserted line is not re-recorded and the recall cursor survives — which is what makes the
+    /// following <c>↓</c> mean "back to my draft".
+    /// </para>
+    /// </summary>
+    private void InsertHistoryEntry(int index)
+    {
+        var bar = ActiveBar();
+        var kind = BarKind(bar);
+        if (HistoryFor(kind).RecallAt(index, bar.Text) is not { } text)
+        {
+            return;
+        }
+
+        bar.Text = text;
+        _drafts.Record(ActiveWindowId(), kind, text);
+        UpdateInputChrome();
+    }
+
+    /// <summary>
+    /// Opens the ⌃R history surface, or closes it when the chord arrives again — the toggle every surface
+    /// in this client is on. Ignored while another overlay owns the screen or a move is in progress, for
+    /// <see cref="ArmPrefix"/>'s reason: a list floating over a surface the user is already answering
+    /// would be a second question nobody asked.
+    /// </summary>
+    private void ToggleHistorySearch()
+    {
+        if (_historySearch.IsOpen)
+        {
+            _historySearch.Toggle();
+            return;
+        }
+
+        if (AnyOverlayOpen || _moveMode)
+        {
+            return;
+        }
+
+        _historySearch.Toggle();
+    }
+
+    /// <summary>
+    /// Whether any modal surface owns the screen. They are separate windows, so the framework already
+    /// routes keys to them and the main window's handler is not raised at all — this is here because "the
+    /// workspace does not act while a surface is up" is a rule of this app rather than a consequence of
+    /// how the framework happens to dispatch, and the next surface may not be modal.
+    /// </summary>
+    private bool AnyOverlayOpen =>
+        _palette.IsOpen || _settings.IsOpen || _quit.IsOpen || _messageLog.IsOpen || _historySearch.IsOpen;
+
     /// <summary>Whether either bar is holding unsent text — what the <c>✎</c> tab marker means.</summary>
     private bool AnyBarHasText() =>
         !_input.Buffer.IsEmpty || (_second.Visible && !_second.Buffer.IsEmpty);
@@ -2037,6 +2167,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             ConsoleKey.P => () => { ToggleMenu(); return true; },
             ConsoleKey.B => () => { ArmPrefix(); return true; },
             ConsoleKey.F => () => { ToggleFreeze(); return true; },
+            // ⌃R is the readline/bash/zsh/fish reverse-history-search chord, which is why the surface is
+            // on it. ⌃H — what a user reaching for "history" tries first — cannot be bound at all: the
+            // framework's parser turns byte 0x08 into Backspace with no Control modifier, so binding it
+            // would take the command line's erase key and the app could not even tell the two apart.
+            ConsoleKey.R => () => { ToggleHistorySearch(); return true; },
             _ => null,
         };
     }
@@ -2706,6 +2841,9 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 return true;
             case "term:messages":
                 _messageLog.Toggle();
+                return true;
+            case "term:history":
+                ToggleHistorySearch();
                 return true;
             case "term:log-on":
                 StartLogging();
@@ -3752,7 +3890,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private void ArmPrefix()
     {
-        if (_palette.IsOpen || _settings.IsOpen || _quit.IsOpen)
+        if (AnyOverlayOpen)
         {
             return;
         }
@@ -3971,6 +4109,32 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>Feeds one key to the open settings screen, the way the <c>-edit</c> snapshot views do.</summary>
     internal void SimulateSettingsKey(ConsoleKeyInfo key) => _settings.SimulateKey(key);
 
+    /// <summary>Whether the ⌃R history surface is up.</summary>
+    internal bool HistorySearchOpen => _historySearch.IsOpen;
+
+    /// <summary>What the ⌃R surface is showing — the rendered markup, for a headless test to read.</summary>
+    internal IReadOnlyList<string> HistorySearchLines => _historySearch.Lines;
+
+    /// <summary>The rows the ⌃R surface is currently listing, newest first.</summary>
+    internal IReadOnlyList<string> HistorySearchRows =>
+        _historySearch.Matches.Select(m => m.Text).ToArray();
+
+    /// <summary>The entry ⏎ would insert from the ⌃R surface, or null when nothing is listed.</summary>
+    internal string? HistorySearchSelection => _historySearch.Selected;
+
+    /// <summary>
+    /// Feeds one key to the open ⌃R surface, through the handler its <c>PreviewKeyPressed</c> raises. Like
+    /// <see cref="SimulateQuitKey"/>, it cannot go through <see cref="SimulateKey"/>: a modal window owns
+    /// the keyboard while it is up, and the framework's routing to it only exists inside <c>Run()</c>.
+    /// </summary>
+    internal void SimulateHistorySearchKey(ConsoleKeyInfo key) => _historySearch.SimulateKey(key);
+
+    /// <summary>Types a filter into the open ⌃R surface, one real keystroke at a time.</summary>
+    internal void SimulateHistorySearchTyping(string text) => _historySearch.SimulateTyping(text);
+
+    /// <summary>What a command line has recorded, oldest first — the list the ⌃R surface reads.</summary>
+    internal IReadOnlyList<string> HistoryEntries(InputBar bar) => HistoryFor(bar).Entries;
+
     /// <summary>Whether a confirmed quit has ended the loop — what <c>RequestExit</c> did, observably.</summary>
     internal bool ExitRequested => _exiting;
 
@@ -4008,7 +4172,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             // framework already routes keys to them and this handler is not raised at all — the guard is
             // here because "a macro must not fire while a screen is open" is a rule of this app, not a
             // consequence of how the framework happens to dispatch, and the next surface may not be modal.
-            if (_palette.IsOpen || _settings.IsOpen || _quit.IsOpen)
+            if (AnyOverlayOpen)
             {
                 return null;
             }
@@ -4379,7 +4543,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     {
         // Overlays own the whole screen while they're up; a drag underneath them would target panes
         // the user can't even see.
-        if (_palette.IsOpen || _settings.IsOpen || _quit.IsOpen || _moveMode)
+        if (AnyOverlayOpen || _moveMode)
         {
             return;
         }

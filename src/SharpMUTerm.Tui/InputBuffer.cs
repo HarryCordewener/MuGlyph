@@ -119,7 +119,14 @@ internal sealed class InputBuffer
         return true;
     }
 
-    /// <summary>Deletes the word before the caret (⌃W).</summary>
+    /// <summary>
+    /// Deletes the word before the caret — readline's backward-kill-word. <b>No keystroke reaches it.</b>
+    /// It was reached from ⌃W, which the application claims globally for <c>CloseActiveWindow</c>, and a
+    /// global shortcut runs before any window: the case in <see cref="InputBarControl.ProcessKey"/> could
+    /// never have fired and has been removed. This is kept because the editing operation is correct and
+    /// tested, and what it is missing is a chord this host can deliver — see that key table for why
+    /// Alt+Backspace is not one.
+    /// </summary>
     internal bool KillWordLeft()
     {
         var start = WordLeft();

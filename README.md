@@ -85,8 +85,10 @@ HTML logging · GMCP / MSDP / MSSP / MCCP · MXP + Pueblo · Unicode/emoji.
   character-bound input prompt + destination/draft gutter. Output is truecolor markup with clickable
   MXP/Pueblo/web spans; every connected world is told its **own pane's** size over NAWS, on every
   resize and every layout change (rate-limited, with the settled size always delivered).
-  `Ctrl+N` next window · `Ctrl+O` next pane · `Ctrl+W` close · `Ctrl+Q` quit (asks first, naming the
-  connections and unsent drafts it would end).
+  `Ctrl+N` next window · `Ctrl+O` next pane · `Ctrl+W` close · `Ctrl+R` command history (per command
+  line, newest first, typing filters it; ⏎ puts an entry on the input line rather than sending it) ·
+  `Ctrl+Q` quit (asks first, naming the connections and unsent drafts it would end). Hand-typed login
+  lines (`connect <name> <password>`) are kept out of history, and history is never written to disk.
 - **Web view** — an in-TUI text-mode browser (`SharpMUTerm.Web`, AngleSharp): fetch a URL or
   follow an MXP/Pueblo/HTML link and read the page as styled, word-wrapped text with clickable
   links you can navigate in-pane. `<img>` shows as a labelled link (graphics-terminal image

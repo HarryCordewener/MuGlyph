@@ -56,6 +56,15 @@ public sealed class InputSettings
     public bool KeepDrafts { get; set; } = true;
 
     /// <summary>
+    /// Keep hand-typed login lines out of command history — <c>connect &lt;name&gt; &lt;password&gt;</c>
+    /// and the other verbs <see cref="Input.HistorySecrets"/> lists. On by default, and the analogue of
+    /// bash's <c>HISTIGNORE</c>: history is browsable and searchable (⌃R), so a password recorded in it is
+    /// a password on display. Turning it off means those lines are recalled like any other; nothing is
+    /// written to disk either way.
+    /// </summary>
+    public bool ExcludeCredentials { get; set; } = true;
+
+    /// <summary>
     /// How many lines tall the command line is before anything is typed into it. Three by default, so
     /// a wrapped line has somewhere to wrap to without the input resizing on the first keystroke.
     /// </summary>
