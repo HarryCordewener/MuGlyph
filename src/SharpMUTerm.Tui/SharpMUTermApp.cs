@@ -407,6 +407,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// button down on the first pane's tab strip, then a drag frame over the second pane's left edge.
     /// The button is deliberately left down so the frame captures the live drop preview. Requires a
     /// frame to have been rendered already, so the panes have real bounds to hit.
+    /// <para>
+    /// The auto-repeat frame between them is the host's, not a terminal's: SharpConsoleUI's Unix reader
+    /// re-raises a bare <c>Button1Pressed</c> at the pointer's current cell every 100 ms while the
+    /// button is held. It is here because the frame this snapshot documents is the one a real mouse
+    /// produces, and a real mouse never gets to the drop without passing through several of these — and
+    /// while they were read as fresh presses, this preview was what flashed up and vanished.
+    /// </para>
     /// </summary>
     private void SimulateSnapshotDrag()
     {
@@ -424,13 +431,17 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return;
         }
 
-        driver.SimulateMouseEvent(
-            new List<MouseFlags> { MouseFlags.Button1Pressed },
-            new System.Drawing.Point(source.X + 2, source.Y));
+        var origin = new System.Drawing.Point(source.X + 2, source.Y);
+        var drop = new System.Drawing.Point(target.X + 1, target.Y + (target.Height / 2));
+
+        driver.SimulateMouseEvent(new List<MouseFlags> { MouseFlags.Button1Pressed }, origin);
+        driver.SimulateMouseEvent(new List<MouseFlags> { MouseFlags.Button1Pressed }, origin); // auto-repeat
 
         driver.SimulateMouseEvent(
             new List<MouseFlags> { MouseFlags.Button1Pressed, MouseFlags.Button1Dragged, MouseFlags.ReportMousePosition },
-            new System.Drawing.Point(target.X + 1, target.Y + (target.Height / 2)));
+            drop);
+
+        driver.SimulateMouseEvent(new List<MouseFlags> { MouseFlags.Button1Pressed }, drop); // and another
     }
 
     /// <summary>
@@ -1507,8 +1518,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         return refs;
     }
 
-    /// <summary>Runs a command-surface entry by its id, doing what the current shell supports.</summary>
-    private void DispatchCommand(string id)
+    /// <summary>
+    /// Runs a command-surface entry by its id, doing what the current shell supports. Internal so a
+    /// headless test can drive a menu entry without opening the surface and typing at it.
+    /// </summary>
+    internal void DispatchCommand(string id)
     {
         if (id.StartsWith("win:", StringComparison.Ordinal))
         {
@@ -1527,12 +1541,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 CloseActiveWindow(); // rebuilds the pane area itself
                 return;
             case "layout:split-right":
-                PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitRight);
-                RebuildPaneArea();
+                SplitFocusedPane(PaneCommand.SplitRight); // reports when the pane has nothing to split
                 return;
             case "layout:split-down":
-                PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitDown);
-                RebuildPaneArea();
+                SplitFocusedPane(PaneCommand.SplitDown);
                 return;
             case "term:freeze":
             case "term:unfreeze":
@@ -2208,6 +2220,22 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     internal string? SimulateKey(ConsoleKeyInfo key) => HandleWindowKey(new KeyPressedEventArgs(key, false));
 
     /// <summary>
+    /// Arms the ⌃B prefix and then feeds one key, as pressing the chord and the key would. The arming
+    /// goes through the method the shortcut itself runs, because ⌃B <em>is</em> a global shortcut and
+    /// the framework dispatches those only inside <c>Run()</c> — the loop a headless test never enters —
+    /// so there is no pair of keystrokes a test could send instead. Everything after that is the real
+    /// handler.
+    /// </summary>
+    internal string? SimulatePrefixedKey(ConsoleKeyInfo key)
+    {
+        ArmPrefix();
+        return SimulateKey(key);
+    }
+
+    /// <summary>The status line's current markup — where a pane command that had nothing to do says so.</summary>
+    internal string StatusMarkup => _statusBar.Text;
+
+    /// <summary>
     /// The main window's key handler: move mode, the drag escape, the ⌃B prefix, then a bound macro,
     /// then draft-safe history recall. Returns the macro command it dispatched, or null.
     /// </summary>
@@ -2253,23 +2281,128 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
         _prefixArmed = false;
         e.Handled = true;
-        switch (char.ToLowerInvariant(e.KeyInfo.KeyChar))
-        {
-            case '|': PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitRight); RebuildPaneArea(); break;
-            case '-': PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitDown); RebuildPaneArea(); break;
-            case 'z': _workspace.Layout.ToggleZoom(); RebuildPaneArea(); break;
-            case 'o': CyclePane(); break;
-            case 'x': CloseActiveWindow(); break;
-            case 'b': _railCollapsed = !_railCollapsed; RebuildPaneArea(); break;
-            case '<': if (_workspace.Layout.ReorderActiveTab(-1)) RefreshTabTitles(); break;
-            case '>': if (_workspace.Layout.ReorderActiveTab(1)) RefreshTabTitles(); break;
-            case 'm': EnterMoveMode(); break;
-            default: break; // any other key just disarms
-        }
-
+        RunPrefixCommand(PrefixKey(e.KeyInfo));
         _header.SetContent(new List<string> { HeaderMarkup() });
         return null;
     }
+
+    /// <summary>
+    /// Which pane command a key pressed after ⌃B names. The keymap is literal characters — <c>&lt;</c>
+    /// and <c>&gt;</c> reorder the active tab — but a bare pair of angle brackets on the armed strip
+    /// reads as a direction, and reaching for ← and → is what that label invites; so the arrows are
+    /// accepted as the same two commands. Nothing competes for them here: their other job, draft-safe
+    /// history recall, only runs while the prefix is <em>not</em> armed.
+    /// </summary>
+    private static char PrefixKey(ConsoleKeyInfo key) => key.Key switch
+    {
+        ConsoleKey.LeftArrow => '<',
+        ConsoleKey.RightArrow => '>',
+        _ => char.ToLowerInvariant(key.KeyChar),
+    };
+
+    /// <summary>
+    /// Runs the pane command a ⌃B key names, and says on the status line when the command had nothing
+    /// to do.
+    /// <para>
+    /// The reporting is the point. On a fresh workspace — one pane holding one window — every key on
+    /// the strip is a legitimate no-op: a split moves the pane's <em>other</em> tabs across and there
+    /// are none, reordering needs a second tab, and zoom and cycle need a second pane. A keystroke that
+    /// changes nothing and says nothing is indistinguishable from a prefix that never fired, which is
+    /// exactly how the whole feature read from the outside.
+    /// </para>
+    /// </summary>
+    private void RunPrefixCommand(char key)
+    {
+        switch (key)
+        {
+            case '|':
+                SplitFocusedPane(PaneCommand.SplitRight);
+                break;
+
+            case '-':
+                SplitFocusedPane(PaneCommand.SplitDown);
+                break;
+
+            case 'z':
+                if (_workspace.Layout.Panes.Count <= 1)
+                {
+                    RefusePrefix("nothing to zoom — the workspace has one pane");
+                    break;
+                }
+
+                _workspace.Layout.ToggleZoom();
+                RebuildPaneArea();
+                break;
+
+            case 'o':
+                if (_workspace.Layout.Panes.Count <= 1)
+                {
+                    RefusePrefix("nowhere to cycle to — the workspace has one pane");
+                    break;
+                }
+
+                CyclePane();
+                break;
+
+            case 'x':
+                // CloseActiveWindow refuses the main window; it is the session, not a closable tab.
+                if (ActiveWindowId() == MainWindowId)
+                {
+                    RefusePrefix("the main window stays open — ⌃B x closes a spawn or web tab");
+                    break;
+                }
+
+                CloseActiveWindow();
+                break;
+
+            case 'b':
+                _railCollapsed = !_railCollapsed;
+                RebuildPaneArea();
+                break;
+
+            case '<':
+            case '>':
+                var tabs = _workspace.Layout.FocusedPane.Tabs.Count;
+                if (_workspace.Layout.ReorderActiveTab(key == '<' ? -1 : 1))
+                {
+                    RefreshTabTitles();
+                    break;
+                }
+
+                RefusePrefix(tabs > 1
+                    ? "the tab is already at that end of the strip"
+                    : "nothing to reorder — this pane has one tab");
+                break;
+
+            case 'm':
+                EnterMoveMode();
+                break;
+
+            default:
+                break; // any other key just disarms
+        }
+    }
+
+    /// <summary>
+    /// Splits the focused pane, or reports why it can't. Shared by <c>⌃B |</c> / <c>⌃B -</c> and the
+    /// command surface's split entries, which refused just as quietly.
+    /// </summary>
+    private void SplitFocusedPane(PaneCommand command)
+    {
+        if (PaneCommands.Apply(_workspace.Layout, command))
+        {
+            RebuildPaneArea();
+            return;
+        }
+
+        RefusePrefix("nothing to split — a split moves this pane's other tabs across, and it has none");
+    }
+
+    /// <summary>
+    /// Says on the status line that a pane command had nothing to do. Transient, like the drag and move
+    /// prompts: the next <see cref="UpdateStatus"/> puts the connection line back.
+    /// </summary>
+    private void RefusePrefix(string reason) => SetStatus($"[#e5c07b]⌃B[/] [dim]{Escape(reason)}[/]");
 
     /// <summary>
     /// Runs the macro bound to a keystroke and returns the command it sent, or null when this key is not
@@ -2820,10 +2953,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         sb.Append($"[{tail} on {headerBg}]{Glyphs.PowerRight}[/]");
         var leftBar = sb.ToString();
 
-        // The ⌃B prefix indicator shows only while armed (design: "⌃B — awaiting | - z o x b m < >").
+        // The ⌃B prefix indicator shows only while armed (design: "⌃B — awaiting | - z o x b m < > ← →").
+        // The reorder pair lists both spellings: the keymap is the literal < and >, but bare angle
+        // brackets read as a direction, and the arrows are what a reader reaches for — so they work too
+        // (see PrefixKey) and the strip says so rather than leaving the guess to be discovered.
         if (_prefixArmed)
         {
-            return $"{leftBar}  [#e5c07b]⌃B — awaiting[/]  [dim]| - z o x b m < >[/]";
+            return $"{leftBar}  [#e5c07b]⌃B — awaiting[/]  [dim]| - z o x b m < > ← →[/]";
         }
 
         var connected = _connectedKeys.Count;
