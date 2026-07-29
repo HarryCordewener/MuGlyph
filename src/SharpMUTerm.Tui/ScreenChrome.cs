@@ -30,7 +30,7 @@ internal static class ScreenChrome
         if (focus?.Edit is { } edit)
         {
             var editing = EditingHints
-                + (edit.HasChoices ? ChoiceHint : string.Empty)
+                + (edit.VisibleChoices.Count > 0 ? ChoiceHint : string.Empty)
                 + (edit.RowFields > 1 ? NextFieldHint : string.Empty);
             return $"[{ScreenPalette.Label}]{editing} · [/][{ScreenPalette.Accent}]{fkey}[/]"
                 + $"[{ScreenPalette.Label}] close [/]";
@@ -70,11 +70,18 @@ internal static class ScreenChrome
     internal const string NextFieldHint = " · ⇥ next field";
 
     /// <summary>
-    /// Added to <see cref="EditingHints"/> only when the open field is one of a fixed set of values —
-    /// a route, an encoding, a highlight colour — because only those have anything for ↑↓ to step
-    /// through. A free-text field would be claiming a key that does nothing.
+    /// Added to <see cref="EditingHints"/> only while the open field's dropdown actually has entries in
+    /// it — because ↑↓ walk exactly those entries and nothing else. It says <c>pick from list</c> rather
+    /// than the older <c>choose</c> because the list is now on screen: the keys move through what the
+    /// user can see, and put the entry they land on into the field.
+    /// <para>
+    /// It is derived from <see cref="ScreenFieldEdit.VisibleChoices"/>, not from whether the field has
+    /// choices at all, so it disappears the moment a typed value narrows the list to nothing — the
+    /// point at which ↑↓ genuinely stop doing anything (see <see cref="ScreenField.Cycle"/>). A hint
+    /// that stayed up over an empty list would be the same lie the <c>⏎ edit</c> rule already forbids.
+    /// </para>
     /// </summary>
-    internal const string ChoiceHint = " · ↑↓ choose";
+    internal const string ChoiceHint = " · ↑↓ pick from list";
 
     /// <summary>What the footer's Esc chip does while the screen is navigating.</summary>
     internal const string CancelAction = "[[Esc]] Cancel";
@@ -163,6 +170,183 @@ internal static class ScreenChrome
     /// where the caret goes the moment ⏎ opens the field, so the well doesn't jump sideways under it.
     /// </summary>
     private static string Well(string display) => $"[on {ScreenPalette.FieldBg}]{display} [/]";
+
+    /// <summary>
+    /// The block caret <see cref="Field"/> paints, which is what <see cref="Choices"/> hangs the
+    /// dropdown off. Exactly one field of one row can be open at a time, and only the column that draws
+    /// that field paints this — so finding it is how a column knows the open edit is *its* edit, without
+    /// every renderer having to hand back the line number it drew the value on.
+    /// </summary>
+    private static readonly string CaretMark = $"[{ScreenPalette.Ink} on {ScreenPalette.Accent}]";
+
+    /// <summary>
+    /// The most candidates a dropdown lists at once. Seventeen colour names is more rows than F2's
+    /// editor pane has to spare beside the pattern, the highlight rows and the three action templates,
+    /// so the list is capped and the caption says what it is capped to (<c>6 of 17</c>) — a list that
+    /// silently showed a third of itself would be worse than no list.
+    /// </summary>
+    internal const int MaxChoiceRows = 6;
+
+    /// <summary>What the dropdown calls itself when the field will take values outside the list.</summary>
+    internal const string OpenChoicesCaption = "suggestions";
+
+    /// <summary>What it calls itself when the list is the permitted set and nothing else will commit.</summary>
+    internal const string ClosedChoicesCaption = "these values only";
+
+    /// <summary>
+    /// What an open field's dropdown says when the buffer matches none of its entries. It names the
+    /// state as *legal*, because on these fields it is: the spawn windows are defined by what routes to
+    /// them, so a name matching nothing is how the next one is created. An empty list with nothing
+    /// written beside it would read as a refusal.
+    /// </summary>
+    internal const string NoMatchOpen = "nothing matches — a new value is allowed";
+
+    /// <summary>
+    /// What a closed field's dropdown says instead. It states the fact and stops there: the value is
+    /// refused at ⏎ by the field's own validator, which reports it against the row in
+    /// <see cref="ScreenPalette.Warn"/>, and a second warning drawn before the user has finished typing
+    /// would spend that colour on a value they may still be halfway through.
+    /// </summary>
+    internal const string NoMatchClosed = "nothing matches";
+
+    /// <summary>How far the dropdown is inset from the column's edge, so it hangs under the field.</summary>
+    private const string ChoiceIndent = "  ";
+
+    /// <summary>
+    /// Draws an open field's candidate list into <paramref name="column"/>, and hands the column back.
+    /// Every screen calls this once on each block that draws fields; a block that isn't drawing the open
+    /// edit has no caret in it and comes back untouched, so the wiring is one line per column and cannot
+    /// be pointed at the wrong field.
+    /// <para>
+    /// The list is an <b>overlay</b>: it replaces the rows next to the field instead of pushing them
+    /// down. Pushing was the obvious shape and is the wrong one here. F5's character form is a grid row
+    /// sized to its own line count, so a list that grew it would resize the whole screen the instant ⏎
+    /// was pressed; F2's editor pane already runs to two dozen rows, so on a short terminal the rows
+    /// pushed off the bottom would include the three checkboxes the cursor can still reach. An overlay
+    /// changes no geometry at all — the rows it covers are visible again the moment the field closes,
+    /// and none of them can be scrolled out of existence in the meantime.
+    /// </para>
+    /// <para>
+    /// It opens downward, and upward when there aren't enough rows below it — F5's log format is the
+    /// second-to-last line of its form, and a list that ran off the end of the block would simply not be
+    /// drawn. The caption keeps its edge against the field either way (<c>▾</c> below, <c>▴</c> above),
+    /// so the block reads as attached to the well rather than as content that happens to be near it.
+    /// </para>
+    /// </summary>
+    /// <param name="column">The block's lines, as the renderer has just built them.</param>
+    /// <param name="edit">The screen's open edit, or null while it is navigating.</param>
+    /// <param name="width">The column's width; the list is content-sized and never drawn wider.</param>
+    internal static List<string> Choices(List<string> column, ScreenFieldEdit? edit, int width)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+
+        if (edit is not { HasChoices: true } open)
+        {
+            return column;
+        }
+
+        var anchor = column.FindIndex(l => l.Contains(CaretMark, StringComparison.Ordinal));
+        if (anchor < 0)
+        {
+            return column;
+        }
+
+        var (caption, entries) = ChoiceContent(open);
+        var height = entries.Count + 2; // the caption, and the shadow closing the far edge
+
+        // Below when the rows are there, above when they aren't, and — for a block shorter than the
+        // list itself — below anyway, extending it, because a list drawn nowhere helps nobody.
+        var above = anchor + 1 + height > column.Count && anchor - height >= 0;
+        var start = above ? anchor - height : anchor + 1;
+
+        // The caption keeps the edge nearest the field and names the direction; the shadow takes the
+        // far one. Reading order follows the block either way, which is what makes a list drawn upward
+        // legible at all.
+        var block = new List<(string Content, string Background)>(height)
+        {
+            ($"[{ScreenPalette.Label}]{(above ? "▴" : "▾")} {caption}[/]", ScreenPalette.MenuBg),
+        };
+        block.InsertRange(above ? 0 : 1, entries);
+
+        var inner = block.Max(row => MarkupText.VisibleLength(row.Content));
+        if (width > ChoiceIndent.Length + 2)
+        {
+            inner = Math.Min(inner, width - ChoiceIndent.Length - 2);
+        }
+
+        var lines = block.ConvertAll(row => MenuLine(row.Content, row.Background, inner));
+        lines.Insert(above ? 0 : lines.Count, Shadow(inner));
+
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var at = start + i;
+            if (at < column.Count)
+            {
+                column[at] = lines[i];
+            }
+            else
+            {
+                column.Add(lines[i]);
+            }
+        }
+
+        return column;
+    }
+
+    /// <summary>
+    /// The dropdown's caption and its drawn entries. The entries are the choices the buffer narrows to
+    /// (<see cref="ScreenField.Matching"/>) — the very list ↑↓ walk — windowed to
+    /// <see cref="MaxChoiceRows"/> around the one the buffer names, so the marked entry is always on
+    /// screen however far down a seventeen-colour palette it sits.
+    /// </summary>
+    private static (string Caption, List<(string Content, string Background)> Entries) ChoiceContent(
+        ScreenFieldEdit open)
+    {
+        var all = open.Choices!;
+        var visible = open.VisibleChoices;
+        var caption = open.ClosedChoices ? ClosedChoicesCaption : OpenChoicesCaption;
+        var entries = new List<(string, string)>();
+
+        if (visible.Count == 0)
+        {
+            return ($"{caption}  {(open.ClosedChoices ? NoMatchClosed : NoMatchOpen)}", entries);
+        }
+
+        var marked = ScreenField.IndexOf(visible, open.Text);
+        var take = Math.Min(MaxChoiceRows, visible.Count);
+        var first = visible.Count <= take
+            ? 0
+            : Math.Clamp(Math.Max(marked, 0) - ((take - 1) / 2), 0, visible.Count - take);
+
+        for (var i = first; i < first + take; i++)
+        {
+            var name = MarkupText.Escape(visible[i]);
+            entries.Add(i == marked
+                ? ($"[{ScreenPalette.Accent}]▸[/] [{ScreenPalette.Value}]{name}[/]", ScreenPalette.MenuSelectedBg)
+                : ($"  [{ScreenPalette.Label}]{name}[/]", ScreenPalette.MenuBg));
+        }
+
+        // The count is only worth a caption when it is news: the list is capped, or the buffer has
+        // narrowed it. "4 of 4" would just be noise on every route field ever opened.
+        return (take < all.Count ? $"{caption}  {take} of {all.Count}" : caption, entries);
+    }
+
+    /// <summary>
+    /// One row of the floating block: its own markup, inset from the column's edge, padded to the
+    /// block's shared inner width on a raised background. The block hugs its content rather than
+    /// spanning the pane, because a full-width band is what the pane's own rows look like and the one
+    /// thing this block must not be mistaken for is a row.
+    /// </summary>
+    private static string MenuLine(string content, string bg, int inner) =>
+        $"{ChoiceIndent}[on {bg}] {MarkupText.PadVisible(content, Math.Max(0, inner))} [/]";
+
+    /// <summary>
+    /// The block's far edge, offset a cell the way a dropped shadow is. It costs one row and buys the
+    /// thing a cell grid cannot otherwise say: that the pane's own rows continuing below (or above) the
+    /// list are *behind* it and not part of it.
+    /// </summary>
+    private static string Shadow(int inner) =>
+        $"{ChoiceIndent} [on {ScreenPalette.MenuShadow}]{new string(' ', Math.Max(0, inner + 1))}[/]";
 
     /// <summary>
     /// Draws a value the keyboard cannot change where it is drawn — a world's TLS/certificate line, a

@@ -55,6 +55,28 @@ internal static class ScreenPalette
     internal const string Ink = "#0f1620";
 
     /// <summary>
+    /// The surface an open field's candidate list floats on (<see cref="ScreenChrome.Choices"/>).
+    /// Deliberately *lighter* than every panel a screen draws — the backdrop, the elevated card, and
+    /// the cursor bar — because the list is drawn over the rows beneath it rather than between them,
+    /// and a raised tone is the only way a cell grid can say "this is on top of that".
+    /// </summary>
+    internal const string MenuBg = "#2b3348";
+
+    /// <summary>
+    /// The candidate the buffer currently names, within that list. Lighter again, so the mark reads
+    /// against the list the way the list reads against the pane.
+    /// </summary>
+    internal const string MenuSelectedBg = "#3f4b69";
+
+    /// <summary>
+    /// The list's far edge — the drop shadow it casts on the rows it is covering, drawn on the side
+    /// away from the field so the block visibly *ends*. Darker than any panel, because that is the only
+    /// tone left that reads as "under". Without it the pane's own rows below a short list (F2's
+    /// attribute legend is the case that shows it) look like more of the list.
+    /// </summary>
+    internal const string MenuShadow = "#0b0e15";
+
+    /// <summary>
     /// The well behind an editable value — whether or not it is being typed into. Clearly darker than
     /// every panel it can appear on (and than <see cref="CursorBg"/>), so a field reads as a recessed
     /// input on any of them, at rest and without focus. The well *is* the affordance: a value drawn in

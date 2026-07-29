@@ -519,7 +519,7 @@ internal static class WorldsScreenRenderer
             CharactersPane,
             world.Characters.Count,
             DetailRowWidth));
-        return right;
+        return ScreenChrome.Choices(right, cursor.Edit, DetailRowWidth);
     }
 
     /// <summary>
@@ -599,7 +599,7 @@ internal static class WorldsScreenRenderer
         CharacterDefinition character, string accent, ScreenFocus? focus = null, int selectedCharacter = -1)
     {
         var cursor = focus ?? ScreenFocus.None;
-        return new List<string>
+        var form = new List<string>
         {
             $"[bold {accent}]└ CHARACTER · {Escape(character.Name)}[/]",
             string.Empty,
@@ -631,6 +631,12 @@ internal static class WorldsScreenRenderer
                 LogDirectoryField,
                 pane: CharactersPane)),
         };
+
+        // The log format is the second-to-last row of this block, so its list is drawn upward — the one
+        // case on these screens where a downward list would have nowhere to go. The block's height is a
+        // grid row in WorldsScreenView, which is the other half of why the list overlays rather than
+        // pushes: growing this list would resize the pane and shove the whole screen about.
+        return ScreenChrome.Choices(form, cursor.Edit, CharDetailColumnWidth);
     }
 
     /// <summary>

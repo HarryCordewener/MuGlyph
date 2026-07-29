@@ -176,8 +176,15 @@ internal static class OptionsScreenRenderer
             navigable++;
         }
 
-        return lines;
+        return ScreenChrome.Choices(lines, cursor.Edit, width > 0 ? width : ChoiceListWidth);
     }
+
+    /// <summary>
+    /// How wide a dropdown may run on a screen rendered without a width — the merged
+    /// <see cref="Render(OptionsScreen)"/> path the unit tests use. The live view always passes a real
+    /// width, so this only keeps the width-agnostic fallback from letting a list run unbounded.
+    /// </summary>
+    private const int ChoiceListWidth = 60;
 
     /// <summary>
     /// The screen's one navigable pane: every row that isn't a spacer or a section header, in display
@@ -291,15 +298,32 @@ internal static class OptionsScreenRenderer
             new("keep per-tab drafts", null, settings.KeepDrafts, null,
                 ScreenToggle.Bind(() => settings.KeepDrafts, v => settings.KeepDrafts = v)),
             new("newline key", settings.NewlineKey, null, null, null,
-                ScreenField.Text("newline key", () => settings.NewlineKey, v => settings.NewlineKey = v)),
+                ScreenField.Text(
+                    "newline key", () => settings.NewlineKey, v => settings.NewlineKey = v, NewlineKeys)),
             new(string.Empty, null, null),
             new("├ SPELLCHECK", null, null),
             new("check spelling", null, settings.CheckSpelling, null,
                 ScreenToggle.Bind(() => settings.CheckSpelling, v => settings.CheckSpelling = v)),
             new("dictionary", settings.Dictionary, null, null, null,
-                ScreenField.Text("dictionary", () => settings.Dictionary, v => settings.Dictionary = v)),
+                ScreenField.Text(
+                    "dictionary", () => settings.Dictionary, v => settings.Dictionary = v, Dictionaries)),
         });
     }
+
+    /// <summary>
+    /// The chords worth offering for the newline key. Suggestions, not the permitted set: what a
+    /// terminal actually delivers for a modified Enter varies by emulator, so a closed list would refuse
+    /// the one chord a given terminal can send. Listing them is what stops the field being typed blind.
+    /// </summary>
+    private static readonly string[] NewlineKeys = { "Shift+Enter", "Ctrl+Enter", "Alt+Enter", "Ctrl+J" };
+
+    /// <summary>
+    /// The dictionaries worth offering. Open for the same reason: the speller loads whichever locale is
+    /// installed on the machine, and a list this screen closed would be a list of what its author
+    /// happened to have.
+    /// </summary>
+    private static readonly string[] Dictionaries =
+        { "en_US", "en_GB", "de_DE", "fr_FR", "es_ES", "nl_NL", "pt_BR", "sv_SE" };
 
     /// <summary>The F7 "Text &amp; ANSI" screen body.</summary>
     public static List<string> TextAnsi() => Render(TextAnsiScreen());

@@ -121,7 +121,17 @@ public class ScreenFieldTests
 
         await Assert.That(field.Cycle("Html", 1)).IsEqualTo("Both");
         await Assert.That(field.Cycle("None", -1)).IsEqualTo("Both"); // wraps at the start
-        await Assert.That(field.Cycle("Ht", 1)).IsEqualTo("None"); // half-typed starts over
+
+        // A half-typed buffer used to start the cycle over at the first choice, from before there was a
+        // list on screen to start over *in*. ↑↓ now walk exactly the entries the dropdown is showing, and
+        // "Ht" is showing only "Html" — so ↓ takes the one match rather than jumping past it to "None".
+        await Assert.That(ScreenField.Matching(field.Choices, "Ht")).IsEquivalentTo(new[] { "Html" });
+        await Assert.That(field.Cycle("Ht", 1)).IsEqualTo("Html");
+        await Assert.That(field.Cycle("Ht", -1)).IsEqualTo("Html");
+
+        // And a buffer matching nothing has nowhere to step, so the keystroke leaves it alone rather
+        // than overwriting what is being typed.
+        await Assert.That(field.Cycle("Verbose", 1)).IsNull();
     }
 
     [Test]

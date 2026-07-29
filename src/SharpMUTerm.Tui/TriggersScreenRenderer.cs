@@ -526,8 +526,9 @@ internal static class TriggersScreenRenderer
             // therefore drawn as an editable value like every other row in this pane rather than as a
             // radio group: the group cost five rows, was the only control here shaped differently
             // from its neighbours, and could not show a name being typed for the first time without a
-            // row invented for the purpose. The windows already in use remain ↑↓ suggestions while
-            // the field is open, which is what a radio group was really offering.
+            // row invented for the purpose. The windows already in use are listed beneath it while the
+            // field is open (ScreenChrome.Choices, applied to this whole column at the end) — which is
+            // what a radio group was really offering, without pretending the set is closed.
             $"  {ScreenChrome.Field(Escape(currentRoute), route)}",
         };
 
@@ -569,7 +570,9 @@ internal static class TriggersScreenRenderer
         lines.Add(ScreenChrome.Cursor(
             Checkbox("case sensitive", trigger.CaseSensitive), cursor.IsOn(1, 2), ColumnWidth));
 
-        return lines;
+        // Four of this pane's nine fields know values worth listing — the route, both highlight colours
+        // and the script callback — and all four get the same drawn list, over the rows beside them.
+        return ScreenChrome.Choices(lines, cursor.Edit, ColumnWidth);
     }
 
     /// <summary>A checkbox row in the editor pane, checked in the accent and unchecked dim.</summary>

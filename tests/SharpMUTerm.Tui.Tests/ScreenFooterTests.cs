@@ -146,19 +146,37 @@ public class ScreenFooterTests
     /// ↑↓ is offered only by a field that has choices to step through. It is the same rule as ⇥, which
     /// is offered only when the row holds another field: a hint for a key that would do nothing is the
     /// bug this file is about, one keystroke smaller.
+    /// <para>
+    /// The rule now bites one level finer, because ↑↓ walk the list the dropdown is *showing*: a buffer
+    /// that has narrowed that list to nothing leaves the keys with nowhere to go, and the hint goes with
+    /// them.
+    /// </para>
     /// </summary>
     [Test]
     public async Task EditingHints_OfferTheChoiceKeysOnlyForAFieldThatHasChoices()
     {
+        var routes = new[] { "main", "Chat", "pages" };
         var free = ScreenChrome.Hints(
             ScreenChrome.ListHints, "F5", true, new ScreenFocus(0, 0, new ScreenFieldEdit(0, "x", 1, null)));
         var choices = ScreenChrome.Hints(
             ScreenChrome.ListHints,
             "F5",
             true,
-            new ScreenFocus(0, 0, new ScreenFieldEdit(0, "main", 4, null, HasChoices: true)));
+            new ScreenFocus(0, 0, new ScreenFieldEdit(0, "main", 4, null, Choices: routes)));
+        var narrowed = ScreenChrome.Hints(
+            ScreenChrome.ListHints,
+            "F5",
+            true,
+            new ScreenFocus(0, 0, new ScreenFieldEdit(0, "pa", 2, null, Choices: routes)));
+        var matchedNothing = ScreenChrome.Hints(
+            ScreenChrome.ListHints,
+            "F5",
+            true,
+            new ScreenFocus(0, 0, new ScreenFieldEdit(0, "combat", 6, null, Choices: routes)));
 
         await Assert.That(free).DoesNotContain(ScreenChrome.ChoiceHint);
         await Assert.That(choices).Contains(ScreenChrome.ChoiceHint);
+        await Assert.That(narrowed).Contains(ScreenChrome.ChoiceHint);
+        await Assert.That(matchedNothing).DoesNotContain(ScreenChrome.ChoiceHint);
     }
 }

@@ -18,12 +18,38 @@ namespace SharpMUTerm.Tui;
 /// <param name="RowFields">
 /// How many fields the row holds — the chrome only offers ⇥ when there is a next field to step to.
 /// </param>
-/// <param name="HasChoices">
-/// Whether the open field offers a fixed set of values, so the chrome only offers ↑↓ when there is
-/// something for them to step through.
+/// <param name="Choices">
+/// The values the open field knows about, or null when it knows none. Carried on the edit rather than
+/// looked up again per renderer, because every screen now <em>draws</em> them
+/// (<see cref="ScreenChrome.Choices"/>) as well as stepping through them, and a list the chrome
+/// re-derived could disagree with the list ↑↓ actually walks.
+/// </param>
+/// <param name="ClosedChoices">
+/// Whether <paramref name="Choices"/> is the permitted set rather than a shortlist of suggestions —
+/// the difference between a log format (only these four values exist) and a window name (these are
+/// the windows in use; typing a fifth is how the fifth comes into being). The chrome says which,
+/// because a list drawn the same way for both would imply a closed set where anything is legal.
 /// </param>
 internal readonly record struct ScreenFieldEdit(
-    int Field, string Text, int Caret, string? Error, int RowFields = 1, bool HasChoices = false);
+    int Field,
+    string Text,
+    int Caret,
+    string? Error,
+    int RowFields = 1,
+    IReadOnlyList<string>? Choices = null,
+    bool ClosedChoices = false)
+{
+    /// <summary>Whether the open field knows any values at all, whatever the buffer currently is.</summary>
+    internal bool HasChoices => Choices is { Count: > 0 };
+
+    /// <summary>
+    /// The choices the buffer currently narrows to — what the dropdown lists and what ↑↓ step through,
+    /// which are deliberately the same list (see <see cref="ScreenField.Matching"/>). It can be empty
+    /// while <see cref="HasChoices"/> is true: a buffer naming something new matches nothing, which is
+    /// a legal state on an open field and the reason the chrome reads them apart.
+    /// </summary>
+    internal IReadOnlyList<string> VisibleChoices => ScreenField.Matching(Choices, Text);
+}
 
 /// <summary>
 /// An editable value on a settings row: how to read it as text, whether a typed string is a legal
@@ -43,46 +69,120 @@ internal readonly record struct ScreenFieldEdit(
 /// <param name="Validate">Returns null when a buffer is a legal value, else why it isn't.</param>
 /// <param name="Set">Writes a buffer that <paramref name="Validate"/> has already accepted.</param>
 /// <param name="Snapshot">Captures the current value, returning the action that restores it.</param>
-/// <param name="Choices">The legal values when the field is an enumeration, else null.</param>
+/// <param name="Choices">The values the field knows about, else null.</param>
+/// <param name="ClosedChoices">
+/// Whether <paramref name="Choices"/> is the <em>permitted</em> set. A closed field refuses anything
+/// outside it (<see cref="Choice"/>, <see cref="Enumeration{TEnum}"/>); an open one merely suggests
+/// (<see cref="WindowName"/>, <see cref="Colour"/>, <see cref="Template"/>), and its validator says so
+/// independently. It is carried here rather than inferred, because the chrome draws the two lists
+/// differently and a renderer guessing from the field's shape would eventually guess wrong.
+/// </param>
 internal readonly record struct ScreenField(
     string Label,
     Func<string> Get,
     Func<string, string?> Validate,
     Action<string> Set,
     Func<Action> Snapshot,
-    IReadOnlyList<string>? Choices = null)
+    IReadOnlyList<string>? Choices = null,
+    bool ClosedChoices = false)
 {
     /// <summary>Longest rejection message kept; regex parser errors run to several lines otherwise.</summary>
     private const int MaxErrorLength = 44;
 
     /// <summary>
+    /// The choices a buffer narrows to: everything, when the buffer is empty or already <em>names</em>
+    /// one of them, and otherwise every choice containing it, case-insensitively, in the field's own
+    /// order.
+    /// <para>
+    /// The exception for an exact name is what makes this usable rather than merely correct. A field
+    /// opens on its committed value, so a plain filter would collapse the list to the one entry already
+    /// selected the instant it was drawn — the dropdown would never show you the alternatives it exists
+    /// to show. A buffer that names a choice is a <em>selection</em>, so the whole list stays up with
+    /// that entry marked; a buffer that doesn't is a search, so the list narrows to what it matched.
+    /// </para>
+    /// <para>
+    /// Substring rather than prefix: colour names are remembered by their middles as often as their
+    /// starts (<c>gre</c> finding <c>green</c> and <c>grey</c> is the point), and the list is short
+    /// enough that a loose match never floods it.
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyList<string> Matching(IReadOnlyList<string>? choices, string buffer)
+    {
+        if (choices is not { Count: > 0 })
+        {
+            return Array.Empty<string>();
+        }
+
+        var trimmed = buffer.Trim();
+        if (trimmed.Length == 0 || IndexOf(choices, trimmed) >= 0)
+        {
+            return choices;
+        }
+
+        var matched = new List<string>();
+        foreach (var choice in choices)
+        {
+            if (choice.Contains(trimmed, StringComparison.OrdinalIgnoreCase))
+            {
+                matched.Add(choice);
+            }
+        }
+
+        return matched;
+    }
+
+    /// <summary>Where a buffer sits in a list of choices, matched by name, or -1 when it names none.</summary>
+    internal static int IndexOf(IReadOnlyList<string> choices, string buffer)
+    {
+        ArgumentNullException.ThrowIfNull(choices);
+
+        var trimmed = buffer.Trim();
+        for (var i = 0; i < choices.Count; i++)
+        {
+            if (string.Equals(choices[i], trimmed, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
     /// The choice <paramref name="direction"/> steps from <paramref name="current"/>, wrapping at both
-    /// ends — how ↑↓ move through an enum field. Null when the field isn't an enumeration. A buffer
-    /// that isn't one of the choices (half-typed) steps from the start.
+    /// ends — how ↑↓ move through the drawn list. Null when there is nothing to step to.
+    /// <para>
+    /// It walks <see cref="Matching"/> rather than every choice, so ↑↓ move through exactly the entries
+    /// the dropdown is showing: typing <c>pa</c> narrows the list to <c>pages</c> and ↓ takes it. A
+    /// buffer that matched nothing has an empty list and returns null — the keystroke is swallowed
+    /// rather than overwriting a name being typed for the first time, which on an open field is the
+    /// whole reason the field is open.
+    /// </para>
     /// </summary>
     internal string? Cycle(string current, int direction)
     {
-        if (Choices is not { Count: > 0 } choices)
+        var visible = Matching(Choices, current);
+        if (visible.Count == 0)
         {
             return null;
         }
 
-        var at = -1;
-        for (var i = 0; i < choices.Count; i++)
-        {
-            if (string.Equals(choices[i], current, StringComparison.OrdinalIgnoreCase))
-            {
-                at = i;
-                break;
-            }
-        }
-
-        var next = at < 0 ? (direction > 0 ? 0 : choices.Count - 1) : at + direction;
-        return choices[((next % choices.Count) + choices.Count) % choices.Count];
+        var at = IndexOf(visible, current);
+        var next = at < 0 ? (direction > 0 ? 0 : visible.Count - 1) : at + direction;
+        return visible[((next % visible.Count) + visible.Count) % visible.Count];
     }
 
-    /// <summary>Free text that may not be blank — a name, a host, a dictionary. Trimmed on commit.</summary>
-    internal static ScreenField Text(string label, Func<string> get, Action<string> set)
+    /// <summary>
+    /// Free text that may not be blank — a name, a host, a dictionary. Trimmed on commit.
+    /// <para>
+    /// <paramref name="known"/> is offered the way <see cref="WindowName"/> offers the spawn windows:
+    /// values worth naming, not the permitted set. A dictionary is whichever locale the speller has
+    /// installed and a newline key is whatever chord the terminal delivers, so neither can be closed —
+    /// but neither should be typed blind either, which is exactly what a suggestion list is for.
+    /// </para>
+    /// </summary>
+    internal static ScreenField Text(
+        string label, Func<string> get, Action<string> set, IReadOnlyList<string>? known = null)
     {
         ArgumentNullException.ThrowIfNull(get);
         ArgumentNullException.ThrowIfNull(set);
@@ -92,7 +192,8 @@ internal readonly record struct ScreenField(
             get,
             value => string.IsNullOrWhiteSpace(value) ? $"{label} cannot be empty" : null,
             value => set(value.Trim()),
-            Restore(get, set));
+            Restore(get, set),
+            known is { Count: > 0 } ? known : null);
     }
 
     /// <summary>
@@ -375,7 +476,11 @@ internal readonly record struct ScreenField(
             Restore(get, set));
     }
 
-    /// <summary>One of a fixed set of names, matched case-insensitively and stored canonically.</summary>
+    /// <summary>
+    /// One of a fixed set of names, matched case-insensitively and stored canonically. Its list is
+    /// <em>closed</em>: the validator refuses everything outside it, so the chrome draws it as the
+    /// permitted set rather than as suggestions.
+    /// </summary>
     internal static ScreenField Choice(
         string label, Func<string> get, Action<string> set, IReadOnlyList<string> choices)
     {
@@ -389,7 +494,8 @@ internal readonly record struct ScreenField(
             value => Canonical(choices, value) is null ? $"{label} must be one of: {string.Join(", ", choices)}" : null,
             value => set(Canonical(choices, value) ?? value),
             Restore(get, set),
-            choices);
+            choices,
+            ClosedChoices: true);
     }
 
     /// <summary>
@@ -422,7 +528,11 @@ internal readonly record struct ScreenField(
             ScreenColours.Palette);
     }
 
-    /// <summary>An enum value, typed or cycled by name — a character's log format is the canonical case.</summary>
+    /// <summary>
+    /// An enum value, typed or picked by name — a character's log format is the canonical case. Its
+    /// list is <em>closed</em>: the enum's members are the only values there are, and the chrome says so
+    /// rather than implying a fifth log format could be typed into existence.
+    /// </summary>
     internal static ScreenField Enumeration<TEnum>(string label, Func<TEnum> get, Action<TEnum> set)
         where TEnum : struct, Enum
     {
@@ -442,7 +552,8 @@ internal readonly record struct ScreenField(
                 }
             },
             Restore(get, set),
-            names);
+            names,
+            ClosedChoices: true);
     }
 
     /// <summary>Captures a value of any type and returns the action that writes it back.</summary>

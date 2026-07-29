@@ -238,7 +238,7 @@ internal static class TimersScreenRenderer
         var cursor = focus ?? ScreenFocus.None;
         var entries = Flatten(sets);
         return selected >= 0 && selected < entries.Count
-            ? BuildEditor(entries[selected].Timer, cursor, selected)
+            ? ScreenChrome.Choices(BuildEditor(entries[selected].Timer, cursor, selected), cursor.Edit, ColumnWidth)
             : new List<string>();
     }
 

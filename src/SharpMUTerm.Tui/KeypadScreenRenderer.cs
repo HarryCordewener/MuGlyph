@@ -275,7 +275,7 @@ internal static class KeypadScreenRenderer
 
         lines.Add(string.Empty);
         lines.AddRange(ScreenChrome.Buttons(Buttons(sets, selected), cursor, 0, macros.Count, ColumnWidth));
-        return lines;
+        return ScreenChrome.Choices(lines, cursor.Edit, ColumnWidth);
     }
 
     private static string NumpadRow(int[] digits, IReadOnlyList<Macro> macros)

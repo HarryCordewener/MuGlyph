@@ -4,8 +4,8 @@ Context for whoever (human or agent) picks up this work next.
 
 - **Repository:** `SharpMUSH/SharpMUTerm`
 - **Start from:** a fresh branch off `main`
-- **Tests:** 912 across the solution (338 Core / 83 Graphics / 42 Scripting /
-  28 Web / 421 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
+- **Tests:** 946 across the solution (338 Core / 83 Graphics / 42 Scripting /
+  28 Web / 455 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
   from this repo; building against a local SharpConsoleUI clone surfaces 2 upstream
   NuGet advisory warnings for AngleSharp, which are the framework's, not ours)
 
@@ -45,10 +45,12 @@ works.
 - **New items:** trigger and alias arrive enabled, timer arrives **disabled**. A
   timer is the only one of the four that acts without being provoked; the others
   wait for output or for a keypress.
-- **F2's route-to radios and highlight-colour picker** are live, as `Choice` and
+- **F2's route-to and highlight-colour picker** are live, as `WindowName` and
   `Colour` fields on the *rule's own list row* (ordinals: pattern, route,
-  highlight fg, highlight bg). ↑↓ cycle them, which is exactly radio and palette
-  semantics.
+  highlight fg, highlight bg). While one is open the chrome draws its candidates
+  beneath it and ↑↓ walk them — see *Dropdowns* under Critical Gotchas. The route
+  went radios → bare field → dropdown: radios could only ever re-use a window that
+  already existed, and a bare field showed one value and hid the other three.
 - **F2 reaches every action a trigger has** — rewrite, respond, script, added
   attributes and case sensitivity all have UI now, so nothing the README advertises
   is JSON-only any more. See *Settings screens* under Critical Gotchas for the
@@ -182,7 +184,8 @@ Things that will waste your time if you don't know them.
   whatever config is on the machine — and a saved config in `~/.config/SharpMUTerm/` will
   quietly replace the demo worlds, so you end up checking your own data and calling it the
   demo. Drop the flag only when reproducing something specific to a real setup.
-- **Snapshot view names:** `worlds`/`settings`, `triggers`, `aliases`, `timers`,
+- **Snapshot view names:** `worlds`/`settings`, `triggers`, `route`, `highlight`,
+  `aliases`, `timers`,
   `keypad`, `textansi`, `input`, `logging`, `freeze`, `spawn`, `split`, `move`,
   `drag`, `history`, `menu`, `menu-split`, plus the default (no `--view`) workspace.
   Extra state toggles: `collapsed`, `prefix`, `timestamps`. Any settings screen also
@@ -378,7 +381,8 @@ What the framework actually provides (read at v2.5.14, not assumed):
   closes. ⌃S always saves (committing an open field first, and refusing if that
   field won't validate). Esc cancels the screen — except mid-edit, where it
   abandons the buffer and leaves the screen up. Inside an edit: typing inserts,
-  Backspace/Delete remove, ←→/Home/End move the caret, ↑↓ cycle an enum's choices,
+  Backspace/Delete remove, ←→/Home/End move the caret, ↑↓ walk the drawn candidate
+  list (typing narrows it),
   ⇥ commits and steps to the row's next field, ⏎ commits.
 - **Validation is at commit, not per keystroke.** Any character can be typed;
   ⏎/⇥/⌃S validate. A rejected value keeps the edit open, marks the field with the
@@ -390,8 +394,8 @@ What the framework actually provides (read at v2.5.14, not assumed):
   by `ScreenChrome.ReadOnly` in the muted ink with **no** well. Opening a field
   keeps the same well and adds the accent block caret, so ⏎ deepens the affordance
   already on screen instead of conjuring one. The rule is scoped to rows that read
-  `label   value` — a checkbox and a radio group already carry an affordance of
-  their own, so F2's route radios and F5's list rows are left alone.
+  `label   value` — a checkbox already carries an affordance of its own, so the
+  checkbox rows and F5's list rows are left alone.
   `ScreenReadOnlyTests` pins both halves; add a read-only row and it must go
   through `ReadOnly`, or the well/no-well counts stop matching.
 - **A derived indicator is never a checkbox.** A checkbox promises Space does
@@ -426,7 +430,8 @@ What the framework actually provides (read at v2.5.14, not assumed):
   reads `model.HasEditableRow`, so a screen physically cannot advertise `⏎ edit`
   without offering one; `ScreenCursorTests` asserts the *if and only if* both ways.
   A button row deliberately doesn't count as editable — ⏎ activates it, but it
-  edits nothing. `↑↓ choose` appears only for a field that has `Choices`.
+  edits nothing. `↑↓ pick from list` appears only while the open field's dropdown
+  actually has entries in it — narrow the list to nothing and the hint goes too.
 - **Footer actions are derived too.** `ScreenChrome.Actions(accent, focus)` swaps
   `[Esc] Cancel` / `[⏎] Save` for `[Esc] Revert` / `[⏎] Commit` while a field is
   open, because neither key closes the screen at that moment. Every `FooterLine`
@@ -452,11 +457,11 @@ What the framework actually provides (read at v2.5.14, not assumed):
   one spelling; control characters refused, because each is drawn and typed on one
   row); `AddAttributes` is a `ScreenField.Flags<TextAttributes>` **multi-select** —
   deliberately not a `Choice`, and deliberately carrying **no `Choices`**, because
-  ↑↓ step one-of-N and bold-and-underline is not one of anything (the `↑↓ choose`
+  ↑↓ step one-of-N and bold-and-underline is not one of anything (the `↑↓ pick from list`
   hint derives from `Choices`, so a cycling field would advertise dead keys). Its
   vocabulary is drawn as a two-row **legend** under the `attrs` well, lit per
   attribute and following the *buffer* while the field is open — the same rule the
-  route radios follow. Eight `ScreenToggle` rows were rejected: they would be eight
+  route dropdown follows. Eight `ScreenToggle` rows were rejected: they would be eight
   cursor stops for a setting most rules never touch, and a `ScreenRow` holds at most
   one checkbox, so a horizontal row of them could never be one navigable row anyway.
   `Trigger.CaseSensitive` is the editor pane's **third** checkbox, appended after
@@ -474,6 +479,48 @@ What the framework actually provides (read at v2.5.14, not assumed):
   that whole list back, not merely "assigned".
 - Pane shape: F4/F7/F8 are single-pane (no ⇥); **F5 has four** (worlds → characters
   → trigger sets → the world's security checkboxes); the rest have two.
+
+### Dropdowns (a field's candidate list)
+
+- **`ScreenChrome.Choices(column, edit, width)` is the whole feature**, called once
+  per block that draws fields (all six renderers do). It finds the open field by the
+  **block caret** `ScreenChrome.Field` paints — only one field of one row is ever
+  open, and only the column drawing it paints that — so a block that isn't drawing
+  the open edit comes back untouched and the wiring is one line per column.
+- **It overlays, it does not push.** The block *replaces* the rows next to the
+  field, so a column's line count is identical open and closed. That is forced:
+  `WorldsScreenView` sizes a grid row from `FormColumn`'s count (a growing list
+  would resize the whole screen on ⏎), and F2's editor already runs to two dozen
+  rows (pushed-down rows would fall off the bottom, checkboxes included). It opens
+  **downward**, and **upward** when there aren't enough rows below — F5's log format
+  and F7's ambiguous width are both second-from-last in their block. The caption
+  keeps the edge nearest the field (`▾` below, `▴` above) and a one-row **shadow**
+  closes the far edge, so the pane's own rows continuing past the block read as
+  behind it.
+- **Typing filters; ↑↓ walk what is left.** `ScreenField.Matching` is the one
+  definition both use — a buffer that *names* a choice keeps the whole list (a field
+  opens on its committed value, so a plain filter would collapse the list the moment
+  it was drawn), anything else is a substring search. `ScreenField.Cycle` walks that
+  same list, which is why `pa` then ↓ lands on `pages`, and why ↓ on a buffer
+  matching nothing is **swallowed** rather than overwriting a name being typed for
+  the first time. The highlight and the buffer are deliberately one thing, not two
+  cursors: a separate highlight would give ⏎ two meanings and Esc two levels.
+- **Open vs closed is carried, not guessed.** `ScreenField.ClosedChoices` is true
+  only for `Choice` and `Enumeration<T>` — the two whose validators actually refuse
+  everything else. Open lists are captioned `suggestions`, closed ones `these values
+  only`, and the empty-filter case reads `nothing matches — a new value is allowed`
+  vs plain `nothing matches`. Neither uses `ScreenPalette.Warn`: a refusal belongs
+  to the validator at ⏎, and the palette has two shouting cases already.
+- **Capped at `ScreenChrome.MaxChoiceRows` (6)**, with the caption saying so
+  (`suggestions  6 of 17`) and the window scrolling to keep the marked entry in it,
+  or the eleventh colour would be unreachable to the eye.
+- **`newline key` and `dictionary` (F8) grew suggestion lists**, since `ScreenField.Text`
+  now takes an optional `known`. Both stay open: the chords a terminal can deliver
+  and the locales a speller has installed are not this screen's to close.
+- **Snapshot states:** `triggers-edit` (open list, mark moved), `route-edit`
+  (narrowed to one), `highlight-edit` (17 capped to 6), `logging-edit` (closed,
+  drawn upward), `textansi-edit` / `input-edit` (F7/F8; their scripts step the
+  cursor down to a value row first, because ⏎ on a checkbox row saves and closes).
 
 ### TelnetNegotiationCore
 

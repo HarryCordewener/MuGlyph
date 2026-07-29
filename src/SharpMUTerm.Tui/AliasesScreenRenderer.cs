@@ -301,7 +301,7 @@ internal static class AliasesScreenRenderer
             : "[dim][[ ]] case sensitive[/]";
         lines.Add(ScreenChrome.Cursor(caseRow, cursor.IsOn(1, 0), ColumnWidth));
 
-        return lines;
+        return ScreenChrome.Choices(lines, cursor.Edit, ColumnWidth);
     }
 
     private static string FirstLine(string text)

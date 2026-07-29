@@ -42,6 +42,16 @@ public class TriggersScreenEditingTests
 
     private static readonly string[] Targets = { "Chat", "pages", "trade" };
 
+    /// <summary>
+    /// The entry the open dropdown has marked — the value ⏎ would commit — or null when it has marked
+    /// none. The mark is <c>▸</c> in the accent, drawn only by <see cref="ScreenChrome.Choices"/>;
+    /// the rule list's own selection marker is a bare <c>▸</c> in bold, and lives in a different column.
+    /// </summary>
+    private static string? Marked(IEnumerable<string> lines) => lines
+        .Where(l => l.Contains($"[{ScreenPalette.Accent}]▸[/]", StringComparison.Ordinal))
+        .Select(l => l.Split($"[{ScreenPalette.Value}]", StringSplitOptions.None)[1].Split("[/]")[0])
+        .FirstOrDefault();
+
     [Test]
     public async Task ARuleRowCarriesItsPatternRouteAndBothHighlightColours()
     {
@@ -189,7 +199,13 @@ public class TriggersScreenEditingTests
         await Assert.That(trigger.Actions.SpawnTarget).IsEqualTo("Chat");
         var editor = TriggersScreenRenderer.EditorColumn(sets, 0, Targets, session.Focus());
         await Assert.That(editor.Any(l => l.Contains("pages"))).IsTrue();
-        await Assert.That(editor.Any(l => l.Contains("Chat"))).IsFalse();
+
+        // "Chat" is still on screen — the dropdown lists every window, which is the whole point of it —
+        // but it is no longer the value: the mark has moved off it and onto the buffer's window, and it
+        // is the *mark*, not mere presence, that says what ⏎ would write. (It used to be enough to
+        // assert Chat had vanished, back when only the value was drawn.)
+        await Assert.That(Marked(editor)).IsEqualTo("pages");
+        await Assert.That(editor.Any(l => l.Contains("Chat"))).IsTrue();
 
         session.Handle(Key(ConsoleKey.Enter));
         await Assert.That(trigger.Actions.SpawnTarget).IsEqualTo("pages");

@@ -860,7 +860,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private IReadOnlyList<SettingsScreen> SettingsScreens() => new SettingsScreen[]
     {
-        new(ConsoleKey.F2, new[] { "triggers" }, TriggersScreen),
+        new(ConsoleKey.F2, new[] { "triggers", "route", "highlight" }, TriggersScreen),
         new(ConsoleKey.F3, new[] { "aliases" }, AliasesScreen),
         new(ConsoleKey.F4, new[] { "keypad" }, KeypadScreen),
         new(ConsoleKey.F5, new[] { "worlds", "settings" }, WorldsScreen),
@@ -1095,16 +1095,45 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>
     /// The keys a <c>&lt;name&gt;-edit</c> snapshot drives into a freshly opened screen. ⏎ opens the
     /// focused row's first field — which on every list screen is now its <em>name</em> — ⇥ commits it
-    /// and steps to the next, and the rest is typing. Two screens walk further than the first field,
+    /// and steps to the next, and the rest is typing. Several views walk further than the first field,
     /// because a still frame should land on the thing that screen's editing actually added: F5 rewrites
     /// a host's suffix ("no way to change a host" is the gap the whole mode closes), and F2 steps on to
-    /// its route group and moves the dot, which is the only way to see that a radio list is live rather
-    /// than a report. The <c>logging</c> view opens F5 on the character pane, so it steps twice more to
+    /// its route and moves the mark, which is the only way to see that the dropdown is live rather than
+    /// a report. The <c>logging</c> view opens F5 on the character pane, so it steps twice more to
     /// reach the log format — past the name and the on-connect line — because the character's log is
-    /// the whole reason that view exists.
+    /// the whole reason that view exists, and it is also this app's one <em>closed</em> list, so it is
+    /// what the closed presentation is checked against.
+    /// <para>
+    /// <c>route</c> and <c>highlight</c> are F2 again, stopped at the two states a single frame of
+    /// <c>triggers-edit</c> cannot also show: a buffer that has <em>narrowed</em> the list (<c>pa</c> →
+    /// <c>pages</c>), and a list longer than the pane can hold (seventeen colour names capped to six).
+    /// Both are drawn chrome with no state of their own, so a snapshot is the only place they can be
+    /// looked at rather than merely asserted.
+    /// </para>
+    /// <para>
+    /// F7/F8 open on a checkbox rather than a value, so their scripts step the cursor down to the row
+    /// that holds one before pressing ⏎ at all — otherwise <c>textansi-edit</c> would save the screen
+    /// and close it, which is what ⏎ means on a row with nothing to open.
+    /// </para>
     /// </summary>
     private static IEnumerable<ConsoleKeyInfo> EditSnapshotKeys(string view)
     {
+        // F7/F8 are single lists whose first row is a checkbox, so ⏎ there would save and close rather
+        // than open anything. The cursor walks down to the row that holds a value first — the listed
+        // fields on those screens (ambiguous width, newline key, dictionary) are the last of their
+        // section, which is also why they are the ones a snapshot has to reach deliberately.
+        var stepsDown = view.ToLowerInvariant() switch
+        {
+            "textansi" => 4, // strip · blink · underline · emoji → ambiguous width
+            "input" => 4,    // local echo · drafts · newline key · check spelling → dictionary
+            _ => 0,
+        };
+
+        for (var i = 0; i < stepsDown; i++)
+        {
+            yield return Stroke('\0', ConsoleKey.DownArrow);
+        }
+
         yield return Stroke('\r', ConsoleKey.Enter);
 
         if (string.Equals(view, "logging", StringComparison.OrdinalIgnoreCase))
@@ -1115,12 +1144,48 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             yield break;
         }
 
-        if (string.Equals(view, "triggers", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(view, "triggers", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(view, "route", StringComparison.OrdinalIgnoreCase))
         {
             // name → pattern → route: two steps, because the name now leads the row's fields.
             yield return Stroke('\t', ConsoleKey.Tab);
             yield return Stroke('\t', ConsoleKey.Tab);
-            yield return Stroke('\0', ConsoleKey.DownArrow);
+
+            if (string.Equals(view, "triggers", StringComparison.OrdinalIgnoreCase))
+            {
+                yield return Stroke('\0', ConsoleKey.DownArrow);
+                yield break;
+            }
+
+            // Clear the opened value, then type a fragment of another window: the list narrows to it,
+            // and the frame shows a filter rather than a menu.
+            for (var i = 0; i < 4; i++)
+            {
+                yield return Stroke('\b', ConsoleKey.Backspace);
+            }
+
+            foreach (var c in "pa")
+            {
+                yield return Stroke(c, ConsoleKey.NoName);
+            }
+
+            yield break;
+        }
+
+        if (string.Equals(view, "highlight", StringComparison.OrdinalIgnoreCase))
+        {
+            // name → pattern → route → highlight fg, then clear the buffer: an empty one narrows
+            // nothing, so the whole seventeen-name palette is offered and the list is drawn at its cap.
+            for (var i = 0; i < 3; i++)
+            {
+                yield return Stroke('\t', ConsoleKey.Tab);
+            }
+
+            for (var i = 0; i < 12; i++)
+            {
+                yield return Stroke('\b', ConsoleKey.Backspace);
+            }
+
             yield break;
         }
 

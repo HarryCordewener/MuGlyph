@@ -39,8 +39,9 @@ internal enum ScreenAction
 /// activates the focused row when it has something to activate (a field → open an edit, a button →
 /// run it) and otherwise saves and closes; ⌃S saves from anywhere; Esc cancels the screen,
 /// except while an edit is open, where it abandons the edit and leaves the screen up. Inside an edit,
-/// typing inserts, Backspace/Delete remove, ←→/Home/End move the caret, ↑↓ cycle an enum field's
-/// choices, ⇥ commits and steps to the row's next field, ⏎ commits, and Esc reverts.
+/// typing inserts, Backspace/Delete remove, ←→/Home/End move the caret, ↑↓ move through the drawn
+/// candidate list (narrowing it is what typing does), ⇥ commits and steps to the row's next field, ⏎
+/// commits, and Esc reverts.
 /// </para>
 /// </summary>
 internal sealed class SettingsSession
@@ -86,6 +87,7 @@ internal sealed class SettingsSession
             return ScreenFocus.None;
         }
 
+        var field = _edit is { } at ? model.FieldAt(at.Pane, at.Index, at.Field) : null;
         var edit = _edit is { } open && open.Pane == Selection.Pane && open.Index == Selection.Index
             ? new ScreenFieldEdit(
                 open.Field,
@@ -93,7 +95,8 @@ internal sealed class SettingsSession
                 open.Caret,
                 open.Error,
                 model.RowAt(open.Pane, open.Index).FieldCount,
-                model.FieldAt(open.Pane, open.Index, open.Field)?.Choices is { Count: > 0 })
+                field?.Choices,
+                field?.ClosedChoices ?? false)
             : (ScreenFieldEdit?)null;
 
         return new ScreenFocus(Selection.Pane, Selection.Index, edit);
@@ -351,7 +354,19 @@ internal sealed class SettingsSession
         return ScreenAction.Redraw;
     }
 
-    /// <summary>↑↓ inside an edit: step an enum field's choices; anything else has nothing to cycle.</summary>
+    /// <summary>
+    /// ↑↓ inside an edit: move through the candidate list the chrome is drawing beneath the field, and
+    /// put the entry landed on into the buffer. The highlight and the buffer are deliberately the same
+    /// thing rather than two cursors — a separate highlight would give ⏎ two meanings (take the
+    /// highlighted entry, or commit what is typed) and Esc two levels to back out of, inside a screen
+    /// whose only modal state so far is this edit. Keeping them one means the value visibly moves as the
+    /// list is walked, which is what a picker is for.
+    /// <para>
+    /// A field with no choices, and one whose buffer has narrowed the list to nothing, both have nowhere
+    /// to move to and swallow the key with the buffer untouched — on an open field that buffer is a name
+    /// being typed for the first time, and an arrow key must not eat it.
+    /// </para>
+    /// </summary>
     private ScreenAction Cycle(ScreenField field, int direction)
     {
         var edit = _edit!;
