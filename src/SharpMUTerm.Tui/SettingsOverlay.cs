@@ -49,6 +49,12 @@ internal sealed class SettingsOverlay
     public bool IsOpen => _window is not null;
 
     /// <summary>
+    /// How many edits the open screen is holding that were never saved — zero when none is open. Read by
+    /// the quit confirmation, which is the one place something outside a screen can end them.
+    /// </summary>
+    public int PendingEdits => _binding?.Session.Edits.Count ?? 0;
+
+    /// <summary>
     /// Opens a screen, or closes it when its own F-key is pressed again. Closing this way discards
     /// pending edits, exactly like Esc — the F-key is a toggle, not a commit.
     /// </summary>

@@ -217,10 +217,12 @@ Things that will waste your time if you don't know them.
 - **Snapshot view names:** `worlds`/`settings`, `triggers`, `route`, `highlight`,
   `aliases`, `timers`,
   `keypad`, `set`, `textansi`, `input`, `logging`, `freeze`, `spawn`, `split`, `move`,
-  `drag`, `history`, `draft`, `draft2`, `menu`, `menu-split`, `messages`, `web`, plus the
-  default (no `--view`) workspace. (`messages` is the ⌃P **client message viewer**, over a
+  `drag`, `history`, `draft`, `draft2`, `menu`, `menu-split`, `messages`, `quit`, `web`, plus
+  the default (no `--view`) workspace. (`messages` is the ⌃P **client message viewer**, over a
   scene seeded by raising four real notices — so the frame shows what `Notice` records, not
-  a mock.) (`input` is the **F8 settings screen**; `draft`/`draft2` are the
+  a mock. `quit` is the **⌃Q confirmation**, raised by invoking the registered shortcut over a
+  workspace with a second world connected and a draft typed, so it shows real stakes.)
+  (`input` is the **F8 settings screen**; `draft`/`draft2` are the
   **command line** itself — a wrapped draft that has grown the bar, and the same with the
   per-window second bar raised and ⏎ armed on it.)
   **`web`** renders a page whose `<img>` is a `data:` URI through the real
@@ -601,6 +603,32 @@ first-run state and both feedback paths were broken in it.
   through `ArmPrefix` (⌃B is a global shortcut, and the framework dispatches those
   only inside `Run()`) and then feeds the key to the real handler, and
   `StatusMarkup` reads back what it said.
+
+### The ⌃Q confirmation
+
+- **⌃Q asks now.** The shortcut runs `QuitOverlay.Toggle`; only a confirmed answer
+  reaches `SharpMUTermApp.Quit` (`RequestExit`). Same split as the settings screens:
+  `QuitPrompt` is pure (what a keystroke means, what the question says) and
+  `QuitOverlay` is the window around it.
+- **The default is Stay**, drawn rather than implied — the Stay chip carries the
+  accent block and the footer names the key ⏎ is standing on (`⏎ stay` / `⏎ quit`).
+  `y`/`n` answer outright, Esc stays, ←→/⇥ move between the buttons (bound *only*
+  inside the modal: unprefixed those keys belong to the command line and to ⌃B).
+- **A second ⌃Q dismisses it**, like every other surface's own chord. It arrives at
+  the **global shortcut**, not at the modal — global shortcuts run before any window
+  — so `Toggle` is where that key is answered; `QuitPrompt.Interpret` spells out the
+  same answer so a test can read it back.
+- **The question names what it would end**: connected worlds, unsent drafts, and an
+  open settings screen's unsaved edit count (dropped when it is zero — a line that
+  appeared either way would be read past). `SharpMUTermApp.QuitFactsNow` gathers it;
+  drafts are counted **per command line** (the active window's two bars are read
+  live, every other window contributes its `HasUnsentInput`), and connected worlds
+  come from live sessions, falling back to the rail's `_connectedKeys` when there is
+  no session to ask — which is the demo scene, and so the snapshot.
+- **`--view quit`** seeds a second connected world, types a draft into the command
+  line and then runs the registered ⌃Q action itself.
+- Headless seams: `QuitPromptOpen`, `QuitPromptLines`, `SimulateQuitKey`,
+  `ExitRequested`.
 
 ### Settings screens
 
@@ -1231,6 +1259,8 @@ drift, and `MacroKeyCaptureTests` asserts that over every `ConsoleKey`.
 | `src/SharpMUTerm.Core/Workspace/PaneDrop.cs` | The single commit path for a drop (shared with move mode) |
 | `src/SharpMUTerm.Tui/WorkspacePalette.cs` | The workspace's three planes (pane surface / backdrop / hairline), derived from the active theme |
 | `src/SharpMUTerm.Tui/CommandPalette.cs` | ⌃P surface: content-hug sizing, clean chrome |
+| `src/SharpMUTerm.Tui/QuitPrompt.cs` | The ⌃Q confirmation's rules and wording (pure): key → answer, facts → question |
+| `src/SharpMUTerm.Tui/QuitOverlay.cs` | The modal around it — open/dismiss, redraw, and the confirmed quit |
 | `src/SharpMUTerm.Tui/CommandSurfaceRenderer.cs` | Palette rows + full-width selection bar |
 | `src/SharpMUTerm.Graphics/InlineImagePolicy.cs` | The degradation chain + `GraphicsSurface` (what the *host* can emit, vs what the terminal can show) |
 | `src/SharpMUTerm.Tui/WebViewComposer.cs` | Splits a page into text/image blocks; no images → a single control |
