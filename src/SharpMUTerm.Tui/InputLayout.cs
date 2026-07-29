@@ -144,6 +144,36 @@ internal static class InputLayout
     }
 
     /// <summary>
+    /// How many rows one line of chrome takes once the window has wrapped it. The header and the status
+    /// line are each a single line of markup, but neither is guaranteed to fit: a narrow terminal folds
+    /// one onto a second row, and the veto below has to count the rows they really occupy rather than
+    /// the one row they were written as.
+    /// </summary>
+    /// <param name="textWidth">The line's width in cells, markup already stripped.</param>
+    /// <param name="windowWidth">The columns it is being wrapped into.</param>
+    internal static int WrappedRows(int textWidth, int windowWidth) =>
+        windowWidth <= 0 ? 1 : Math.Max(1, (textWidth + windowWidth - 1) / windowWidth);
+
+    /// <summary>
+    /// The most rows one command line may take, whatever the configuration asks for. The bars share the
+    /// window with the header, the status line and the output above them, so the share is taken from
+    /// what the chrome leaves and then halved, which is what keeps at least as many rows for the output
+    /// as the input area holds — halved again when the second bar is up, since two of them are asking.
+    /// <para>
+    /// The floor is one row rather than none: a bar with no rows is not a command line, and a terminal
+    /// too small to obey the share has already lost the argument. Counting the chrome is the point —
+    /// a veto that assumed the header and the status line were one row each handed the whole of an
+    /// 80×6 window to the input area, leaving no output row at all and pushing the status line off the
+    /// bottom of the screen.
+    /// </para>
+    /// </summary>
+    /// <param name="windowRows">The window's height in rows.</param>
+    /// <param name="chromeRows">The rows the header and status line occupy between them.</param>
+    /// <param name="bars">How many command lines are on screen.</param>
+    internal static int Room(int windowRows, int chromeRows, int bars) =>
+        Math.Max(InputSettings.MinRows, (windowRows - chromeRows) / Math.Max(1, bars * 2));
+
+    /// <summary>
     /// The first row to draw so the caret is on screen: unchanged while the caret is already visible,
     /// otherwise the least scroll that brings it back. Zero whenever the text fits, so a command line
     /// that shrinks back under its cap never keeps a stale offset.

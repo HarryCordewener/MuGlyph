@@ -136,6 +136,39 @@ public class InputLayoutTests
         await Assert.That(InputLayout.Height(9, 6, 2)).IsEqualTo(6);
     }
 
+    /// <summary>A line of chrome takes a second row as soon as it outgrows the terminal's width.</summary>
+    [Test]
+    public async Task WrappedRows_CountsTheRowsALineOfChromeReallyTakes()
+    {
+        await Assert.That(InputLayout.WrappedRows(80, 120)).IsEqualTo(1);
+        await Assert.That(InputLayout.WrappedRows(120, 120)).IsEqualTo(1);
+        await Assert.That(InputLayout.WrappedRows(121, 120)).IsEqualTo(2);
+        await Assert.That(InputLayout.WrappedRows(0, 120)).IsEqualTo(1);   // an empty status line is still a row
+        await Assert.That(InputLayout.WrappedRows(40, 0)).IsEqualTo(1);    // and a width we don't know yet
+    }
+
+    /// <summary>
+    /// The veto: the output keeps at least as many rows as the input area, whatever the configuration
+    /// asks for, and the share is taken from what the header and the status line leave rather than from
+    /// the whole terminal — the rows they occupy are reserved before the workspace is measured at all.
+    /// </summary>
+    [Test]
+    public async Task Room_LeavesTheOutputAtLeastAsManyRowsAsTheBars()
+    {
+        // A roomy terminal: the configured heights (3, growing to 8) are nowhere near the cap.
+        await Assert.That(InputLayout.Room(windowRows: 34, chromeRows: 2, bars: 1)).IsEqualTo(16);
+        await Assert.That(InputLayout.Room(windowRows: 34, chromeRows: 2, bars: 2)).IsEqualTo(8);
+
+        // A cramped one: two bars at their configured eight rows would be the whole window.
+        await Assert.That(InputLayout.Room(windowRows: 12, chromeRows: 2, bars: 2)).IsEqualTo(2);
+
+        // And one where the chrome is what does not fit — an 80-column header and status line both
+        // wrap, which is the case that used to leave no output row at all.
+        await Assert.That(InputLayout.Room(windowRows: 6, chromeRows: 4, bars: 1)).IsEqualTo(1);
+        await Assert.That(InputLayout.Room(windowRows: 6, chromeRows: 8, bars: 1))
+            .IsEqualTo(InputSettings.MinRows);
+    }
+
     /// <summary>Text that fits is never scrolled, so a shrinking line cannot keep a stale offset.</summary>
     [Test]
     public async Task Scroll_IsZeroWhileEverythingFits()
