@@ -4,7 +4,7 @@ Context for whoever (human or agent) picks up this work next.
 
 - **Repository:** `SharpMUSH/SharpMUTerm`
 - **Start from:** a fresh branch off `main`
-- **Tests:** 1119 across the solution (404 Core / 83 Graphics / 42 Scripting /
+- **Tests:** 1129 across the solution (414 Core / 83 Graphics / 42 Scripting /
   28 Web / 562 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
   from this repo; building against a local SharpConsoleUI clone surfaces 2 upstream
   NuGet advisory warnings for AngleSharp, which are the framework's, not ours)
@@ -657,26 +657,25 @@ categories, and where each control sits:
   wants a reconnect, like every other rule. The numpad specifically **still cannot
   fire** — see *Which keys can actually fire* under Critical Gotchas — and F4 now
   says so on the row rather than leaving it to be discovered.
-- **Still inert, but no longer blocked.** A world's `keepalive` seconds only picks
-  the status bar's fake ack figure — nothing sends a keepalive. The upstream half is
-  done: TelnetNegotiationCore
-  [PR #52](https://github.com/HarryCordewener/TelnetNegotiationCore/pull/52) adds an
-  opt-in idle-reset `IAC NOP` keepalive, `.WithKeepAlive(TimeSpan)`, bounded to
-  1s–24h, defaulting to 30s.
+- **Live at connect.** A world's `keepalive` seconds now sends `IAC NOP` after that
+  much outbound silence, via TelnetNegotiationCore 2.6.0's `.WithKeepAlive(TimeSpan)`.
+  `TelnetSessionOptions.ResolveKeepalive` turns the configured seconds into the
+  interval: zero is how the config spells "off", and anything past the library's
+  24-hour maximum is clamped rather than thrown, since the value can be hand-edited
+  and refusing to connect would be the worse answer. There is deliberately no clamp
+  against the library's one-second *minimum* — this setting is a whole number of
+  seconds, so every value that isn't already "off" satisfies it, and an unreachable
+  guard claiming to be a safety net is worse than none.
   <br>
-  **This field cannot be wired until that ships as 2.6.0.** The API doesn't exist in
-  the pinned 2.5.3, and it can't be reached through a conditional project reference
-  the way SharpConsoleUI is: that trick works only because both paths expose the same
-  API, and here the package path would not compile. So this waits on the release, not
-  on more design. When 2.6.0 lands: bump `Directory.Packages.props`, pass the world's
-  interval into `TelnetSessionOptions`, and hold the setting **by reference** like
-  `TextSettings`/`InputSettings` so changing it doesn't need a reconnect.
+  It applies **at connect**, not live: the library's `KeepAliveInterval` is init-only
+  because the idle loop reads it once when it starts. Changing the field mid-session
+  takes effect on the next connect, like host, port, TLS and encoding.
   <br>
-  Note what it will and won't do: `IAC NOP` proves the socket write succeeded, not
-  that the peer answered. TIMING-MARK (RFC 860, option 6) is the negotiated option
-  that verifies a peer is alive, and it isn't implemented upstream either — so a
-  keepalive here will keep a NAT from evicting an idle connection, and will not
-  detect a server that has stopped responding.
+  What it does and doesn't do: `IAC NOP` keeps a NAT or load balancer from evicting a
+  quiet connection. It does **not** detect a server that has stopped responding — a
+  successful send only proves our write succeeded, and NOP is unnegotiated, so a peer
+  that mishandles it can't be detected either. TIMING-MARK (RFC 860, option 6) is the
+  negotiated option that would verify the peer, and it is not implemented upstream.
 
 **The shell connects as the world's first configured character**
 (`SharpMUTermApp.OpenSession`). Before that it opened an *anonymous* session, which

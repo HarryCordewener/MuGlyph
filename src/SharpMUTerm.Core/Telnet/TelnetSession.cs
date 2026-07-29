@@ -22,6 +22,47 @@ public sealed class TelnetSessionOptions
     /// <summary>Read buffer size in bytes.</summary>
     public int ReceiveBufferSize { get; init; } = 8192;
 
+    /// <summary>
+    /// How long the connection may sit silent before a keepalive goes out, or null for none — a
+    /// world's <see cref="SharpMUTerm.Core.Configuration.WorldDefinition.KeepaliveSeconds"/>, resolved
+    /// by <see cref="ResolveKeepalive"/>.
+    /// <para>
+    /// This is applied when the interpreter is built, so changing it takes effect on the next connect
+    /// rather than on the open session: the library's <c>KeepAliveInterval</c> is init-only, by design
+    /// — the idle loop reads it once when it starts.
+    /// </para>
+    /// </summary>
+    public TimeSpan? KeepaliveInterval { get; init; }
+
+    /// <summary>
+    /// Turns a world's configured keepalive seconds into an interval the telnet library will accept,
+    /// or null when there should be none.
+    /// <para>
+    /// Zero — the default, and what "off" is spelled as in the config — means no keepalive. Anything
+    /// larger is clamped to the library's maximum rather than thrown at it, because this value arrives
+    /// from a config file that may have been hand-edited: refusing to connect at all would be a worse
+    /// answer than keeping the connection alive less often than asked.
+    /// </para>
+    /// <para>
+    /// There is deliberately no clamp against the library's <em>minimum</em>. It is one second and this
+    /// is a whole number of seconds, so every value that isn't already "off" satisfies it — a guard
+    /// there could never fire, and an unreachable branch claiming to be a safety net is worse than
+    /// none. If this ever becomes fractional, that changes.
+    /// </para>
+    /// </summary>
+    public static TimeSpan? ResolveKeepalive(int seconds)
+    {
+        if (seconds <= 0)
+        {
+            return null;
+        }
+
+        var requested = TimeSpan.FromSeconds(seconds);
+        return requested > TelnetInterpreter.MaximumKeepAliveInterval
+            ? TelnetInterpreter.MaximumKeepAliveInterval
+            : requested;
+    }
+
     /// <summary>The default order, used when no world encoding is configured or the name isn't one.</summary>
     private static Encoding[] DefaultOrder =>
     [
@@ -137,8 +178,9 @@ public sealed class TelnetSession : ITelnetSession
         _readLoop = Task.Run(() => ReadLoopAsync(_loopCts.Token), CancellationToken.None);
     }
 
-    private Task<TelnetInterpreter> BuildInterpreterAsync() =>
-        new TelnetInterpreterBuilder()
+    private Task<TelnetInterpreter> BuildInterpreterAsync()
+    {
+        var builder = new TelnetInterpreterBuilder()
             .UseMode(TelnetInterpreter.TelnetMode.Client)
             .UseLogger(_logger)
             .OnNegotiation(WriteToTransportAsync)
@@ -152,8 +194,18 @@ public sealed class TelnetSession : ITelnetSession
                 onPrompt: OnPromptAsync,
                 charsetOrder: _options.CharsetOrder,
                 onCompressionEnabled: OnCompressionAsync,
-                onMXPEnabled: static () => ValueTask.CompletedTask)
-            .BuildAsync();
+                onMXPEnabled: static () => ValueTask.CompletedTask);
+
+        // An idle keepalive, when the world asks for one: IAC NOP after the configured silence, so a
+        // NAT or load balancer doesn't evict a connection that is merely quiet. It is filler traffic,
+        // not a liveness probe — it proves our write succeeded, not that the server answered.
+        if (_options.KeepaliveInterval is { } interval)
+        {
+            builder = builder.WithKeepAlive(interval);
+        }
+
+        return builder.BuildAsync();
+    }
 
     private ValueTask WriteToTransportAsync(ReadOnlyMemory<byte> data) =>
         _transport.SendAsync(data);

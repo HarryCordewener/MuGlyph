@@ -437,7 +437,11 @@ public sealed class WorldSession : IAsyncDisposable
     private ITelnetSession DefaultSessionFactory(ConnectionOptions options) =>
         new TelnetSession(
             new TcpTransport(options),
-            options: new TelnetSessionOptions { CharsetOrder = TelnetSessionOptions.PreferEncoding(World.Encoding) });
+            options: new TelnetSessionOptions
+            {
+                CharsetOrder = TelnetSessionOptions.PreferEncoding(World.Encoding),
+                KeepaliveInterval = TelnetSessionOptions.ResolveKeepalive(World.KeepaliveSeconds),
+            });
 
     public async ValueTask DisposeAsync()
     {
