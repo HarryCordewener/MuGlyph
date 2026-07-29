@@ -48,9 +48,11 @@ internal static class WebViewComposer
         ArgumentNullException.ThrowIfNull(images);
         ArgumentNullException.ThrowIfNull(boxes);
 
-        // Only images that decoded, point at a real line, and haven't already claimed that line.
+        // Only images that decoded, point at a real line, and haven't already claimed those lines.
+        // The claim covers the whole placeholder, not just its first line: a long alt text wraps, and
+        // leaving the tail behind would strand it under the picture.
         var claimed = new HashSet<int>();
-        var placements = new List<(int Line, WebImageBlock Block)>();
+        var placements = new List<(int Line, int Count, WebImageBlock Block)>();
         for (var i = 0; i < images.Count; i++)
         {
             if (!boxes.TryGetValue(i, out var box))
@@ -59,12 +61,24 @@ internal static class WebViewComposer
             }
 
             var line = images[i].LineIndex;
-            if (line < 0 || line >= markupLines.Count || !claimed.Add(line))
+            if (line < 0 || line >= markupLines.Count)
             {
                 continue;
             }
 
-            placements.Add((line, new WebImageBlock(i, images[i], box)));
+            // A trailing-blank trim can leave the recorded span longer than the page it points into.
+            var count = Math.Clamp(images[i].LineCount, 1, markupLines.Count - line);
+            if (Enumerable.Range(line, count).Any(claimed.Contains))
+            {
+                continue;
+            }
+
+            for (var l = line; l < line + count; l++)
+            {
+                claimed.Add(l);
+            }
+
+            placements.Add((line, count, new WebImageBlock(i, images[i], box)));
         }
 
         if (placements.Count == 0)
@@ -77,7 +91,7 @@ internal static class WebViewComposer
 
         var blocks = new List<WebBlock>();
         var cursor = 0;
-        foreach (var (line, block) in placements)
+        foreach (var (line, count, block) in placements)
         {
             if (line > cursor)
             {
@@ -85,7 +99,7 @@ internal static class WebViewComposer
             }
 
             blocks.Add(block);
-            cursor = line + 1; // the placeholder line is consumed by the picture
+            cursor = line + count; // every placeholder line is consumed by the picture
         }
 
         if (cursor < markupLines.Count)

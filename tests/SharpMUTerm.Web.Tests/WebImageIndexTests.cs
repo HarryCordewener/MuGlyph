@@ -132,6 +132,36 @@ public class WebImageIndexTests
     }
 
     [Test]
+    public async Task SingleLinePlaceholder_SpansExactlyOneLine()
+    {
+        var result = Render("<p>before</p><img src=\"pic.png\" alt=\"a cat\"><p>after</p>");
+        await Assert.That(result.Images[0].LineCount).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task WrappedPlaceholder_RecordsEveryLineItOccupies()
+    {
+        // A long alt wraps like any other text. The view swaps the placeholder for the picture, so it
+        // needs the whole span: replacing only the first line strands the tail under the image.
+        var alt = string.Join(' ', Enumerable.Repeat("description", 12));
+        var result = Render($"<p>before</p><img src=\"pic.png\" alt=\"{alt}\"><p>after</p>", width: 40);
+        var image = result.Images[0];
+
+        await Assert.That(image.LineCount).IsGreaterThan(1);
+
+        // The recorded span is exactly the placeholder: prose neither above nor below is inside it.
+        var span = result.Lines
+            .Skip(image.LineIndex)
+            .Take(image.LineCount)
+            .Select(l => l.Text)
+            .ToList();
+        await Assert.That(string.Concat(span)).Contains("[image:");
+        await Assert.That(string.Concat(span)).DoesNotContain("before");
+        await Assert.That(string.Concat(span)).DoesNotContain("after");
+        await Assert.That(result.Lines[image.LineIndex + image.LineCount].Text).IsEqualTo("after");
+    }
+
+    [Test]
     public async Task PageWithoutImages_HasAnEmptyIndex()
     {
         await Assert.That(Render("<p>just words</p>").Images).IsEmpty();

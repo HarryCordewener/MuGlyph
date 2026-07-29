@@ -176,10 +176,11 @@ public sealed class HtmlStyledRenderer
     }
 
     /// <summary>
-    /// Writes an image's text placeholder and records where it landed. The placeholder gets a line
-    /// to itself: a graphics-capable view replaces that whole row with the picture, which it can only
-    /// do if no surrounding prose shares the row. Images with no <c>src</c> still get a placeholder —
-    /// there is just nothing to fetch, so they are not indexed.
+    /// Writes an image's text placeholder and records where it landed. The placeholder gets its own
+    /// lines: a graphics-capable view replaces those whole rows with the picture, which it can only
+    /// do if no surrounding prose shares them. A long <c>alt</c> wraps like any other text, so the
+    /// index records how many lines it took as well as where it started. Images with no <c>src</c>
+    /// still get a placeholder — there is just nothing to fetch, so they are not indexed.
     /// </summary>
     private void EmitImage(IElement element, LineWriter writer, TextStyle style, bool preformatted)
     {
@@ -197,7 +198,12 @@ public sealed class HtmlStyledRenderer
 
         if (resolved is not null)
         {
-            _images.Add(new WebImage(lineIndex, resolved, alt?.Trim() is { Length: > 0 } a ? a : null, label));
+            _images.Add(new WebImage(
+                lineIndex,
+                resolved,
+                alt?.Trim() is { Length: > 0 } a ? a : null,
+                label,
+                Math.Max(1, writer.LineIndex - lineIndex)));
         }
     }
 

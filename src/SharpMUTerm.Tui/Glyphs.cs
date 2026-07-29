@@ -17,7 +17,10 @@ internal static class Glyphs
     public const string Connections = "\uf1e6"; // nf-fa-plug — rail header
     public const string Freeze = "\uf2dc"; // nf-fa-snowflake — freeze bar (was the up-triangle)
     public const string Draft = "\uf040"; // nf-fa-pencil — unsent-input marker (was the pen)
-    public const string Close = "\uf00d"; // nf-fa-times — active-tab close (was the multiply sign)
+    public const string Close = "\uf00d"; // nf-fa-times (was the multiply sign). NOT drawn by us: a tab's
+    // close button is SharpConsoleUI's own TabPage.IsClosable, which the framework renders as × and
+    // hit-tests into TabCloseRequested. Kept so the tab-title tests can assert the label never
+    // smuggles a decorative close glyph back in.
     public const string Capture = "\uf090"; // nf-fa-sign_in — spawn capture / route (was the into-corner arrow)
     public const string Log = "\uf0f6"; // nf-fa-file_text_o — log indicator (was the fisheye)
     public const string Heartbeat = "\uf21e"; // nf-fa-heartbeat — keepalive (was the recycle mark)

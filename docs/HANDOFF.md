@@ -214,7 +214,12 @@ Things that will waste your time if you don't know them.
 - **Snapshot view names:** `worlds`/`settings`, `triggers`, `route`, `highlight`,
   `aliases`, `timers`,
   `keypad`, `set`, `textansi`, `input`, `logging`, `freeze`, `spawn`, `split`, `move`,
-  `drag`, `history`, `menu`, `menu-split`, plus the default (no `--view`) workspace.
+  `drag`, `history`, `menu`, `menu-split`, `web`, plus the default (no `--view`) workspace.
+  **`web`** renders a page whose `<img>` is a `data:` URI through the real
+  render → fetch → decode → compose path, and honours the degradation chain: bare, it
+  shows the `[image: …]` placeholder, and `SHARPMUTERM_GRAPHICS=halfblock` in the
+  environment makes it draw an actual decoded picture as half-block cells. It is the only
+  way to *look* at an inline web image without a graphics terminal.
   Extra state toggles: `collapsed`, `prefix`, `timestamps`. Any settings screen also
   takes a `-edit` suffix (`worlds-edit`, `logging-edit`, `keypad-edit`, …), which
   opens it and drives real keys in so the frame shows a field mid-edit —
@@ -307,6 +312,47 @@ What the framework actually provides (read at v2.5.14, not assumed):
   `docs/PLAN.md:78` committed to. So the framework renders the pixels;
   `SharpMUTerm.Graphics` supplies the policy (`InlineImagePolicy`,
   `GraphicsSurface`).
+- **`ImageControl` conflates pixels with cells, and that caps Kitty fidelity.**
+  `MeasureDOM` takes the source's *natural cell size* to be `Source.Width` columns by
+  `Source.Height / 2` rows (`CellRowsFor`) — the half-block convention — while
+  `KittyImageRenderer.Paint` PNG-encodes **that same buffer** and transmits it with
+  `c=<cols>,r=<rows>`, leaving the terminal to scale it into the cell box. So the pixel
+  data behind a Kitty image is only ever one pixel per column and two per row: a photo
+  drawn 53 cells wide carries 53 pixels of detail and the terminal blows it up ~10x.
+  There is no lever on our side — shrinking the buffer shrinks the cell box with it, and
+  `Fit`/`Stretch` derive their geometry from the same numbers. Fixing it properly means
+  an upstream change that separates the source resolution from the measured footprint
+  (an explicit target column/row count), in the same family as the missing Sixel back-end
+  above. `/graphics` now prints the cell box next to the pixel buffer for every image in
+  the web view, so the gap is visible without a graphics terminal.
+
+### SharpConsoleUI tabs
+
+- **A `✕` in a tab's *title* is not a close button.** Titles are drawn as plain text and
+  `TabControl.GetTabIndexAtX` counts those cells as part of the tab, so a click on the
+  glyph only ever selects the tab. The real affordance is `TabPage.IsClosable`: the
+  framework draws its own `×` after the title, hit-tests it in `TabControl.Input.cs:108`,
+  and raises `TabCloseRequested` with the `TabPage`. `SharpMUTermApp.BuildPaneTabs` sets
+  it on the pane's active tab (never `main`) and `RefreshTabTitles` keeps it in step.
+- **`TabControl` only acts on `Button1Clicked`,** which a real terminal reports together
+  with `Button1Released` (`NetConsoleDriver.ParseMouseSequence` / `SequenceHelper`). A
+  press+release pair with no clicked bit — what the pane-drag tests simulate — does
+  nothing, by design.
+- **Mouse callbacks are on the input thread; key callbacks are not.** `InputCoordinator`
+  dispatches a driver mouse frame straight through (`HandleMouseEvent`), but its key
+  handler only *enqueues* into `InputStateService` for the main loop to drain. So ⌃W
+  reaches `CloseActiveWindow` on the UI thread while `TabCloseRequested` arrives on the
+  driver's input thread — anything that rebuilds the pane area from a mouse callback has
+  to go through `OnUiThread`, exactly like the drag adapter's drop commit.
+- **The framework's mouse dispatch is only subscribed inside `Run()`**
+  (`ConsoleWindowSystem.cs:982`), so a headless test cannot reach a control by simulating
+  a driver mouse event: `SimulateMouseEvent` reaches *our* `OnDriverMouseEvent` and
+  nothing else. `SharpMUTermApp.SimulateTabStripClick` is the seam that feeds
+  `TabControl.ProcessMouseEvent` directly, in the control-relative space the dispatcher
+  would use.
+- **Control bounds only exist while the arranged layout does.** A tab switch or title
+  refresh invalidates the DOM, so `PaneSnapshot()` comes back empty until the next render
+  — read the geometry once after a frame rather than per click.
 
 ### SharpConsoleUI mouse & pane drags
 

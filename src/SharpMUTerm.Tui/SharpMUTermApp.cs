@@ -84,10 +84,26 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private readonly Dictionary<int, PixelBuffer> _webImages = new();
 
     /// <summary>
+    /// The <see cref="ImageControl"/> drawing each decoded image, kept across pane rebuilds. A page's
+    /// images arrive one at a time and every arrival rebuilds the pane area, so a control built fresh
+    /// each time would be a new control per image per rebuild — and under Kitty each control owns a
+    /// transmitted image the framework only deletes when the control it belongs to is re-parented or
+    /// disposed. Reusing the control keeps that bookkeeping with the framework, where it belongs.
+    /// </summary>
+    private readonly Dictionary<int, ImageControl> _webImageControls = new();
+
+    /// <summary>
     /// Cancels the in-flight image fetches of a superseded page. Loading is per-page and a new
     /// navigation invalidates the old one's images outright.
     /// </summary>
     private CancellationTokenSource? _webImageCts;
+
+    /// <summary>
+    /// The in-flight image load started by <see cref="StartWebImageLoad"/>. Kept so a headless caller
+    /// (the <c>web</c> snapshot) can wait for the pictures before rendering its one frame; the live
+    /// app never waits on it.
+    /// </summary>
+    private Task _webImageLoad = Task.CompletedTask;
 
     private readonly CommandPalette _palette;
     private readonly SettingsOverlay _settings;
@@ -326,6 +342,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             }
 
             _system.ForceFullRepaint();
+        }
+
+        // The web view with an inline picture: a small page whose <img> is a data: URI, driven through
+        // the same render → fetch → decode → compose path a /web command takes, so the frame shows a
+        // genuinely decoded image rather than an impression of one.
+        if (string.Equals(view, "web", StringComparison.OrdinalIgnoreCase))
+        {
+            ShowDemoWebPage();
         }
 
         // History-recall state: seed a couple of sent commands, then recall the newest so the input
@@ -759,13 +783,20 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         // `/graphics` reports where the degradation chain settled and, when it degraded, why — so a
-        // missing picture is an explanation rather than a mystery.
+        // missing picture is an explanation rather than a mystery — and then what the page in the web
+        // view actually did with its images, which is the difference between "nothing arrived" and
+        // "it arrived and looks wrong".
         if (command.Trim().Equals("/graphics", StringComparison.OrdinalIgnoreCase))
         {
             // Appended to the window rather than routed through the session, so it still answers
             // when nothing is connected — which is exactly when someone is checking their terminal.
             var report = InlineImagePolicy.Describe(_capabilities, WebGraphicsSurface());
             AppendWindowLine(windowId, $"[dim]*** Graphics: {Escape(report)}.[/]");
+            foreach (var line in WebImageReport.Describe(_webPage, DecodedWebImages(), ResolveInlineImagePresentation()))
+            {
+                AppendWindowLine(windowId, $"[dim]*** {Escape(line)}[/]");
+            }
+
             return;
         }
 
@@ -1687,6 +1718,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _webImageCts?.Dispose();
         _webImageCts = null;
         _webImages.Clear();
+        _webImageControls.Clear();
 
         _webPage = page;
         _webMarkup = page.Lines.Select(_formatter.ToMarkup).ToList();
@@ -1716,7 +1748,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
         var cts = new CancellationTokenSource();
         _webImageCts = cts;
-        _ = LoadWebImagesAsync(page, WebImageColumns(), cts.Token);
+        _webImageLoad = LoadWebImagesAsync(page, WebImageColumns(), cts.Token);
     }
 
     /// <summary>
@@ -1768,6 +1800,52 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// A 64×48 PNG as a <c>data:</c> URI — four flat quadrants crossed by a dark diagonal, chosen so
+    /// the snapshot shows at a glance whether the picture is the right size, the right way up, and in
+    /// the right place. Small enough to live in source; no network, no asset file.
+    /// </summary>
+    private const string DemoImageDataUri =
+        "data:image/png;base64," +
+        "iVBORw0KGgoAAAANSUhEUgAAAEAAAAAwCAIAAAAuKetIAAAA60lEQVR42tXPsQ3DQAxD0RvCg12dSTJEBvMYrlJn" +
+        "hBRGgMCGD/JJlEji98Rry29b74j6+oTWlr/JAxAGOGC/wTGSADhDHgBkSAUgGAWAWEMNINBQBohiFAP8hnqA00AB" +
+        "8DCIAHMGLsCEgQ5wl0EKsBt4AUYDNcDCEACMDRqAgUEGcMUQA5wNeoBkQ+uvN6gD47M+EAEBOQYsIMEAB+w3OEYS" +
+        "AGfIA4AMqQAEowAQa6gBBBrKAFGMYoDfUA9wGigAHgYRYM7ABZgw0AHuMkgBdgMvwGigBlgYAoCxQQMwMMgArhhi" +
+        "gLNBD3AwfAH2qz9wsoUh7AAAAABJRU5ErkJggg==";
+
+    /// <summary>
+    /// Drives the web view's real path for the <c>web</c> snapshot: HTML → styled lines + image index
+    /// → the degradation chain's verdict → fetch/decode → composed blocks, and waits for the pictures
+    /// so the single rendered frame contains them.
+    ///
+    /// <para>Nothing here forces graphics on. The frame shows whatever this host actually settles on,
+    /// which is the point: with no graphics it is the <c>[image: …]</c> placeholder, with
+    /// <c>SHARPMUTERM_GRAPHICS=halfblock</c> it is a real decoded picture drawn as half-block cells.
+    /// Kitty output still needs a Kitty terminal — a snapshot is a plain-text sink.</para>
+    /// </summary>
+    private void ShowDemoWebPage()
+    {
+        const string url = "https://sharpmuterm.invalid/room";
+        var html =
+            "<html><head><title>The Cartographer's Study</title></head><body>" +
+            "<h1>The Cartographer's Study</h1>" +
+            "<p>Charts of the northern reaches cover every surface. A brass orrery ticks in the corner, " +
+            "and the survey map of the coast road is pinned above the desk.</p>" +
+            $"<img src=\"{DemoImageDataUri}\" alt=\"survey map of the coast road\">" +
+            "<p>Exits lead <a href=\"https://sharpmuterm.invalid/hall\">north to the hall</a> and south " +
+            "to the stair.</p>" +
+            "</body></html>";
+
+        var rendered = new SharpMUTerm.Web.HtmlStyledRenderer(url)
+            .RenderDocument(html, Math.Max(20, _window.Width - 4));
+
+        ShowWeb(new SharpMUTerm.Web.WebPage(
+            url, SharpMUTerm.Web.HtmlStyledRenderer.GetTitle(html), rendered.Lines, rendered.Images));
+
+        // ShowWeb kicks the load off in the background; a snapshot renders exactly one frame, so wait.
+        _webImageLoad.GetAwaiter().GetResult();
+    }
+
     /// <summary>How many images one page may draw, so an image-heavy page cannot stall the client.</summary>
     private const int MaxInlineWebImages = 12;
 
@@ -1781,6 +1859,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private GraphicsSurface WebGraphicsSurface() =>
         GraphicsSurface.Compositor(_system.ConsoleDriver is IGraphicsProtocol { SupportsKittyGraphics: true });
+
+    /// <summary>The decoded page images as plain sizes, for <see cref="WebImageReport"/>.</summary>
+    private Dictionary<int, WebImageReport.Decoded> DecodedWebImages() =>
+        _webImages.ToDictionary(e => e.Key, e => new WebImageReport.Decoded(e.Value.Width, e.Value.Height));
 
     /// <summary>The presentation the degradation chain settles on for this terminal and this view.</summary>
     private InlineImagePresentation ResolveInlineImagePresentation() =>
@@ -1837,12 +1919,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                     break;
 
                 case WebImageBlock image:
-                    panel.AddControl(new ImageControl
-                    {
-                        Source = _webImages[image.Index],
-                        ScaleMode = ImageScaleMode.Fit,
-                        MinimumHeight = image.Box.Rows,
-                    });
+                    panel.AddControl(WebImageControlFor(image));
                     break;
             }
         }
@@ -1855,6 +1932,35 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         return panel.Build();
+    }
+
+    /// <summary>
+    /// The control drawing one decoded page image, created once per image and reused for the life of
+    /// the page. See <see cref="_webImageControls"/> for why a fresh control per rebuild is wrong.
+    /// </summary>
+    private ImageControl WebImageControlFor(WebImageBlock block)
+    {
+        var source = _webImages[block.Index];
+        if (_webImageControls.TryGetValue(block.Index, out var control))
+        {
+            // Guard against a stale control if a page ever re-decodes the same slot.
+            if (!ReferenceEquals(control.Source, source))
+            {
+                control.Source = source;
+            }
+
+            control.MinimumHeight = block.Box.Rows;
+            return control;
+        }
+
+        control = new ImageControl
+        {
+            Source = source,
+            ScaleMode = ImageScaleMode.Fit,
+            MinimumHeight = block.Box.Rows,
+        };
+        _webImageControls[block.Index] = control;
+        return control;
     }
 
     /// <summary>The content control for a window, created (with link routing) on first use.</summary>
@@ -2052,9 +2158,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 continue;
             }
 
-            builder.AddTab(
-                TabTitles.For(window, ActiveCharacterKey(), isActive: pane.ActiveTab == windowId),
-                BuildTabContent(pane, windowId, window));
+            builder.AddTab(TabTitles.For(window, ActiveCharacterKey()), BuildTabContent(pane, windowId, window));
             ids.Add(windowId);
         }
 
@@ -2064,6 +2168,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         for (var i = 0; i < ids.Count; i++)
         {
             tabs.TabPages[i].Tag = ids[i];
+            tabs.TabPages[i].IsClosable = CanCloseTab(ids[i], pane.ActiveTab);
         }
 
         if (pane.ActiveIndex >= 0 && pane.ActiveIndex < tabs.TabCount)
@@ -2073,6 +2178,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
         var paneId = pane.Id;
         tabs.TabChanged += (_, e) => OnTabChanged(paneId, e.NewTab);
+        tabs.TabCloseRequested += (_, e) => OnTabCloseRequested(e.TabPage);
         lock (_paneTabsLock)
         {
             _paneTabs[paneId] = tabs;
@@ -2679,10 +2785,80 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>Closes the focused pane's active window (Ctrl+W). The main window can't be closed.</summary>
-    private void CloseActiveWindow()
+    private void CloseActiveWindow() => CloseWindow(ActiveWindowId());
+
+    /// <summary>
+    /// Whether a tab carries the framework's <c>×</c> close button. Only the pane's <em>active</em>
+    /// tab does — the design shows one close affordance per pane, not one per tab — and never the
+    /// main window, which <see cref="CloseWindow"/> refuses to close anyway.
+    /// </summary>
+    private static bool CanCloseTab(string windowId, string? activeTab) =>
+        windowId != MainWindowId && string.Equals(windowId, activeTab, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Closes the tab whose <c>×</c> the user clicked. The framework raises this from its own hit
+    /// test on the close cell, which is why the glyph has to be <see cref="TabPage.IsClosable"/>
+    /// rather than a <c>✕</c> written into the title: a title is drawn as plain text, so a click
+    /// anywhere in it — the <c>✕</c> included — only ever selects the tab.
+    /// </summary>
+    /// <remarks>
+    /// Raised on the driver's <em>input</em> thread: the framework dispatches mouse frames straight
+    /// from the driver event (<c>InputCoordinator.HandleMouseEvent</c>) rather than queueing them the
+    /// way it queues keys, so ⌃W and this arrive on different threads. Closing rebuilds the whole
+    /// pane area, so it is marshalled the same way the drag adapter marshals a drop. Closes the tab
+    /// by its own id rather than the focused pane's active one, so the <c>×</c> of an unfocused pane
+    /// closes that pane's tab.
+    /// </remarks>
+    private void OnTabCloseRequested(TabPage tab)
     {
-        var id = ActiveWindowId();
-        if (id == MainWindowId)
+        if (tab.Tag is string windowId)
+        {
+            OnUiThread(() => CloseWindow(windowId));
+        }
+    }
+
+    /// <summary>
+    /// Drives a primary-button click into a pane's tab strip through the framework's own
+    /// <see cref="TabControl.ProcessMouseEvent"/> — the hit test that decides whether a click landed
+    /// on a tab, on its <c>×</c> close button, or on neither. It exists for the same reason
+    /// <see cref="SimulateKey"/> does: SharpConsoleUI subscribes its mouse dispatch only inside
+    /// <c>Run()</c>, which a headless test never enters, so there is otherwise no way to prove that
+    /// clicking the <c>×</c> closes a tab.
+    /// </summary>
+    /// <param name="paneId">The pane whose tab strip receives the click.</param>
+    /// <param name="x">Column relative to the pane's own origin — the space the dispatcher would
+    /// hand the control. Translating desktop cells into it is
+    /// <see cref="PaneSnapshot"/>'s job and is covered by the pane-drag tests.</param>
+    /// <param name="y">Row relative to the pane's origin; 0 is the tab header row.</param>
+    /// <returns>True when the tab strip consumed the click.</returns>
+    internal bool SimulateTabStripClick(string paneId, int x, int y)
+    {
+        TabControl? tabs;
+        lock (_paneTabsLock)
+        {
+            if (!_paneTabs.TryGetValue(paneId, out tabs))
+            {
+                return false;
+            }
+        }
+
+        var point = new System.Drawing.Point(x, y);
+        return tabs.ProcessMouseEvent(new MouseEventArgs(
+            // A real terminal reports the end of a click as released + clicked together; the framework
+            // acts on the clicked bit (see NetConsoleDriver.ParseMouseSequence / SequenceHelper).
+            new List<MouseFlags> { MouseFlags.Button1Released, MouseFlags.Button1Clicked },
+            point,
+            point,
+            point));
+    }
+
+    /// <summary>
+    /// Closes one window: drops its control, draft, scrollback and freeze point, removes it from the
+    /// workspace, and rebuilds the pane area. The main window is never closed — it is the session.
+    /// </summary>
+    private void CloseWindow(string id)
+    {
+        if (id == MainWindowId || _workspace.FindWindow(id) is null)
         {
             return;
         }
@@ -2730,7 +2906,9 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             {
                 if (page.Tag is string id && _workspace.FindWindow(id) is { } window)
                 {
-                    page.Title = TabTitles.For(window, focusedCharacter, isActive: id == activeTab);
+                    page.Title = TabTitles.For(window, focusedCharacter);
+                    // The × follows the active tab, so keep it in step with every title refresh.
+                    page.IsClosable = CanCloseTab(id, activeTab);
                 }
             }
         }
@@ -2879,8 +3057,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         return $"{left}{new string(' ', gap)}{rightBar}";
     }
 
-    /// <summary>Marshals an action onto the UI thread (session events fire on background threads).</summary>
-    private void OnUi(Action action) => _system.EnqueueOnUIThread(action);
+    /// <summary>
+    /// Marshals an action onto the UI thread (session events and web fetches fire on background
+    /// threads). Shares <see cref="OnUiThread"/>'s headless handling: a snapshot or test run has no
+    /// main loop to drain the queue, so an action posted there would otherwise be dropped.
+    /// </summary>
+    private void OnUi(Action action) => OnUiThread(action);
 
     private static SColor ToColor(Rgb rgb) => new(rgb.R, rgb.G, rgb.B, 255);
 
