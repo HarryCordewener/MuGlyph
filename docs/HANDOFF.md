@@ -4,8 +4,8 @@ Context for whoever (human or agent) picks up this work next.
 
 - **Repository:** `SharpMUSH/SharpMUTerm`
 - **Start from:** a fresh branch off `main`
-- **Tests:** 1283 across the solution (424 Core / 83 Graphics / 42 Scripting /
-  30 Web / 704 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
+- **Tests:** 1367 across the solution (424 Core / 83 Graphics / 42 Scripting /
+  30 Web / 788 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
   from this repo; building against a local SharpConsoleUI clone surfaces 2 upstream
   NuGet advisory warnings for AngleSharp, which are the framework's, not ours)
 
@@ -166,7 +166,28 @@ Parsed and discarded (`MxpParser.cs:379`, `PuebloParser.cs:309`). Routing them
 through the same seam the web view's images use is the natural follow-up, as is
 an image-viewer tab for local files.
 
-### 5. CodeRabbit nitpicks intentionally **not** done (don't "fix" these)
+### 5. Selection in the command line — ⌃A is **line start**, not select-all
+
+The maintainer has asked for `Ctrl+A` select-all in the input bars. It is still
+not built, and the collision has now been decided rather than left implicit:
+
+**⌃A stays readline's move-to-line-start.** The reason is not preference, it is
+what this host can deliver. `AnsiInputParser` decodes no CSI-u and enables no
+`modifyOtherKeys`, so **Ctrl+Shift+A is indistinguishable from Ctrl+A** on the
+maintainer's terminal (the same reason Shift+⏎ and Ctrl+⏎ both arrive as bare
+Enter — see `InputBarControl`'s key-table doc). There is therefore no second
+chord to move line-start to: giving ⌃A to select-all *deletes* line-start from a
+set (⌃A ⌃E ⌃K ⌃U ⌃W) whose other four members are already there and are the only
+way to get around a wrapped, multi-row command line.
+
+What select-all actually needs, if it is picked up: an anchor+extent on
+`InputBuffer`, selection painting in `InputBarControl.PaintDOM`, ⌃C copying via
+`ClipboardHelper`, typing and paste replacing the selection, and Shift+arrows to
+extend it — because a selection you can only create and never adjust is worse
+than none. It wants its own change and its own chord (a function key, or a
+`⌃B`-prefixed one, both of which this host *can* deliver). Do not half-build it.
+
+### 6. CodeRabbit nitpicks intentionally **not** done (don't "fix" these)
 
 - **`tools/fonts/LICENSE-NerdFonts.txt` "explict" typo** — left as-is on purpose:
   it's a **verbatim copy of the upstream Nerd Fonts license**. Bundled third-party
@@ -295,13 +316,27 @@ Things that will waste your time if you don't know them.
   both are testable without a terminal. It still measures to content width, so pin
   `Width` to fill the row, and it still parses its prompt as markup so the label cells
   carry the band.
-- **Nothing focuses a control for you.** SharpConsoleUI gives initial keyboard focus
-  to no one, and the framework routes a key to `FocusManager.FocusedControl` (and a
-  paste to it, if it is an `IPasteTarget`). That is how per-window drafts came to look
-  broken: typing reached no input at all, so nothing was ever recorded to hand back.
-  `SharpMUTermApp` now focuses the command line in its constructor **and** routes every
-  typing key to the armed bar from `PreviewKeyPressed`, so a click on a tab strip cannot
-  swallow what you type next.
+- **Nothing focuses a control for you, and nothing keeps it focused either.**
+  SharpConsoleUI gives initial keyboard focus to no one, and the framework routes a key
+  to `FocusManager.FocusedControl` (and a paste to it, if it is an `IPasteTarget`). That
+  is how per-window drafts came to look broken: typing reached no input at all, so
+  nothing was ever recorded to hand back. `SharpMUTermApp` focuses the command line in
+  its constructor **and** routes every typing key to the armed bar from
+  `PreviewKeyPressed`.
+  **That routing is also what hid the paste bug for so long.** Focus does not stay put:
+  a click in the output pane focuses that pane's `MarkupControl`, a click on a tab strip
+  focuses the `TabControl`, ⇥ with one bar up walks focus out of the input area, and
+  `Window.SetIsActive` clears and restores it around every overlay. Typing survived all
+  of that because it never consulted focus; **paste has no such routing — it follows
+  `FocusManager`** — so a paste after a click was handed to a control that is not an
+  `IPasteTarget` and dropped silently, and the caret went with it (nothing else in the
+  window reports a logical cursor). Reproduced under a pty: click, bracketed paste,
+  nothing on the command line; type one character and the *next* paste lands, because
+  the keystroke put focus back.
+  The app now pins it: `_window.FocusManager.FocusChanged → PinFocusToArmedBar()`, so
+  the window's focus **is** the armed bar, always. "Which bar ⏎ sends from", "which
+  control the framework will paste into" and "where the caret is drawn" are one fact
+  instead of three. Don't re-sync them in three places; keep the pin.
 - **The desktop panels are off, in every driver.** `ConsoleWindowSystemOptions`
   defaults them on: a top bar with the assembly name + a clock, and a bottom bar
   whose `TaskBarElement` lists window titles trimmed to fifteen cells
@@ -312,6 +347,32 @@ Things that will waste your time if you don't know them.
   `ShowTopPanel: false, ShowBottomPanel: false` now, unconditionally: what a
   snapshot shows is what the terminal shows. The header/status bars are hand-built
   `MarkupControl`s in the window, which is why they still appear.
+- **A settings screen has no `IPasteTarget` — and cannot have one.** The framework
+  delivers a paste to the *focused control* of the active window, and only when that
+  control accepts paste. The F2–F9 screens are markup rebuilt wholesale on every key
+  (`SettingsOverlay.Refresh`), and the field being edited is a buffer inside
+  `SettingsSession` driven from `PreviewKeyPressed` — so there was never anything for
+  the framework to hand a paste to, and every paste aimed at a config field was dropped.
+  `SettingsOverlay` now listens at `IConsoleDriver.Paste` while a screen is open (the
+  same seam pane drags use) and ⌃V reads the clipboard itself. **It cannot double up
+  only because no control on those windows accepts paste** — put a focusable
+  `IPasteTarget` on a screen one day and both paths will fire.
+- **Ask the driver for the terminal size, not a literal.** `_system.ConsoleDriver.ScreenSize`
+  is live and correct from the moment the `ConsoleWindowSystem` exists — before any window
+  does, and `Window.State = Maximized` sizes itself from it (`DesktopDimensions`) at
+  `Build()` time. The header markup was built in the app's constructor, before `_window`,
+  against a literal `160`, so the **first frame** on any narrower terminal right-aligned
+  its status cluster past the edge and wrapped the header onto two rows. Snapshots never
+  saw it: every render path rebuilds the header on the way past, by which time
+  `_window.Width` is populated. Same shape as `ShowTopPanel: !headless` — right in a
+  snapshot, wrong in a terminal. A test that reads `HeaderMarkupWidth` on a *freshly
+  constructed* app is what catches this class.
+- **Chrome the input-height veto counts can change after construction.** `ChromeRows()`
+  measures the header and the status line, and the status line grows from
+  `not connected` to a full identity + keepalive + host cluster once a session is up —
+  a second row on a narrow terminal. `SetStatus` therefore re-runs `SyncInputHeights`.
+  Until the width fix landed this was masked: the header markup was over-long (built for
+  160), so the chrome count came out high for the wrong reason and happened to be right.
 - **`WindowBuilder.Centered()` must come *after* `WithSize()`.** It reads
   `_bounds` and falls back to 80×25 (`WindowBuilder.cs:185`), so centring first
   positions the window as if it were that size. The command surface did exactly

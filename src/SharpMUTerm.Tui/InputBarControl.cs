@@ -182,6 +182,13 @@ internal sealed class InputBarControl : BaseControl, IInteractiveControl, IFocus
     /// app as its control byte except for I, M, J and H, which the terminal spells Tab, Enter, Enter and
     /// Backspace.
     /// </para>
+    /// <para>
+    /// <b>Ctrl+A is move-to-line-start, not select-all</b>, and it is not up for grabs. The same parser
+    /// limitation makes Ctrl+Shift+A indistinguishable from Ctrl+A, so there is no second chord to move
+    /// line-start onto: handing ⌃A to a selection would simply remove it from the readline set
+    /// (⌃A ⌃E ⌃K ⌃U ⌃W) that is the only way around a wrapped, multi-row command line. Selection is
+    /// wanted and unbuilt; see <c>docs/HANDOFF.md</c> §5 for what it needs and which chord it should get.
+    /// </para>
     /// </summary>
     public bool ProcessKey(ConsoleKeyInfo key)
     {

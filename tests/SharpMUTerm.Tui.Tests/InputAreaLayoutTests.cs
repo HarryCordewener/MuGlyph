@@ -222,4 +222,33 @@ public class InputAreaLayoutTests
         await Assert.That(frame.Rows.Workspace).IsGreaterThanOrEqualTo(1);
         await Assert.That(frame.Rows.Primary).IsLessThanOrEqualTo(frame.Rows.Workspace);
     }
+
+    /// <summary>
+    /// The <em>first</em> frame is laid out for the terminal it is on. The header's status cluster is
+    /// right-aligned by padding it out to the window's width, and the header markup is built in the
+    /// constructor — before the window exists — so the width came from a literal 160. On anything
+    /// narrower the cluster overflowed and the header wrapped onto a second row, which is what the
+    /// maintainer's screenshot showed; it only straightened out when a resize rebuilt the markup.
+    /// <para>
+    /// No existing test could see it, and the reason is worth keeping: every render path in this app
+    /// rebuilds the header markup on the way past — the demo scene a snapshot loads does it, a resize
+    /// does it — and by then <c>_window.Width</c> is populated and the fallback never fires. So the
+    /// header is read <em>before</em> anything is rendered, which is the only moment the first frame's
+    /// width is still the guess. The rendered row count follows, as the consequence a user sees.
+    /// </para>
+    /// </summary>
+    [Test]
+    [Arguments(80)]
+    [Arguments(100)]
+    [Arguments(120)]
+    [Arguments(140)]
+    [Arguments(200)] // wider than the old literal too, so the fix is a measurement and not a smaller guess
+    public async Task TheFirstFrameFitsTheTerminalItIsOn(int width)
+    {
+        Console.SetIn(TextReader.Null);
+        var app = new SharpMUTermApp(DemoScene.Build(), Headless, new HeadlessConsoleDriver(width, 30));
+
+        await Assert.That(app.HeaderMarkupWidth).IsLessThanOrEqualTo(width);
+        await Assert.That(Frame(width, 30).Rows.Header).IsEqualTo(1);
+    }
 }

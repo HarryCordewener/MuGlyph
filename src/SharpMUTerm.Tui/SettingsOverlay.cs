@@ -1,6 +1,7 @@
 using SharpConsoleUI;
 using SharpConsoleUI.Builders;
 using SharpConsoleUI.Controls;
+using SharpConsoleUI.Helpers;
 using static SharpMUTerm.Tui.ScreenPalette;
 
 namespace SharpMUTerm.Tui;
@@ -84,7 +85,20 @@ internal sealed class SettingsOverlay
     /// any of it being faked. Keys cannot be driven in through the console driver here: the framework
     /// only subscribes its key pump inside <c>Run()</c>, which a headless snapshot never enters.
     /// </summary>
-    public void SimulateKey(ConsoleKeyInfo key) => OnKey(this, new KeyPressedEventArgs(key, false));
+    /// <returns>Whether the screen consumed the key, as the framework would see it.</returns>
+    public bool SimulateKey(ConsoleKeyInfo key)
+    {
+        var args = new KeyPressedEventArgs(key, false);
+        OnKey(this, args);
+        return args.Handled;
+    }
+
+    /// <summary>
+    /// Feeds one paste to the open screen through the very handler the driver's <c>Paste</c> event
+    /// raises — <see cref="SimulateKey"/>'s counterpart, and for the same reason: the framework only
+    /// pumps input inside <c>Run()</c>, so a headless test has no other way in.
+    /// </summary>
+    public void SimulatePaste(string text) => Paste(text);
 
     private void Open(ConsoleKey key, ScreenBinding binding)
     {
@@ -101,7 +115,38 @@ internal sealed class SettingsOverlay
             .Build();
 
         _window.PreviewKeyPressed += OnKey;
+        _system.ConsoleDriver.Paste += OnPaste;
         _system.AddWindow(_window);
+    }
+
+    /// <summary>
+    /// A terminal paste, taken at the driver rather than from the window.
+    /// <para>
+    /// The framework delivers a paste to the active window's <em>focused control</em>, and only when
+    /// that control is an <c>IPasteTarget</c> — and a settings screen has no such control to offer.
+    /// The screens are markup rendered into controls that are rebuilt wholesale on every key
+    /// (<see cref="Refresh"/>), and the field being edited is a buffer inside
+    /// <see cref="SettingsSession"/> driven from <c>PreviewKeyPressed</c>; there is nothing for the
+    /// framework to hand a paste to, so it dropped every one of them. Listening at the driver is the
+    /// same seam the app already uses for pane drags, and for the same reason.
+    /// </para>
+    /// <para>
+    /// It cannot double up: the window's own delivery is a guaranteed no-op while a screen is open,
+    /// precisely because no control on it accepts paste. Give a screen a focusable
+    /// <c>IPasteTarget</c> one day and that stops being true — the two paths would both fire.
+    /// </para>
+    /// </summary>
+    private void OnPaste(object? sender, string text) => _system.EnqueueOnUIThread(() => Paste(text));
+
+    /// <summary>Hands a paste to the open screen through the same seam its typing uses.</summary>
+    private void Paste(string text)
+    {
+        if (_window is null || _binding is not { } binding)
+        {
+            return;
+        }
+
+        Apply(binding, binding.Session.Paste(text));
     }
 
     private void OnKey(object? sender, KeyPressedEventArgs e)
@@ -111,32 +156,53 @@ internal sealed class SettingsOverlay
             return;
         }
 
-        switch (binding.Session.Handle(e.KeyInfo))
+        // ⌃V is the app-level paste, and it was as dead on these screens as the terminal's own. The
+        // framework reads the clipboard for the focused control when that control accepts paste, and a
+        // settings screen has none to offer, so the read is done here instead. ⌃⇧V is not this chord:
+        // most emulators turn it into a bracketed paste, which arrives at OnPaste. Only while a field
+        // is open, so no clipboard tool is spawned for a chord with nowhere to go — and never over a
+        // key capture, where a chord is the value being recorded.
+        if (e.KeyInfo.Key == ConsoleKey.V
+            && e.KeyInfo.Modifiers.HasFlag(ConsoleModifiers.Control)
+            && binding.Session.IsEditing
+            && !binding.Session.IsCapturingKey)
+        {
+            e.Handled = Apply(
+                binding, binding.Session.Paste(ClipboardHelper.GetTextWithTimeout() ?? string.Empty));
+            return;
+        }
+
+        e.Handled = Apply(binding, binding.Session.Handle(e.KeyInfo));
+    }
+
+    /// <summary>
+    /// Acts on what a screen said an input meant, and reports whether the input was consumed. Shared by
+    /// the key and the paste paths so a screen cannot answer the two differently.
+    /// </summary>
+    private bool Apply(ScreenBinding binding, ScreenAction action)
+    {
+        switch (action)
         {
             case ScreenAction.Cancel:
                 Cancel();
-                e.Handled = true;
-                break;
+                return true;
 
             case ScreenAction.Save:
                 binding.Session.Edits.Commit();
                 _save();
                 Close();
-                e.Handled = true;
-                break;
+                return true;
 
             case ScreenAction.Redraw:
                 Refresh();
-                e.Handled = true;
-                break;
+                return true;
 
             case ScreenAction.Consumed:
-                e.Handled = true;
-                break;
+                return true;
 
             case ScreenAction.None:
             default:
-                break;
+                return false;
         }
     }
 
@@ -174,6 +240,10 @@ internal sealed class SettingsOverlay
 
     private void Reset()
     {
+        // The driver outlives every screen, so the paste hook has to come off with the window it was
+        // put on for — otherwise a closed screen keeps listening and a later paste reaches a session
+        // that is no longer on screen.
+        _system.ConsoleDriver.Paste -= OnPaste;
         _window = null;
         _binding = null;
     }

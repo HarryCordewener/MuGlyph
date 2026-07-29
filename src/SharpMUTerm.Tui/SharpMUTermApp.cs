@@ -376,6 +376,21 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // keystroke went to a control that had no use for it — no typing reached the prompt, no draft
         // was ever recorded, and every tab switch recalled the empty string it had stored.
         _window.FocusControl(_input);
+
+        // …and keeps it. SharpConsoleUI hands a key — and a paste — to whichever control holds focus,
+        // and anything the mouse lands on takes it: a click in the output pane focuses that pane's
+        // MarkupControl, a click on a tab strip focuses the TabControl, and ⇥ with a single command line
+        // up walks focus off the input area altogether. Typing survived all of that because
+        // HandleWindowKey routes it to the armed bar explicitly; paste does not go through that handler
+        // at all, so a paste after a click was delivered to a control that is not an IPasteTarget and
+        // dropped without a trace. The caret went with it — nothing else in this window reports a
+        // logical cursor, so the terminal's cursor simply vanished.
+        //
+        // So focus is not something this window is allowed to drift. It belongs to the armed command
+        // line, and this puts it back the instant anything takes it, which is what makes "which bar ⏎
+        // sends from", "which control the framework will paste into" and "where the caret is drawn" one
+        // fact rather than three that agree until they don't.
+        _window.FocusManager.FocusChanged += (_, _) => PinFocusToArmedBar();
         _window.PreviewKeyPressed += OnWindowKey;
 
         // NAWS rides the frame. Pane rectangles exist only while an arranged layout does, and every
@@ -1257,15 +1272,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// Makes one bar the one ⏎ sends from: it lights up, takes the caret and the keyboard focus, and
     /// the other dims. Nothing else in the app decides this, so "which bar is armed" and "where the
     /// caret is" cannot disagree.
+    /// <para>
+    /// A bar that is not on screen is answered with the one that always is. Arming an invisible control
+    /// used to be a silent no-op, which left <see cref="_armed"/> pointing at the second command line
+    /// after it had been hidden — ⏎ aimed at a bar the window no longer draws, and the caret with it.
+    /// </para>
     /// </summary>
     private void ArmBar(InputBarControl bar)
     {
-        if (!bar.Visible)
-        {
-            return;
-        }
-
-        _armed = bar;
+        _armed = bar.Visible ? bar : _input;
         _input.Armed = ReferenceEquals(_armed, _input);
         _second.Armed = ReferenceEquals(_armed, _second);
         _window.FocusControl(_armed);
@@ -1273,14 +1288,62 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
+    /// Puts the window's keyboard focus back on the armed command line. See the constructor for why the
+    /// app owns this rather than leaving it to the framework: paste and the terminal caret both follow
+    /// framework focus, and everything else in this window that can take focus does nothing with it.
+    /// </summary>
+    private void PinFocusToArmedBar()
+    {
+        // An overlay owning the keyboard deactivates this window, and the framework clears its focus on
+        // the way out and restores it on the way back (Window.SetIsActive). Re-arming mid-deactivation
+        // would fight that and would put a caret on a window nobody is typing into. On the way back the
+        // window is already active, so this still runs — and the armed bar, not whatever the framework
+        // saved, is what the caret returns to.
+        if (_pinningFocus || !_window.GetIsActive())
+        {
+            return;
+        }
+
+        var bar = ActiveBar();
+        if (ReferenceEquals(_window.FocusManager.FocusedControl, bar))
+        {
+            return;
+        }
+
+        _pinningFocus = true;
+        try
+        {
+            _window.FocusControl(bar);
+        }
+        finally
+        {
+            _pinningFocus = false;
+        }
+    }
+
+    /// <summary>Guards <see cref="PinFocusToArmedBar"/> against re-entering itself through FocusChanged.</summary>
+    private bool _pinningFocus;
+
+    /// <summary>
     /// Shows or hides the active window's second command line (⌃B i, or the ⌃P surface). The answer is
     /// per window, so the bar follows the tab you are on; hiding the armed bar hands ⏎ back to the
     /// primary rather than leaving it pointed at something off screen.
+    /// <para>
+    /// Raising it also arms it. It is the line that was just asked for, and leaving ⏎ and the caret on
+    /// the bar above while a new empty one appears below reads as the cursor being in the wrong window
+    /// — which is how it was reported. Only the explicit toggle does this: <see cref="SyncInputBars"/>
+    /// also raises the bar when a tab that keeps one becomes visible, and that is not a request to type
+    /// into it.
+    /// </para>
     /// </summary>
     private void ToggleSecondBar()
     {
-        _secondBars.Toggle(ActiveWindowId());
+        var shown = _secondBars.Toggle(ActiveWindowId());
         SyncInputBars();
+        if (shown)
+        {
+            ArmBar(_second);
+        }
     }
 
     /// <summary>
@@ -1297,20 +1360,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private void SyncInputBars()
     {
         var shown = _secondBars.IsShown(ActiveWindowId());
-
-        // The configured heights are what the bars want; the window gets a veto. Two bars each grown to
-        // eight lines is most of a 24-row terminal, and an input area that leaves no output above it is
-        // not an input area — so the bars share a quarter of the window each, floor of one. The share is
-        // taken from what the chrome leaves rather than from the whole window: the framework reserves
-        // every sticky row before the workspace is measured at all, and it does not check that the two
-        // sticky bands fit, so rows promised to the header and the status line and then spent on a bar
-        // come out of the output area (see InputLayout.Room).
-        var room = InputLayout.Room(HeaderHeight(), ChromeRows(), shown ? 2 : 1);
-        foreach (var bar in new[] { _input, _second })
-        {
-            bar.MinRows = Math.Min(_config.Input.Rows, room);
-            bar.MaxRows = Math.Min(_config.Input.MaxRows, room);
-        }
+        SyncInputHeights(shown);
 
         if (_second.Visible != shown)
         {
@@ -1318,8 +1368,34 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _window.ForceRebuildLayout();
         }
 
-        // A hidden bar cannot be the one ⏎ sends from; hand it back rather than leave it off screen.
-        ArmBar(!shown && ReferenceEquals(_armed, _second) ? _input : _armed);
+        // Re-assert the armed bar against the visibility that was just applied: a hidden bar cannot be
+        // the one ⏎ sends from, and ArmBar answers a request for one with the primary.
+        ArmBar(_armed);
+    }
+
+    /// <summary>
+    /// Caps how tall each command line may grow. The configured heights are what the bars want; the
+    /// window gets a veto. Two bars each grown to eight lines is most of a 24-row terminal, and an input
+    /// area that leaves no output above it is not an input area — so the bars share a quarter of the
+    /// window each, floor of one. The share is taken from what the chrome leaves rather than from the
+    /// whole window: the framework reserves every sticky row before the workspace is measured at all,
+    /// and it does not check that the two sticky bands fit, so rows promised to the header and the
+    /// status line and then spent on a bar come out of the output area (see <see cref="InputLayout.Room"/>).
+    /// <para>
+    /// Split out of <see cref="SyncInputBars"/> because the chrome it measures changes without the input
+    /// area changing at all — <see cref="SetStatus"/> calls it for exactly that reason — and because it
+    /// touches nothing but the two caps, so calling it from there cannot recurse.
+    /// </para>
+    /// </summary>
+    /// <param name="secondShown">Whether two command lines are sharing the room, or one.</param>
+    private void SyncInputHeights(bool secondShown)
+    {
+        var room = InputLayout.Room(HeaderHeight(), ChromeRows(), secondShown ? 2 : 1);
+        foreach (var bar in new[] { _input, _second })
+        {
+            bar.MinRows = Math.Min(_config.Input.Rows, room);
+            bar.MaxRows = Math.Min(_config.Input.MaxRows, room);
+        }
     }
 
     /// <summary>
@@ -3225,6 +3301,54 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>Switches the visible window the way the tab strip does, so the tab-changed path runs.</summary>
     internal void SimulateWindowChange(string windowId) => Activate(windowId);
 
+    /// <summary>
+    /// Delivers one paste by the framework's rule: to the window's focused control, and only when that
+    /// control accepts paste. It deliberately does not call <see cref="InputBarControl.Paste"/> — the
+    /// bar's own paste was never broken, the routing to it was, so a test that pasted into the bar
+    /// directly would pass either way. The rule is restated here rather than driven through
+    /// <c>WindowEventDispatcher.ProcessPaste</c> because that type is internal to SharpConsoleUI; it is
+    /// the same two lines, and the pty run behind <c>APasteAfterFocusIsTakenOffTheBar…</c> is what keeps
+    /// the restatement honest.
+    /// </summary>
+    internal void SimulatePaste(string text)
+    {
+        if (_window.FocusManager.FocusedControl is IPasteTarget target)
+        {
+            target.Paste(text);
+        }
+    }
+
+    /// <summary>
+    /// Takes the keyboard focus off the command line the way the framework does when nothing asks it
+    /// not to: ⇥ with no sibling bar to hand the caret to walks focus to the next control in the window,
+    /// and a mouse click focuses whatever the pointer hit. Neither goes through the app, which is the
+    /// point — it is the state a paste used to disappear into, and it is reachable without the app's
+    /// consent.
+    /// </summary>
+    internal void SimulateFocusSteal() => _window.FocusManager.MoveFocus(backward: false);
+
+    /// <summary>
+    /// How wide the header markup is, in cells. This is the number the very first frame is laid out
+    /// against and the one a test has to read: the status cluster is right-aligned by padding the row
+    /// out to the width the header was built for, so a header built for a wider terminal than the one
+    /// it is on is a header that wraps. Readable before anything has been rendered, which is the whole
+    /// point — every render path in this app rebuilds the header on the way past, and by then the
+    /// window exists and the width is no longer a guess.
+    /// </summary>
+    internal int HeaderMarkupWidth => MarkupWidth(_header.Text);
+
+    /// <summary>Whether the framework's keyboard focus is on the bar ⏎ sends from — the app's one rule.</summary>
+    internal bool ArmedBarHasFocus => ReferenceEquals(_window.FocusManager.FocusedControl, ActiveBar());
+
+    /// <summary>Whether the control holding the keyboard focus is one the window still draws.</summary>
+    internal bool FocusIsOnAVisibleControl =>
+        _window.FocusManager.FocusedControl is IWindowControl { Visible: true };
+
+    /// <summary>Whether each bar is reporting a caret for the terminal to sit on — armed and focused.</summary>
+    internal (bool Primary, bool Second) CaretReported => (
+        _input.GetLogicalCursorPosition() is not null,
+        _second.GetLogicalCursorPosition() is not null);
+
     /// <summary>What the command line ⏎ sends from is holding — the armed bar's text.</summary>
     internal string ArmedInputText => ActiveBar().Text;
 
@@ -4321,8 +4445,24 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
     }
 
-    /// <summary>Writes one line of markup onto the status row. The only thing that paints it.</summary>
-    private void PaintStatus(string markup) => _statusBar.SetContent(new List<string> { markup });
+    /// <summary>
+    /// Writes one line of markup onto the status row. The only thing that paints it — and therefore the
+    /// one place the input-height veto can be re-derived against what the row actually says.
+    /// <para>
+    /// The veto counts the rows the header and status line wrap to, and the status line is the piece of
+    /// chrome whose length changes at runtime: <c>not connected</c> at construction, a full identity +
+    /// keepalive + host cluster once a session is up, and — laid over either — a <see cref="Notice"/>,
+    /// which is a whole sentence ("nothing to split — a split moves this pane's other tabs across, and it
+    /// has none" is eighty characters). On a narrow terminal any of those is a second row the input bars
+    /// were promised. Left uncounted, an 80×6 window handed the input area a row the status line then
+    /// took. Re-deriving here rather than in <see cref="SetStatus"/> is what covers the notice case too.
+    /// </para>
+    /// </summary>
+    private void PaintStatus(string markup)
+    {
+        _statusBar.SetContent(new List<string> { markup });
+        SyncInputHeights(_second.Visible);
+    }
 
     /// <summary>
     /// Sets what the status row says <em>at rest</em>: the connection identity, a mode prompt, the
@@ -4546,11 +4686,36 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         return $"{leftBar}{new string(' ', gap)}{right}";
     }
 
-    /// <summary>The header width to lay out against — the live window width, or a sane default early on.</summary>
-    private int HeaderWidth() => _window is { Width: > 0 } ? _window.Width : 160;
+    /// <summary>
+    /// The header width to lay out against: the live window width once there is a window, and the
+    /// terminal's own width until then. The distinction is not cosmetic. The first header markup is
+    /// built before the window exists, and the same number right-aligns that header's status cluster,
+    /// pins each command line's band to the full row, and counts the chrome rows the input-height veto
+    /// has to leave alone — so a guess here lays the whole first frame out for a terminal nobody has.
+    /// The app is handed a driver that knows the answer, which is why it is asked instead.
+    /// </summary>
+    private int HeaderWidth() => _window is { Width: > 0 } ? _window.Width : DriverSize().Width;
 
-    /// <summary>The window's height in rows, or a sensible one before it has been laid out.</summary>
-    private int HeaderHeight() => _window is { Height: > 0 } ? _window.Height : 48;
+    /// <summary>The window's height in rows, or the terminal's own before the window exists.</summary>
+    private int HeaderHeight() => _window is { Height: > 0 } ? _window.Height : DriverSize().Height;
+
+    /// <summary>
+    /// The terminal's size as the console driver reports it — the size to lay out against before the
+    /// window exists. Only a driver with no console to measure (a redirected stdout on Windows) fails
+    /// to answer, and the old literals survive as that last resort rather than as the first guess.
+    /// </summary>
+    private (int Width, int Height) DriverSize()
+    {
+        try
+        {
+            var size = _system.ConsoleDriver.ScreenSize;
+            return (size.Width > 0 ? size.Width : 160, size.Height > 0 ? size.Height : 48);
+        }
+        catch (Exception e) when (e is IOException or InvalidOperationException or PlatformNotSupportedException)
+        {
+            return (160, 48);
+        }
+    }
 
     /// <summary>Formats an <see cref="Rgb"/> as <c>#rrggbb</c> markup.</summary>
     private static string Hex(Rgb rgb) => $"#{rgb.R:x2}{rgb.G:x2}{rgb.B:x2}";
