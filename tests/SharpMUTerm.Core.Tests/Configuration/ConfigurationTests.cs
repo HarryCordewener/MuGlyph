@@ -346,10 +346,15 @@ public class ConfigurationTests
     [Test]
     public async Task ScrollbackDefault_IsTenThousand_AndSharedWithTheBuffer()
     {
-        await Assert.That(SharpMUTerm.Core.Text.ScrollbackBuffer.DefaultCapacity).IsEqualTo(10_000);
+        // Pinned through the two runtime reads rather than against the constant itself: the constant
+        // has to stay a `const` (it is a default parameter value in four places), so comparing it to
+        // a literal is a compile-time tautology the analyzer rightly rejects (TUnitAssertions0005).
+        // Asserting the config default and the buffer's own capacity against 10_000 pins the number
+        // where it is actually observable, and catches a drift the constant-to-literal form would
+        // have caught anyway — plus one it would not: a consumer wired to a different default.
+        await Assert.That(new AppConfiguration().ScrollbackLines).IsEqualTo(10_000);
+        await Assert.That(new SharpMUTerm.Core.Text.ScrollbackBuffer().Capacity).IsEqualTo(10_000);
         await Assert.That(new AppConfiguration().ScrollbackLines)
-            .IsEqualTo(SharpMUTerm.Core.Text.ScrollbackBuffer.DefaultCapacity);
-        await Assert.That(new SharpMUTerm.Core.Text.ScrollbackBuffer().Capacity)
             .IsEqualTo(SharpMUTerm.Core.Text.ScrollbackBuffer.DefaultCapacity);
     }
 }
