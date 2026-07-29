@@ -407,9 +407,14 @@ public class ScreenModelTests
 
     /// <summary>
     /// Logging is two more fields of the character's own row — the format (whose <c>None</c> is "off",
-    /// so one control covers one stored value) and the folder. They are appended after the name and the
-    /// on-connect line, so the two ordinals that were here still mean what they meant. This replaces
-    /// F9's screen, whose rows edited whichever character happened to be active.
+    /// so one control covers one stored value) and the folder. This replaces F9's screen, whose rows
+    /// edited whichever character happened to be active.
+    /// <para>
+    /// The count is six because the password and the connect line are fields of this row too, drawn
+    /// between the name and the on-connect line. The ordinals are addressed by name, which is what let
+    /// them be inserted in drawn order rather than appended past the log values — see
+    /// <see cref="WorldsScreenRenderer.PasswordField"/>.
+    /// </para>
     /// </summary>
     [Test]
     public async Task Worlds_TheCharacterRowCarriesItsLogFormatAndFolder()
@@ -420,7 +425,7 @@ public class ScreenModelTests
         var model = WorldsScreenRenderer.Model(worlds, Sets(), 0, 0);
         var row = model.RowAt(WorldsScreenRenderer.CharactersPane, 0);
 
-        await Assert.That(row.FieldCount).IsEqualTo(4);
+        await Assert.That(row.FieldCount).IsEqualTo(6);
         await Assert.That(row.FieldAt(WorldsScreenRenderer.CharacterNameField)!.Value.Get()).IsEqualTo("Kaz");
         await Assert.That(row.FieldAt(WorldsScreenRenderer.LogFormatField)!.Value.Get()).IsEqualTo("Html");
         await Assert.That(row.FieldAt(WorldsScreenRenderer.LogDirectoryField)!.Value.Get()).IsEqualTo("/logs/kaz");

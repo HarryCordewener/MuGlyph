@@ -343,6 +343,13 @@ public sealed class WorldSession : IAsyncDisposable
     /// Sends the character's auto-login line (when <see cref="CharacterDefinition.AutoLogin"/> is
     /// set) followed by its semicolon-separated <see cref="CharacterDefinition.OnConnect"/> commands.
     /// A no-op for anonymous sessions.
+    /// <para>
+    /// This is deliberately <see cref="SendRawAsync"/> and not <see cref="SendUserInputAsync"/>: raw
+    /// goes straight to telnet with no local echo and no transcript write, so the one line in this app
+    /// that carries a password never reaches the output pane or the session log. Typing the same line by
+    /// hand <em>is</em> echoed and logged — which is the whole reason the password is a field and the
+    /// login line a template (see <see cref="ConnectStringTemplate"/>).
+    /// </para>
     /// </summary>
     private async Task SendLoginAsync(CancellationToken cancellationToken)
     {
@@ -354,7 +361,14 @@ public sealed class WorldSession : IAsyncDisposable
 
         if (character.AutoLogin)
         {
-            await SendRawAsync(character.ResolveConnectString(), cancellationToken).ConfigureAwait(false);
+            // A template can legitimately resolve to nothing — `%PASSWORD%` alone, with no password set
+            // — and a bare newline at a login prompt is not "no command", it is a command some servers
+            // answer to. Send nothing rather than something meaningless.
+            var login = character.ResolveConnectString();
+            if (!string.IsNullOrWhiteSpace(login))
+            {
+                await SendRawAsync(login, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         foreach (var command in SplitCommands(character.OnConnect))

@@ -290,6 +290,13 @@ internal static class ScreenChrome
     /// committed value reads (a null log directory shows as <c>(default)</c>); the buffer is escaped
     /// here, since what has been typed is raw text.
     /// </para>
+    /// <para>
+    /// A <see cref="ScreenFieldEdit.Masked"/> buffer is replaced by <see cref="Mask"/> before any of that
+    /// happens, so a secret has no route into markup at all — not even the character under the caret.
+    /// The mask is per-character rather than fixed-width <em>while typing</em>, because the caret has to
+    /// land where the keys say it does; a resting secret is drawn at a fixed width by its own renderer
+    /// (see <see cref="RestingMask"/>) so a screen nobody is editing doesn't publish its length.
+    /// </para>
     /// </summary>
     internal static string Field(string display, ScreenFieldEdit? edit)
     {
@@ -303,10 +310,11 @@ internal static class ScreenChrome
             return Capture(open);
         }
 
-        var caret = Math.Clamp(open.Caret, 0, open.Text.Length);
-        var before = MarkupText.Escape(open.Text[..caret]);
-        var under = caret < open.Text.Length ? MarkupText.Escape(open.Text[caret].ToString()) : " ";
-        var after = caret < open.Text.Length ? MarkupText.Escape(open.Text[(caret + 1)..]) : string.Empty;
+        var text = open.Masked ? Mask(open.Text.Length) : open.Text;
+        var caret = Math.Clamp(open.Caret, 0, text.Length);
+        var before = MarkupText.Escape(text[..caret]);
+        var under = caret < text.Length ? MarkupText.Escape(text[caret].ToString()) : " ";
+        var after = caret < text.Length ? MarkupText.Escape(text[(caret + 1)..]) : string.Empty;
 
         var buffer = $"[{ScreenPalette.Value} on {ScreenPalette.FieldBg}]{before}[/]"
             + $"[{ScreenPalette.Ink} on {ScreenPalette.Accent}]{under}[/]"
@@ -530,6 +538,27 @@ internal static class ScreenChrome
     /// </para>
     /// </summary>
     internal static string ReadOnly(string text) => $"[{ScreenPalette.Muted}]{MarkupText.Escape(text)}[/]";
+
+    /// <summary>The glyph a masked value is drawn in — one per character of the buffer.</summary>
+    internal const char MaskGlyph = '•';
+
+    /// <summary>
+    /// How wide a masked value is drawn when nothing is being typed into it. Fixed, and deliberately not
+    /// the value's own length: a resting screen is the one a screenshot or a snapshot catches, and a mask
+    /// that grew with the secret would publish its length to anyone looking at the picture.
+    /// </summary>
+    internal const int RestingMaskWidth = 8;
+
+    /// <summary><paramref name="length"/> mask glyphs — what a secret looks like in markup.</summary>
+    internal static string Mask(int length) => new(MaskGlyph, Math.Max(0, length));
+
+    /// <summary>
+    /// A set secret at rest: <see cref="RestingMaskWidth"/> glyphs in the ordinary value ink, so the row
+    /// reads as holding something. It is drawn in a well like any other editable value, because it
+    /// <em>is</em> one — the well is this project's one promise that the keyboard can change a value
+    /// here, and a password that can be typed but is drawn without one would be the same lie in reverse.
+    /// </summary>
+    internal static string RestingMask() => $"[{ScreenPalette.Value}]{Mask(RestingMaskWidth)}[/]";
 
     /// <summary>How far a legend's continuation rows are indented, to clear its label.</summary>
     internal const int LegendLabel = 7;

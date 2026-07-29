@@ -15,13 +15,26 @@ public sealed class CharacterDefinition
     /// Login password, held in memory for the session only. It is deliberately <b>never</b>
     /// serialized (<see cref="JsonIgnoreAttribute"/>) so it can't leak into plaintext
     /// <c>config.json</c>; a secure OS credential store (DPAPI/Keychain/libsecret) is the intended
-    /// backing and is a follow-up. Callers supply it per session, or embed it in
-    /// <see cref="ConnectString"/> if they knowingly accept plaintext.
+    /// backing and is a follow-up. Until one lands, the F5 character form says exactly that — the
+    /// password is remembered for this session and is not saved — because a field claiming a credential
+    /// store that does not exist is worse than a field that admits it forgets.
+    /// <para>
+    /// It is typed into the form and joined to the login line by
+    /// <see cref="ConnectStringTemplate.PasswordToken"/> at send time. That is the point of the token:
+    /// the line can be persisted while the secret is not, so nobody has to choose between an auto-login
+    /// that works and a config that holds their password in the clear.
+    /// </para>
     /// </summary>
     [JsonIgnore]
     public string? Password { get; set; }
 
-    /// <summary>The login line to send. Defaults to <c>connect {Name} {Password}</c> when null.</summary>
+    /// <summary>
+    /// The login line to send, as a template — <c>connect %CHARACTER% %PASSWORD%</c> by default (see
+    /// <see cref="ConnectStringTemplate"/> for the token, escaping and empty-value rules). Null means
+    /// "use the default", which is why no config migration was needed when the default stopped being
+    /// hand-built and became a template: an existing character with <c>connectString: null</c> resolves
+    /// to the very same line it always did, and one carrying its own line keeps it.
+    /// </summary>
     public string? ConnectString { get; set; }
 
     /// <summary>Send the connect string automatically on connect.</summary>
@@ -63,9 +76,10 @@ public sealed class CharacterDefinition
         Logging = new LoggingSettings { Format = Logging.Format, Directory = Logging.Directory },
     };
 
-    /// <summary>Builds the default login line when <see cref="ConnectString"/> is unset.</summary>
-    public string ResolveConnectString() =>
-        !string.IsNullOrWhiteSpace(ConnectString)
-            ? ConnectString!
-            : $"connect {Name}{(string.IsNullOrEmpty(Password) ? string.Empty : " " + Password)}";
+    /// <summary>
+    /// The login line to send: this character's <see cref="ConnectString"/> — or
+    /// <see cref="ConnectStringTemplate.Default"/> when it has none — with its tokens substituted. The
+    /// secret is joined to the line here, at the last possible moment, and nowhere else.
+    /// </summary>
+    public string ResolveConnectString() => ConnectStringTemplate.Resolve(ConnectString, Name, Password);
 }

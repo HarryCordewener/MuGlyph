@@ -94,9 +94,10 @@ python3 tools/ansi_frame_to_image.py frame.ansi frame.html   # or .svg
   whatever config is on the machine, and a saved `~/.config/SharpMUTerm/` quietly replaces the demo
   worlds — you end up checking your own data and calling it the demo.
 - **Views:** `worlds`/`settings`, `triggers`, `route`, `highlight`, `aliases`, `timers`, `keypad`,
-  `set`, `textansi`, `input`, `logging`, `freeze`, `spawn`, `split`, `move`, `drag`, `history`,
-  `history-search`, `history-search-filter`, `draft`, `draft2`, `menu`, `menu-split`, `messages`,
-  `quit`, `web`, `scrollback`, `scrollback-up`, `freeze-scrollback`, plus the default workspace
+  `set`, `textansi`, `input`, `logging`, `password`, `freeze`, `spawn`, `split`, `move`, `drag`,
+  `history`, `history-search`, `history-search-filter`, `draft`, `draft2`, `menu`, `menu-split`,
+  `messages`, `quit`, `web`, `scrollback`, `scrollback-up`, `freeze-scrollback`, plus the default
+  workspace
   (no `--view`). Any settings screen also takes a `-edit` suffix, which opens it and drives real
   keys in so the frame shows a field mid-edit. State toggles: `collapsed`, `prefix`, `timestamps`.
 - **The three `scroll*` views are the only ones with more output than a pane holds.** Every other view

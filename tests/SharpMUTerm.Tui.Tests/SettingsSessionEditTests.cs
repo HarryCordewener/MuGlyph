@@ -404,9 +404,11 @@ public class SettingsSessionEditTests
     }
 
     /// <summary>
-    /// The character row's fields, in the order ⇥ steps through them: the log values are appended after
-    /// the two that were there, so the ordinals the screens and their tests already address are
-    /// untouched, and ⏎ still opens the name.
+    /// The character row's fields, in the order ⇥ steps through them, which is the order the CHARACTER
+    /// form draws them: name → password → connect → on connect → log → log folder. ⏎ still opens the
+    /// name, and the walk is asserted stop by stop rather than by hopping to the end, because the whole
+    /// argument for inserting the two new fields in drawn order instead of appending them is that ⇥ never
+    /// jumps back up the form.
     /// </summary>
     [Test]
     public async Task TheCharacterRowStepsFromItsNameThroughToItsLog()
@@ -432,9 +434,17 @@ public class SettingsSessionEditTests
         session.Handle(Key(ConsoleKey.Enter));
         await Assert.That(session.Focus().Edit!.Value.Field).IsEqualTo(WorldsScreenRenderer.CharacterNameField);
 
-        session.Handle(Key(ConsoleKey.Tab));
-        session.Handle(Key(ConsoleKey.Tab));
-        await Assert.That(session.Focus().Edit!.Value.Field).IsEqualTo(WorldsScreenRenderer.LogFormatField);
+        foreach (var next in new[]
+        {
+            WorldsScreenRenderer.PasswordField,
+            WorldsScreenRenderer.ConnectStringField,
+            WorldsScreenRenderer.OnConnectField,
+            WorldsScreenRenderer.LogFormatField,
+        })
+        {
+            session.Handle(Key(ConsoleKey.Tab));
+            await Assert.That(session.Focus().Edit!.Value.Field).IsEqualTo(next);
+        }
 
         // ↑↓ cycle an enum, which is what makes the log format usable without typing it.
         session.Handle(Key(ConsoleKey.DownArrow));

@@ -102,7 +102,8 @@ public class ScreenFieldRenderingTests
         await Assert.That(name).Contains("Kazimi");
 
         var onConnect = WorldsScreenRenderer
-            .FormColumn(character, ScreenPalette.Accent, Edit(1, 0, 1, "look;score"), 0)
+            .FormColumn(
+                character, ScreenPalette.Accent, Edit(1, 0, WorldsScreenRenderer.OnConnectField, "look;score"), 0)
             .Single(HasCaret);
         await Assert.That(onConnect).Contains("on connect");
     }

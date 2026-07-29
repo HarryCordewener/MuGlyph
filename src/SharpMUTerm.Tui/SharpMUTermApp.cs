@@ -2081,7 +2081,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         new(ConsoleKey.F6, "Timers", new[] { "timers" }, TimersScreen),
         new(ConsoleKey.F7, "Text & ANSI", new[] { "textansi" }, TextAnsiScreen),
         new(ConsoleKey.F8, "Input", new[] { "input" }, InputScreen),
-        new(ConsoleKey.F9, "Character logging", new[] { "logging" }, CharacterLoggingScreen),
+        // "password" is a second --view name for the same character-pane screen, the way F2 carries four:
+        // the screen is identical, only the -edit script differs, and the password field is a state a
+        // still frame is the only way to look at (a masked buffer mid-edit).
+        new(ConsoleKey.F9, "Character logging", new[] { "logging", "password" }, CharacterLoggingScreen),
     };
 
     /// <summary>
@@ -2507,11 +2510,31 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             yield break;
         }
 
+        if (string.Equals(view, "password", StringComparison.OrdinalIgnoreCase))
+        {
+            // name → password, then type into it: the frame shows a masked buffer with the caret inside
+            // it, which is the only state in this app where what is drawn is deliberately not what is
+            // held. Demo config has no password to reveal, so the typed value is the whole secret in the
+            // frame — and it still comes out as dots.
+            yield return Stroke('\t', ConsoleKey.Tab);
+            foreach (var c in "hunter2")
+            {
+                yield return Stroke(c, ConsoleKey.NoName);
+            }
+
+            yield break;
+        }
+
         if (string.Equals(view, "logging", StringComparison.OrdinalIgnoreCase))
         {
-            // name → on connect → log: the character row's fields, in order.
-            yield return Stroke('\t', ConsoleKey.Tab);
-            yield return Stroke('\t', ConsoleKey.Tab);
+            // name → password → connect → on connect → log: the character row's fields, in order. The
+            // two new ones sit between the name and the on-connect line, so this walk grew with them
+            // rather than the log format quietly becoming a different field.
+            for (var i = 0; i < WorldsScreenRenderer.LogFormatField; i++)
+            {
+                yield return Stroke('\t', ConsoleKey.Tab);
+            }
+
             yield break;
         }
 

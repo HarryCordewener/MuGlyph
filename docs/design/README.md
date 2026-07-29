@@ -52,8 +52,8 @@ The design separates them: a world is a **server** (host/port/TLS/encoding), and
 public sealed class CharacterDefinition
 {
     public string Name { get; set; } = "New Character";
-    public string? Password { get; set; }          // keychain-backed; never plain in JSON
-    public string? ConnectString { get; set; }     // default: "connect {Name} {Password}"
+    public string? Password { get; set; }          // [JsonIgnore]: session only, never on disk
+    public string? ConnectString { get; set; }     // template; null → "connect %CHARACTER% %PASSWORD%"
     public bool AutoLogin { get; set; }
     public string? OnConnect { get; set; }         // ';'-separated commands
     public string? OnDisconnect { get; set; }
@@ -188,8 +188,9 @@ Not a dialog. Worlds list on the left (name, address, character count, live coun
 - **`├ CHARACTERS`**: a table — name, state (`● connected` / `○ offline`), login mode,
   assigned trigger sets — with `[+ add character] [⧉ duplicate] [- remove]`. Empty state:
   *"no characters — this world has nothing to connect with."*
-- **`└ CHARACTER · <name>`**: two columns. Left: name, password (keychain), on-connect,
-  auto-login, session state. Right: the trigger-set checklist — each row is
+- **`└ CHARACTER · <name>`**: two columns. Left: name, password (masked, *this session only —
+  never saved*), the connect-line template (`connect %CHARACTER% %PASSWORD%`), on-connect,
+  auto-login, session state, log format + folder. Right: the trigger-set checklist — each row is
   `[x] ▪ Comms — channel + page routing    2 rules`. Toggling assigns/unassigns live.
 
 Footer: `Cancel` / `Save`.
