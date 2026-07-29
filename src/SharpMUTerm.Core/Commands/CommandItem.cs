@@ -14,6 +14,9 @@ public enum CommandGroup
 
     /// <summary>Layout actions: split, zoom, close pane, move.</summary>
     Layout,
+
+    /// <summary>The configuration screens — one entry per screen the host offers, F-key and all.</summary>
+    Settings,
 }
 
 /// <summary>

@@ -49,13 +49,43 @@ public class CommandCatalogTests
     }
 
     [Test]
-    public async Task Catalog_CoversAllFourGroups()
+    public async Task Catalog_CoversEveryGroup()
     {
         var ws = new Workspace();
-        var catalog = CommandCatalog.Build(ws, Characters, "Aetherfall.Corvid", new CommandContext());
+        var catalog = CommandCatalog.Build(ws, Characters, "Aetherfall.Corvid", new CommandContext(), Screens);
         foreach (var group in Enum.GetValues<CommandGroup>())
         {
             await Assert.That(catalog.Any(c => c.Group == group)).IsTrue();
         }
+    }
+
+    private static readonly SettingsEntry[] Screens =
+    {
+        new("Worlds & Characters", "screen:worlds", "F5"),
+        new("Aliases", "screen:aliases", "F3"),
+    };
+
+    [Test]
+    public async Task EverySettingsScreenTheHostOffers_BecomesAnEntry_SubtitledWithItsKey()
+    {
+        var ws = new Workspace();
+        var catalog = CommandCatalog.Build(ws, Characters, null, new CommandContext(), Screens);
+
+        var settings = catalog.Where(c => c.Group == CommandGroup.Settings).ToArray();
+        await Assert.That(settings.Length).IsEqualTo(2);
+        await Assert.That(settings[0].Title).IsEqualTo("Open Worlds & Characters");
+        await Assert.That(settings[0].Id).IsEqualTo("screen:worlds");
+        await Assert.That(settings[0].Subtitle).IsEqualTo("F5"); // the palette teaches the shortcut
+        // The host's order is kept: these are its F-keys, and re-sorting them would hide that.
+        await Assert.That(settings[1].Id).IsEqualTo("screen:aliases");
+    }
+
+    [Test]
+    public async Task AHostThatOffersNoScreens_GetsNoSettingsGroup()
+    {
+        var ws = new Workspace();
+        var catalog = CommandCatalog.Build(ws, Characters, null, new CommandContext());
+
+        await Assert.That(catalog.Any(c => c.Group == CommandGroup.Settings)).IsFalse();
     }
 }

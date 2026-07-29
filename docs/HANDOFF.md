@@ -276,10 +276,21 @@ Things that will waste your time if you don't know them.
   field). It measures to content width; pin `_input.Width` to fill the row. It
   parses its prompt string as markup, so you can paint the prompt cells with a
   background span to make a seamless band.
-- **Headless panels caveat:** `ConsoleWindowSystemOptions` top/bottom panels are
-  hidden in headless (`ShowTopPanel: !headless`), so anything you put there won't
-  appear in snapshots. The header/status bars are hand-built `MarkupControl`s in
-  the window instead, precisely so they show up in snapshots.
+- **The desktop panels are off, in every driver.** `ConsoleWindowSystemOptions`
+  defaults them on: a top bar with the assembly name + a clock, and a bottom bar
+  whose `TaskBarElement` lists window titles trimmed to fifteen cells
+  (`TaskBarElement.cs:22`, `TrimWithEllipsis(Title, 15, 7)`) — which on this app is
+  one row reading `SharpMU...lient`. Both restate the app's own header band, both
+  cost a workspace row, and they used to be hidden **in headless only**, so no
+  snapshot ever showed them and the truncated title survived to a real terminal.
+  `ShowTopPanel: false, ShowBottomPanel: false` now, unconditionally: what a
+  snapshot shows is what the terminal shows. The header/status bars are hand-built
+  `MarkupControl`s in the window, which is why they still appear.
+- **`WindowBuilder.Centered()` must come *after* `WithSize()`.** It reads
+  `_bounds` and falls back to 80×25 (`WindowBuilder.cs:185`), so centring first
+  positions the window as if it were that size. The command surface did exactly
+  that and got away with it until the catalog grew tall enough to push its bottom
+  border off-screen.
 
 ### SharpConsoleUI inline graphics
 
@@ -347,8 +358,12 @@ What the framework actually provides (read at v2.5.14, not assumed):
 
 ### Settings screens
 
-- **Wiring is one table**, `SharpMUTermApp.SettingsScreens()`, read by both the
-  global F-key shortcuts and the `--view` snapshot lookup. Add a screen there.
+- **Wiring is one table**, `SharpMUTermApp.SettingsScreens()`, read by the global
+  F-key shortcuts, the `--view` snapshot lookup, **and** the ⌃P command surface's
+  SETTINGS group. Add a screen there and it is bound, snapshottable and in the
+  palette at once — a row carries its own title and F-key, so the surface cannot
+  advertise a key nothing is registered on. Its first `--view` name doubles as the
+  command id (`screen:worlds`); `CommandSurfaceSettingsTests` reads both ends.
 - **Panes are sized from the space available, not from constants.** Three pure
   rules in `ScreenChrome`, pinned in `ScreenLayoutTests`:
   - **`SplitWidth(width, desired, minimum, companion)`** — a two-column screen's
@@ -840,6 +855,7 @@ drift, and `MacroKeyCaptureTests` asserts that over every `ConsoleKey`.
 | `src/SharpMUTerm.Tui/PaneDragSurface.cs` | Pane rectangles + active windows, frozen at press |
 | `src/SharpMUTerm.Tui/PaneDropRenderer.cs` | The drag preview markup |
 | `src/SharpMUTerm.Core/Workspace/PaneDrop.cs` | The single commit path for a drop (shared with move mode) |
+| `src/SharpMUTerm.Tui/WorkspacePalette.cs` | The workspace's three planes (pane surface / backdrop / hairline), derived from the active theme |
 | `src/SharpMUTerm.Tui/CommandPalette.cs` | ⌃P surface: content-hug sizing, clean chrome |
 | `src/SharpMUTerm.Tui/CommandSurfaceRenderer.cs` | Palette rows + full-width selection bar |
 | `src/SharpMUTerm.Graphics/InlineImagePolicy.cs` | The degradation chain + `GraphicsSurface` (what the *host* can emit, vs what the terminal can show) |

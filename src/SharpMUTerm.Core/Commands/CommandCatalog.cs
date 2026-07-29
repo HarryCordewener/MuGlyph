@@ -9,10 +9,19 @@ public sealed record CharacterRef(string WorldName, string CharacterName, string
 public sealed record CommandContext(bool LoggingOn = false, bool Zoomed = false, bool Frozen = false, bool TimestampsOn = false);
 
 /// <summary>
+/// A configuration screen the command surface can open: what it calls itself, the id the host
+/// dispatches on, and the keyboard shortcut that opens it directly. Supplied by the host rather
+/// than known here, because which screens exist — and which key each is bound to — is the UI's
+/// business, and a catalog that guessed could advertise a key nothing is registered on.
+/// </summary>
+public sealed record SettingsEntry(string Title, string Id, string Shortcut);
+
+/// <summary>
 /// Generates the command-surface catalog from live state, per the design: every non-focused
 /// character becomes a <c>Switch to…</c> entry, every non-active window a <c>Go to…</c> entry
-/// subtitled with its owner and unread count, and stateful commands read their current value
-/// (<c>Pause logging</c> vs <c>Start logging</c>, <c>Unzoom pane</c>, <c>Resume scrollback</c>).
+/// subtitled with its owner and unread count, stateful commands read their current value
+/// (<c>Pause logging</c> vs <c>Start logging</c>, <c>Unzoom pane</c>, <c>Resume scrollback</c>), and
+/// every configuration screen the host offers becomes an <c>Open …</c> entry subtitled with its key.
 /// Pure so the exact catalog is unit-testable; <see cref="CommandMatcher"/> ranks it against a query.
 /// </summary>
 public static class CommandCatalog
@@ -21,7 +30,8 @@ public static class CommandCatalog
         Workspace workspace,
         IReadOnlyList<CharacterRef> characters,
         string? focusedSessionKey,
-        CommandContext context)
+        CommandContext context,
+        IReadOnlyList<SettingsEntry>? settings = null)
     {
         ArgumentNullException.ThrowIfNull(workspace);
         ArgumentNullException.ThrowIfNull(characters);
@@ -85,6 +95,17 @@ public static class CommandCatalog
             ? new CommandItem(CommandGroup.Layout, "Unzoom pane", "layout:unzoom")
             : new CommandItem(CommandGroup.Layout, "Zoom pane", "layout:zoom"));
         items.Add(new CommandItem(CommandGroup.Layout, "Close pane", "layout:close"));
+
+        // SETTINGS — one entry per configuration screen, in the order the host lists them (its F-key
+        // order). Every screen or none: a surface offering one of them and hiding the rest would read
+        // as "this is the only thing you can configure", which is the state the surface was in before.
+        if (settings is not null)
+        {
+            foreach (var screen in settings)
+            {
+                items.Add(new CommandItem(CommandGroup.Settings, $"Open {screen.Title}", screen.Id, screen.Shortcut));
+            }
+        }
 
         return items;
     }

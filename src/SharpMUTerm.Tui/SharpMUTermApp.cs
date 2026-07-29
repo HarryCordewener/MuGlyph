@@ -140,13 +140,18 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // otherwise start with a single main window. Real startup and the demo share this path.
         _workspace = ResumeOrNew(config);
 
-        // A headless driver renders to a captured buffer (for snapshots/CI) instead of a real
-        // terminal; hide the desktop panels so those frames are deterministic.
         var headless = driver is HeadlessConsoleDriver;
         _headless = headless;
+
+        // No desktop panels, in any driver. The framework's defaults are a top bar carrying the
+        // assembly name and a clock, and a bottom bar whose TaskBarElement lists every window's title
+        // ellipsised to fifteen cells — which on a single maximised frameless client is one row of
+        // "SharpMU...lient" and nothing else. Both restate what the app's own header band already
+        // says, both cost a row of the workspace, and neither was ever visible in a snapshot (they
+        // were off in headless only), so the frames we verify against now match a real terminal.
         var options = new ConsoleWindowSystemOptions(
-            ShowTopPanel: !headless,
-            ShowBottomPanel: !headless,
+            ShowTopPanel: false,
+            ShowBottomPanel: false,
             EnableAnimations: !headless);
         _system = new ConsoleWindowSystem(driver ?? new NetConsoleDriver(RenderMode.Buffer), options);
 
@@ -188,11 +193,18 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
         _statusBar = Controls.Markup("[dim]not connected[/]").StickyBottom().Build();
 
-        var bg = ToColor(_theme.Resolve(TerminalColor.Default, isBackground: true));
+        // The window paints the backdrop, not the text background: everything that is not a pane — the
+        // connection rail, the status line, the gaps a split leaves — sits on it, so the panes read as
+        // raised surfaces and an empty one is still a visible rectangle. See WorkspacePalette.
+        var bg = ToColor(WorkspacePalette.Backdrop(_theme));
         var fg = ToColor(_theme.Resolve(TerminalColor.Default, isBackground: false));
 
+        // The title is never drawn — the window is frameless and there is no task bar left to list it
+        // in — so it is the app's name for diagnostics (the framework logs windows by title) and not a
+        // caption. Hence the bare name rather than the old tagline, which only ever appeared as the
+        // truncated "SharpMU...lient" the task bar made of it.
         _window = new WindowBuilder(_system)
-            .WithTitle("SharpMUTerm — MU* client")
+            .WithTitle("SharpMUTerm")
             .Maximized()
             .Frameless() // no outer chrome — the workspace fills the whole screen for maximum room
             .WithColors(fg, bg)
@@ -909,30 +921,49 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private string? ActiveCharacterKey() => _active?.SessionKey ?? _demoActiveKey;
 
     /// <summary>
-    /// One settings screen: the F-key that toggles it, the <c>--view</c> names that select it for a
-    /// snapshot, and the factory that opens it — a fresh <see cref="SettingsSession"/> (its own cursor
-    /// and undo log) plus the control factory that renders that session.
+    /// One settings screen: the F-key that toggles it, what it calls itself (the title its own header
+    /// draws, so the command surface and the screen can't disagree), the <c>--view</c> names that
+    /// select it for a snapshot, and the factory that opens it — a fresh <see cref="SettingsSession"/>
+    /// (its own cursor and undo log) plus the control factory that renders that session.
     /// </summary>
-    private readonly record struct SettingsScreen(ConsoleKey Key, string[] Views, Func<ScreenBinding> Open);
+    private readonly record struct SettingsScreen(ConsoleKey Key, string Title, string[] Views, Func<ScreenBinding> Open);
 
     /// <summary>
-    /// The F2–F9 settings screens, in F-key order. Both the global shortcuts and the <c>--view</c>
-    /// snapshot lookup read this one table, so a screen can't be bound to a key without also being
-    /// reachable by name. Each control is built on demand from live config by its pure renderer, so
-    /// re-opening always reflects current state, and every screen hands back a composed tree of real
-    /// panels.
+    /// The F2–F9 settings screens, in F-key order. The global shortcuts, the <c>--view</c> snapshot
+    /// lookup and the command surface's SETTINGS group all read this one table, so a screen can't be
+    /// bound to a key without also being reachable by name and offered in the palette. Each control is
+    /// built on demand from live config by its pure renderer, so re-opening always reflects current
+    /// state, and every screen hands back a composed tree of real panels.
+    /// <para>
+    /// The first <c>--view</c> name is also the screen's command id (<c>screen:worlds</c>), because it
+    /// is already the stable name a snapshot addresses the screen by; giving the palette a second set
+    /// of names would be two spellings of one thing.
+    /// </para>
     /// </summary>
     private IReadOnlyList<SettingsScreen> SettingsScreens() => new SettingsScreen[]
     {
-        new(ConsoleKey.F2, new[] { "triggers", "route", "highlight", "set" }, TriggersScreen),
-        new(ConsoleKey.F3, new[] { "aliases" }, AliasesScreen),
-        new(ConsoleKey.F4, new[] { "keypad" }, KeypadScreen),
-        new(ConsoleKey.F5, new[] { "worlds", "settings" }, WorldsScreen),
-        new(ConsoleKey.F6, new[] { "timers" }, TimersScreen),
-        new(ConsoleKey.F7, new[] { "textansi" }, TextAnsiScreen),
-        new(ConsoleKey.F8, new[] { "input" }, InputScreen),
-        new(ConsoleKey.F9, new[] { "logging" }, CharacterLoggingScreen),
+        new(ConsoleKey.F2, "Triggers & spawn routing", new[] { "triggers", "route", "highlight", "set" }, TriggersScreen),
+        new(ConsoleKey.F3, "Aliases", new[] { "aliases" }, AliasesScreen),
+        new(ConsoleKey.F4, "Keypad & hotkeys", new[] { "keypad" }, KeypadScreen),
+        new(ConsoleKey.F5, "Worlds & Characters", new[] { "worlds", "settings" }, WorldsScreen),
+        new(ConsoleKey.F6, "Timers", new[] { "timers" }, TimersScreen),
+        new(ConsoleKey.F7, "Text & ANSI", new[] { "textansi" }, TextAnsiScreen),
+        new(ConsoleKey.F8, "Input", new[] { "input" }, InputScreen),
+        new(ConsoleKey.F9, "Character logging", new[] { "logging" }, CharacterLoggingScreen),
     };
+
+    /// <summary>
+    /// The SETTINGS half of the ⌃P catalog: every screen in <see cref="SettingsScreens"/>, each
+    /// carrying the F-key it is registered on. Derived from that table rather than written out, for the
+    /// same reason <see cref="RegisterGlobalShortcuts"/> derives from <see cref="MacroKeys.AppShortcuts"/>
+    /// — a palette row that named a key nothing was bound to would be a lie the compiler can't catch.
+    /// </summary>
+    private IReadOnlyList<SettingsEntry> SettingsCommands() => SettingsScreens()
+        .Select(s => new SettingsEntry(s.Title, ScreenCommandPrefix + s.Views[0], s.Key.ToString()))
+        .ToList();
+
+    /// <summary>The command-surface id prefix for "open this settings screen".</summary>
+    private const string ScreenCommandPrefix = "screen:";
 
     /// <summary>
     /// Binds every chord the app claims globally: the window/pane commands, and each settings screen's
@@ -1481,15 +1512,21 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>Repaints the rail from current state.</summary>
     private void RefreshRail() => _rail.SetContent(RenderRailLines());
 
-    /// <summary>Builds the ⌃P command catalog from live config + workspace state.</summary>
-    private IReadOnlyList<CommandItem> BuildCatalog()
+    /// <summary>
+    /// Builds the ⌃P command catalog from live config + workspace state. Internal so a headless test
+    /// can check the surface against <see cref="SettingsScreens"/> itself — the whole point of deriving
+    /// the SETTINGS group from that table is that the two cannot disagree, and only a test that reads
+    /// both can say so.
+    /// </summary>
+    internal IReadOnlyList<CommandItem> BuildCatalog()
     {
         var context = new CommandContext(
             LoggingOn: false,
             Zoomed: _workspace.Layout.ZoomedPaneId is not null,
             Frozen: _workspace.Layout.FocusedPane.Frozen,
             TimestampsOn: _showTimestamps);
-        return CommandCatalog.Build(_workspace, BuildCharacterRefs(), _active?.SessionKey, context);
+        return CommandCatalog.Build(
+            _workspace, BuildCharacterRefs(), _active?.SessionKey, context, SettingsCommands());
     }
 
     private IReadOnlyList<CharacterRef> BuildCharacterRefs()
@@ -1507,12 +1544,31 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         return refs;
     }
 
-    /// <summary>Runs a command-surface entry by its id, doing what the current shell supports.</summary>
-    private void DispatchCommand(string id)
+    /// <summary>The F-key of the settings screen currently open over the workspace, or null when none is.</summary>
+    internal ConsoleKey? OpenSettingsKey => _settings.OpenKey;
+
+    /// <summary>
+    /// Runs a command-surface entry by its id, doing what the current shell supports. Internal so a
+    /// test can dispatch an id the way the palette does, without a terminal under it.
+    /// </summary>
+    internal void DispatchCommand(string id)
     {
         if (id.StartsWith("win:", StringComparison.Ordinal))
         {
             Activate(id["win:".Length..]);
+            return;
+        }
+
+        // A settings entry opens the very screen its F-key opens, through the same Toggle: the palette
+        // is another door onto that key, not a second way of building the screen.
+        if (id.StartsWith(ScreenCommandPrefix, StringComparison.Ordinal))
+        {
+            var view = id[ScreenCommandPrefix.Length..];
+            if (SettingsScreens().FirstOrDefault(s => s.Views[0] == view) is { Open: not null } screen)
+            {
+                _settings.Toggle(screen.Key, screen.Open);
+            }
+
             return;
         }
 
@@ -1887,7 +1943,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // When a pane is zoomed, render just that pane full-area; otherwise render the whole tree.
         var zoomed = _workspace.Layout.ZoomedPaneId is { } zid ? _workspace.Layout.FindPane(zid) : null;
         var paneArea = zoomed is not null
-            ? BuildPaneTabs(zoomed)
+            ? OnSurface(BuildPaneTabs(zoomed))
             : BuildLayoutNode(_workspace.Layout.Root);
 
         // Size the rail to what its rows actually need (clamped), so it never hogs width nor clips.
@@ -1911,11 +1967,42 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         return row;
     }
 
-    /// <summary>A thin solid divider control (one cell of the border colour), filling its cell.</summary>
-    private MarkupControl Divider()
+    /// <summary>
+    /// The one-cell hairline beside the rail and between two split panes. A <see cref="MarkupControl"/>
+    /// with no lines measures to nothing and never paints its background — which is what this was, and
+    /// why the dividers have never actually been drawn — so it is an empty grid instead, whose
+    /// background covers its whole arranged area. (<see cref="ScreenChrome.VerticalRule"/> is the same
+    /// trick; the settings screens found it first.) It matters more now that the panes carry a surface:
+    /// a hairline is what keeps two adjacent surfaces from reading as one.
+    /// </summary>
+    private IWindowControl Divider()
     {
-        var control = new MarkupControl(new List<string>()) { BackgroundColor = ToColor(_theme.Border) };
-        return control;
+        var rule = Controls.HorizontalGrid()
+            .WithAlignment(HorizontalAlignment.Stretch)
+            .WithVerticalAlignment(VerticalAlignment.Fill)
+            .Column(c => c.Flex(1).Add(new MarkupControl(new List<string>())))
+            .Build();
+        rule.BackgroundColor = ToColor(WorkspacePalette.Rule(_theme));
+        return rule;
+    }
+
+    /// <summary>
+    /// Paints a pane's whole rectangle — tab strip, output and the empty rows below it — on the
+    /// workspace surface. A <see cref="MarkupControl"/> only backgrounds the rows it has content for
+    /// (its paint fills everything past the last line transparently), so an empty pane would stay the
+    /// backdrop's colour and go on reading as a hole; a grid's background covers the area it is
+    /// arranged in, however little is in it.
+    /// </summary>
+    private IWindowControl OnSurface(IWindowControl content)
+    {
+        var surface = Controls.Grid()
+            .WithAlignment(HorizontalAlignment.Stretch)
+            .WithVerticalAlignment(VerticalAlignment.Fill);
+        surface.Rows(GridLength.Star(1)).Columns(GridLength.Star(1));
+        surface.Place(content, 0, 0, 1, 1);
+        var built = surface.Build();
+        built.BackgroundColor = ToColor(WorkspacePalette.Surface(_theme));
+        return built;
     }
 
     /// <summary>Renders the current rail rows to markup (collapsed or expanded).</summary>
@@ -1986,12 +2073,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         {
             if (_dragActive)
             {
-                return BuildDragPane(pane);
+                return OnSurface(BuildDragPane(pane));
             }
 
-            return _moveMode && _moveLetters.TryGetValue(pane.Id, out var letter)
+            return OnSurface(_moveMode && _moveLetters.TryGetValue(pane.Id, out var letter)
                 ? BuildMovePane(pane, letter)
-                : BuildPaneTabs(pane);
+                : BuildPaneTabs(pane));
         }
 
         var split = (SplitNode)node;

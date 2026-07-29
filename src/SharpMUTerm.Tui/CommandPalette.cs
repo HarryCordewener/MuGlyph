@@ -74,15 +74,21 @@ internal sealed class CommandPalette
         var width = _contentWidth + 2; // + the 1-cell left/right border
 
         // A clean overlay: single border, but no window chrome — no minimize/maximize/close buttons
-        // (HideTitleButtons) and no resize grip (Resizable(false)); Esc closes it.
+        // (HideTitleButtons) and no resize grip (Resizable(false)); Esc closes it. It floats on
+        // ScreenPalette.MenuBg — the tone the settings screens already reserve for a list drawn *over*
+        // the rows beneath it — so the surface lifts off the workspace panes rather than matching them.
+        // Centered() *after* WithSize(): it reads the bounds set so far and falls back to 80x25, so
+        // centring first placed the surface as if it were that size — which only became visible once
+        // the catalog grew tall enough for the misplacement to push its bottom border off-screen.
         _window = new WindowBuilder(_system)
             .WithTitle("Command surface")
             .AsModal()
-            .Centered()
             .WithBorderStyle(BorderStyle.Single)
+            .WithBackgroundColor(new Color(ScreenPalette.MenuBg))
             .HideTitleButtons()
             .Resizable(false)
             .WithSize(width, height)
+            .Centered()
             .AddControl(_search)
             .AddControl(_results)
             .OnClosed((_, _) => Reset())
