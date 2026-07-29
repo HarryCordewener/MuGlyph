@@ -57,6 +57,13 @@ public class PaneDragEndToEndTests
             },
             new System.Drawing.Point(x, y));
 
+    /// <summary>
+    /// The frame SharpConsoleUI's Unix reader injects every 100 ms while button 1 is held: a bare
+    /// press at the pointer's current cell, indistinguishable in shape from the real one
+    /// (<c>UnixStdinReader.ContinuousPressIntervalMs</c>). No terminal sends this; the host does.
+    /// </summary>
+    private static void Repeat(HeadlessConsoleDriver driver, int x, int y) => Press(driver, x, y);
+
     private static void Release(HeadlessConsoleDriver driver, int x, int y) =>
         driver.SimulateMouseEvent(new List<MouseFlags> { MouseFlags.Button1Released }, new System.Drawing.Point(x, y));
 
@@ -187,6 +194,38 @@ public class PaneDragEndToEndTests
         await Assert.That(root.Direction).IsEqualTo(SplitDirection.Row);
         await Assert.That(panes[0].Tabs).IsEquivalentTo(new[] { dragged });
         await Assert.That(panes[1].Tabs).DoesNotContain(dragged);
+    }
+
+    /// <summary>
+    /// What made drag-to-split look broken with a real mouse: the auto-repeat frames the host injects
+    /// while the button is held. Read as fresh presses they cancelled the gesture a tenth of a second
+    /// in — and worse here than in the tracker's own tests, because by then the preview has replaced the
+    /// pane area, so the geometry a re-press snapshots has no tab controls in it and nothing re-arms.
+    /// The preview flashed and died and the drop never landed, however far the pointer travelled.
+    /// </summary>
+    [Test]
+    public async Task ADragPunctuatedByTheHostsAutoRepeatFrames_StillSplits()
+    {
+        var harness = Split();
+        var source = Pane(harness, 0);
+        var target = Pane(harness, 1);
+        var dragged = harness.Surface.ActiveWindow(source.Id)!;
+        var x = target.Rect.X + 1;
+        var y = target.Rect.Y + (target.Rect.Height / 2);
+
+        Press(harness.Driver, source.Rect.X + 2, source.Rect.Y);
+        Repeat(harness.Driver, source.Rect.X + 2, source.Rect.Y);
+        Drag(harness.Driver, source.Rect.X + 3, source.Rect.Y + 1);
+        Repeat(harness.Driver, source.Rect.X + 3, source.Rect.Y + 1);
+        Drag(harness.Driver, x, y);
+        Repeat(harness.Driver, x, y);
+        Repeat(harness.Driver, x, y);
+        Release(harness.Driver, x, y);
+
+        var root = harness.App.CaptureSession().Root;
+        await Assert.That(root.Type).IsEqualTo("split");
+        await Assert.That(root.Direction).IsEqualTo(SplitDirection.Row);
+        await Assert.That(Flatten(root)[0].Tabs).IsEquivalentTo(new[] { dragged });
     }
 
     [Test]

@@ -134,13 +134,16 @@ real terminal.
   by ↑↓ (which does drag the selection) tolerable?
 - **Full-width input band** — confirm it holds across resizes. The width is
   pinned imperatively (`SyncInputWidth`), so a resize is the risky case.
-- **Mouse drag-to-split** — nobody has done it with an actual mouse. What is
-  untested is whether a real terminal's mouse escape sequences arrive as the
-  frames `PaneDragTracker` expects: that path is SharpConsoleUI's
-  `NetConsoleDriver` (it enables modes 1000/1006/1002/1003 unconditionally at
-  startup) plus `AnsiInputParser`, which was read, not run. Everything
-  downstream of `IConsoleDriver.MouseEvent` is tested. Also unconfirmed: whether
-  the drag preview repaints fast enough to track the pointer.
+- **Mouse drag-to-split** — reported broken with a real mouse (the preview
+  flickered and the drop only landed after a lot of movement), and the cause is
+  found and fixed: see *The host auto-repeats the held button* under
+  *SharpConsoleUI mouse & pane drags*. It was reproduced against the real
+  `NetConsoleDriver` by running the client under a pty and writing SGR mouse
+  reports (`ESC[<0;x;yM`, `ESC[<32;x;yM`, `ESC[<0;x;ym`) into it — so the whole
+  path, `AnsiInputParser` and `UnixStdinReader` included, has now been run rather
+  than read. What a pty still cannot settle is the *feel*: whether the preview
+  repaints fast enough to track a hand-moved pointer, and whether the 25 % edge
+  margins land where a user aims.
 - **Kitty inline images** — nobody has seen one. Try `/web <url>` with images in
   Kitty/WezTerm/Ghostty; `/graphics` reports where the degradation chain landed
   and why.
@@ -319,6 +322,18 @@ What the framework actually provides (read at v2.5.14, not assumed):
 - **SGR reports a drag as `Button1Pressed + ReportMousePosition`**, sometimes
   *without* `Button1Dragged`. Treating a pressed bit as a fresh press restarts the
   gesture on every frame; `PaneDragTracker` decodes this.
+- **The host auto-repeats the held button, and no terminal sends that frame.**
+  `UnixStdinReader` starts a loop on `Button1Pressed` that re-raises a **bare
+  `Button1Pressed`** at the pointer's *current* cell every 100 ms until the button
+  comes up (`ContinuousPressIntervalMs`, `UnixStdinReader.cs:22,196-218`). Its
+  shape is identical to a real press, so the only thing that tells them apart is
+  the cell: a repeat always carries the position of the frame before it.
+  `PaneDragTracker.Handle` reads a press *at the gesture's own last cell* as a
+  continuation and anything else as a genuine new press. This was the
+  drag-to-split defect — the preview appeared and blinked out a tenth of a second
+  later, and because the preview has by then replaced the pane area, the geometry
+  a re-press snapshots holds no tab controls, so nothing re-armed and the drop
+  never landed however far the pointer travelled.
 - SharpConsoleUI tracks no drag state for controls beyond mouse capture, so
   press/motion/release are stitched together in `PaneDragTracker` (Tui, pure).
 - **Only a pane's tab strip is a drag handle** (its top row). Body presses belong
@@ -343,7 +358,32 @@ What the framework actually provides (read at v2.5.14, not assumed):
   It renders a frame first (layout is only arranged by a render, so control bounds
   don't exist before one) and then re-initialises the driver, because the headless
   driver ignores `InvalidateFrontBuffer` and the closing render would otherwise
-  emit only the changed cells.
+  emit only the changed cells. The frame includes the host's auto-repeat frames,
+  because a real mouse never reaches the drop without passing through several.
+
+### The ⌃B pane prefix
+
+- **It was reported dead, and the dispatch was fine.** `⌃B` armed, the strip
+  appeared, and none of `| - z o x b m < >` did anything visible. The path is
+  sound end to end — global shortcut → `ArmPrefix` → the next key on the main
+  window's `PreviewKeyPressed` → `HandleWindowKey`'s switch — and was confirmed
+  by instrumenting the handler and driving the real client under a pty. What was
+  wrong is that **on a fresh client every one of those keys is a legitimate
+  no-op**: `WorkspaceLayout.SplitFocused` returns false for a pane with one tab
+  (a split moves the pane's *other* tabs across), `ReorderActiveTab` the same,
+  and zoom and cycle do nothing to a lone pane. Only `b` and `m` had anything to
+  show.
+- **So a refused pane command now says why**, on the status line
+  (`SharpMUTermApp.RefusePrefix`). The command surface's split entries route
+  through the same report; they were silent in exactly the same way.
+- **`←` and `→` are accepted for `<` and `>`.** The strip's bare angle brackets
+  read as a direction and the arrows are what a reader reaches for. They only mean
+  this while the prefix is armed — unprefixed, ↑↓ are history recall and ←→ are
+  the prompt's.
+- **A headless test can drive it**: `SharpMUTermApp.SimulatePrefixedKey` arms
+  through `ArmPrefix` (⌃B is a global shortcut, and the framework dispatches those
+  only inside `Run()`) and then feeds the key to the real handler, and
+  `StatusMarkup` reads back what it said.
 
 ### Settings screens
 
@@ -836,7 +876,7 @@ drift, and `MacroKeyCaptureTests` asserts that over every `ConsoleKey`.
 | `src/SharpMUTerm.Tui/ScreenField.cs` | One editable value: read / validate / write / snapshot, plus the text, number, regex, choice, enum and **key-capture** kinds |
 | `src/SharpMUTerm.Tui/MacroKeys.cs` | What the host can deliver: per-chord verdicts, the app's own claimed shortcuts, and the descriptor the macro dispatcher acts on |
 | `src/SharpMUTerm.Tui/ScreenEdits.cs` | The undo log behind Cancel/Save |
-| `src/SharpMUTerm.Tui/PaneDragTracker.cs` | Pure drag gesture state machine + `MouseFlags` decoding |
+| `src/SharpMUTerm.Tui/PaneDragTracker.cs` | Pure drag gesture state machine + `MouseFlags` decoding (incl. the host's auto-repeat press) |
 | `src/SharpMUTerm.Tui/PaneDragSurface.cs` | Pane rectangles + active windows, frozen at press |
 | `src/SharpMUTerm.Tui/PaneDropRenderer.cs` | The drag preview markup |
 | `src/SharpMUTerm.Core/Workspace/PaneDrop.cs` | The single commit path for a drop (shared with move mode) |

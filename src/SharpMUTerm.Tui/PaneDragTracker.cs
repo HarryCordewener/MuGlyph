@@ -72,6 +72,8 @@ internal sealed class PaneDragTracker
     private string? _sourcePaneId;
     private int _originX;
     private int _originY;
+    private int _lastX;
+    private int _lastY;
     private bool _armed;
     private bool _dragging;
 
@@ -143,7 +145,22 @@ internal sealed class PaneDragTracker
     {
         ArgumentNullException.ThrowIfNull(snapshot);
 
-        return Classify(flags) switch
+        var input = Classify(flags);
+
+        // A terminal never reports the same button down twice without a release in between — but the
+        // host does. SharpConsoleUI's Unix reader starts an auto-repeat when button 1 goes down and
+        // re-raises a bare Button1Pressed at the pointer's *current* cell every 100 ms until it comes
+        // up (UnixStdinReader.ContinuousPressIntervalMs). Taken at face value each repeat is a fresh
+        // press, which resets the gesture: the preview blinks out a tenth of a second into every drag.
+        // A repeat always carries the cell of the frame before it, so a press landing where the gesture
+        // already is, is that repeat, and the gesture simply continues; a press anywhere else is the
+        // user pressing again after a swallowed button-up, and still starts over.
+        if (input == PaneDragInput.Press && (_armed || _dragging) && x == _lastX && y == _lastY)
+        {
+            input = PaneDragInput.Drag;
+        }
+
+        var result = input switch
         {
             PaneDragInput.Press => OnPress(x, y, snapshot),
             PaneDragInput.Drag => OnDrag(x, y),
@@ -151,6 +168,14 @@ internal sealed class PaneDragTracker
             PaneDragInput.Abort => _dragging ? Finish(PaneDragAction.Cancel) : Idle(),
             _ => Idle(),
         };
+
+        if (input != PaneDragInput.Ignored)
+        {
+            _lastX = x;
+            _lastY = y;
+        }
+
+        return result;
     }
 
     /// <summary>Abandons any in-flight gesture without producing a result (e.g. on a layout change).</summary>

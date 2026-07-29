@@ -328,6 +328,96 @@ public class PaneDragTrackerTests
         await Assert.That(tracker.SourcePaneId).IsEqualTo("p2");
     }
 
+    /// <summary>
+    /// The one that made drag-to-split look broken in a real terminal. SharpConsoleUI's Unix reader
+    /// auto-repeats the held button: a bare <c>Button1Pressed</c> at the pointer's current cell every
+    /// 100 ms until it comes up. Read as a fresh press it reset the gesture a tenth of a second into
+    /// every drag — the preview flashed on and vanished, and the drop landed only if the release beat
+    /// the next repeat.
+    /// </summary>
+    [Test]
+    public async Task AnAutoRepeatedPressAtTheSameCell_DoesNotDisturbALiveDrag()
+    {
+        var tracker = Started(out var surface);
+        tracker.Handle(Drag(), 43, 10, () => surface);
+
+        var result = tracker.Handle(Press(), 43, 10, () => surface); // the 100 ms repeat
+
+        await Assert.That(result.Action).IsEqualTo(PaneDragAction.None);
+        await Assert.That(tracker.IsDragging).IsTrue();
+        await Assert.That(tracker.TargetPaneId).IsEqualTo("p2");
+        await Assert.That(tracker.TargetEdge).IsEqualTo(Edge.Left);
+    }
+
+    /// <summary>And the gesture still finishes on the button-up that follows the repeats.</summary>
+    [Test]
+    public async Task ADragPunctuatedByAutoRepeats_StillCommits()
+    {
+        var surface = TwoPanes();
+        var tracker = new PaneDragTracker();
+        var actions = new List<PaneDragAction>();
+
+        void Feed(List<MouseFlags> flags, int x, int y) =>
+            actions.Add(tracker.Handle(flags, x, y, () => surface).Action);
+
+        Feed(Press(), 15, 2);
+        Feed(Press(), 15, 2);   // repeat before the pointer has moved
+        Feed(Drag(), 16, 3);
+        Feed(Press(), 16, 3);   // repeat
+        Feed(Drag(), 43, 10);
+        Feed(Press(), 43, 10);  // repeat
+        Feed(Press(), 43, 10);  // and another
+        Feed(Release(), 43, 10);
+
+        await Assert.That(actions.Count(a => a == PaneDragAction.Begin)).IsEqualTo(1);
+        await Assert.That(actions.Count(a => a == PaneDragAction.Cancel)).IsEqualTo(0);
+        await Assert.That(actions[^1]).IsEqualTo(PaneDragAction.Commit);
+    }
+
+    /// <summary>
+    /// A repeat before any motion must not turn the press into a drag either — holding the button still
+    /// on a tab is a click, and a click selects that tab.
+    /// </summary>
+    [Test]
+    public async Task AnAutoRepeatBeforeAnyMotion_LeavesItAClick()
+    {
+        var tracker = new PaneDragTracker();
+        var surface = TwoPanes();
+
+        tracker.Handle(Press(), 15, 2, () => surface);
+        var repeat = tracker.Handle(Press(), 15, 2, () => surface);
+        var release = tracker.Handle(Release(), 15, 2, () => surface);
+
+        await Assert.That(repeat.Action).IsEqualTo(PaneDragAction.None);
+        await Assert.That(release.Action).IsEqualTo(PaneDragAction.None);
+    }
+
+    /// <summary>
+    /// The repeat only ever carries the cell of the frame before it, so the geometry is still read back
+    /// exactly once per gesture — a second snapshot mid-drag would read the preview's own controls.
+    /// </summary>
+    [Test]
+    public async Task AutoRepeatsDoNotResnapshotTheGeometry()
+    {
+        var calls = 0;
+        var surface = TwoPanes();
+        var tracker = new PaneDragTracker();
+
+        PaneDragSurface Snapshot()
+        {
+            calls++;
+            return surface;
+        }
+
+        tracker.Handle(Press(), 15, 2, Snapshot);
+        tracker.Handle(Drag(), 43, 10, Snapshot);
+        tracker.Handle(Press(), 43, 10, Snapshot);
+        tracker.Handle(Press(), 43, 10, Snapshot);
+        tracker.Handle(Release(), 43, 10, Snapshot);
+
+        await Assert.That(calls).IsEqualTo(1);
+    }
+
     [Test]
     public async Task WheelAndIdleMotionDoNotDisturbALiveDrag()
     {

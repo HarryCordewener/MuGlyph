@@ -214,7 +214,7 @@ table layouts in the same frame; F7/F8/F9 share one options-list body.
 
 ### Pane management (tmux-style prefix)
 
-`⌃B` arms a prefix — the header shows `⌃B — awaiting | - z o x b m < >` — and the next key acts:
+`⌃B` arms a prefix — the header shows `⌃B — awaiting | - z o x b m < > ← →` — and the next key acts:
 
 | Key | Action |
 |---|---|
@@ -225,10 +225,15 @@ table layouts in the same frame; F7/F8/F9 share one options-list body.
 | `x` | close focused pane |
 | `b` | collapse / expand the connection rail |
 | `m` | enter **move mode** |
-| `<` `>` | reorder the active tab within its pane |
+| `<` `>` (or `←` `→`) | reorder the active tab within its pane |
 
 Splitting moves the *other* tabs across rather than duplicating the active one — the common
 case is "pull #public out into its own pane".
+
+Which means a pane holding a single window **cannot** be split, and on a fresh client that is the
+whole workspace: `|`, `-`, `<`, `>`, `z` and `o` all have nothing to do. Each of them **says so on
+the status line** rather than leaving the keystroke looking dead — that silence is what made the
+prefix read as broken the first time it was used in a real terminal.
 
 ### Move mode (`⌃B m`) — the keyboard path for window placement
 
