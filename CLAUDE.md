@@ -34,7 +34,11 @@ fallbacks) for inline images/maps.
 **M1 delivered, plus substantial M2–M4 work.** `SharpMUTerm.slnx` builds all ten projects on
 `net10.0`, with the full test suite passing. In place:
 
-- **Core** — `AnsiParser` (SGR 16/256/truecolor), styled-line + `ScrollbackBuffer` model,
+- **Core** — `AnsiParser` (SGR 16/256/truecolor), styled-line + `ScrollbackBuffer` model (a capped
+  in-memory ring plus a **file-backed spill**, `FileScrollbackSpill`, so history deeper than memory is
+  paged off an ephemeral per-session cache under `$XDG_CACHE_HOME`; absolute line indices, ranged
+  reads capped at `MaxRangeLines`, and any disk failure degrades to memory-only. Emphatically **not**
+  the session log — that stays `PlainTextLogSink`/`HtmlLogSink`, opt-in and kept),
   `TcpTransport` (TLS + IPv6), `TelnetSession` (wraps TelnetNegotiationCore **2.5.3**),
   trigger/alias/macro engines + `IntervalScheduler`, plain-text + HTML logging, versioned JSON
   config (worlds → characters + shared trigger sets, with migration),
