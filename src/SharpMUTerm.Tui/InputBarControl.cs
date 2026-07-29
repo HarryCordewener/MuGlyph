@@ -186,7 +186,20 @@ internal sealed class InputBarControl : BaseControl, IInteractiveControl, IFocus
     /// <b>Ctrl+A is move-to-line-start, not select-all</b>, and it is not up for grabs. The same parser
     /// limitation makes Ctrl+Shift+A indistinguishable from Ctrl+A, so there is no second chord to move
     /// line-start onto: handing ⌃A to a selection would simply remove it from the readline set
-    /// (⌃A ⌃E ⌃K ⌃U ⌃W) that is the only way around a wrapped, multi-row command line.
+    /// (⌃A ⌃E ⌃K ⌃U) that is the only way around a wrapped, multi-row command line.
+    /// </para>
+    /// <para>
+    /// <b>There is no ⌃W here, and the readline set is four keys rather than five.</b> It used to be
+    /// listed, and it used to be handled — <c>case ConsoleKey.W: return Edit(Buffer.KillWordLeft())</c> —
+    /// and it could never once have run: <see cref="MacroKeys.AppShortcuts"/> claims ⌃W for
+    /// <c>CloseActiveWindow</c>, and a global shortcut is dispatched before any window sees the key, so
+    /// the chord was consumed before it could reach this table. A key table advertising a binding nothing
+    /// can deliver is the same defect as a settings screen naming a key it does not offer, so the dead
+    /// case is gone and the advertisement with it. <c>InputBuffer.KillWordLeft</c> is deliberately kept:
+    /// it works and it is tested, and what it lacks is a chord this host can deliver — <em>not</em>
+    /// Alt+Backspace, which the parser splits into Escape then Backspace (ESC followed by a control byte
+    /// is emitted as two keys), so restoring it means taking ⌃W back off the window command or spending a
+    /// function key, which is a decision about which meaning wins rather than a repair.
     /// </para>
     /// <para>
     /// Selection is wanted and unbuilt. What it actually needs, if it is picked up: an anchor+extent on
@@ -220,7 +233,6 @@ internal sealed class InputBarControl : BaseControl, IInteractiveControl, IFocus
                 case ConsoleKey.E: return Move(Buffer.MoveTo(Buffer.Text.Length));
                 case ConsoleKey.K: return Edit(Buffer.KillToEnd());
                 case ConsoleKey.U: return Edit(Buffer.KillToStart());
-                case ConsoleKey.W: return Edit(Buffer.KillWordLeft());
                 case ConsoleKey.LeftArrow: return Move(Buffer.MoveWordLeft());
                 case ConsoleKey.RightArrow: return Move(Buffer.MoveWordRight());
             }

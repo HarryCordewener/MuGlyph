@@ -8,11 +8,17 @@ namespace SharpMUTerm.Core.Input;
 /// past the newest entry, restores the stashed draft; and editing a recalled line re-bases it as the
 /// new draft (ending recall). Pure and fully unit-testable — the UI only feeds keystrokes and renders
 /// what <see cref="Recall"/>/<see cref="Forward"/> return.
+/// <para>
+/// It is memory only, for the life of the process. There is deliberately no persistence and no setting
+/// that would add it: writing this list to disk is a separate decision about secrets at rest, and
+/// <see cref="HistorySecrets"/> is a filter on what gets recorded, not a promise about a file.
+/// </para>
 /// </summary>
 public sealed class InputHistory
 {
     private readonly List<string> _entries = new();
     private readonly int _capacity;
+    private readonly Func<string, bool>? _ignore;
 
     // The live draft parked at the first recall, restored when we step forward past the newest entry.
     private string? _stash;
@@ -20,7 +26,15 @@ public sealed class InputHistory
     // -1 means "not recalling" (the input shows the live draft); otherwise an index into _entries.
     private int _index = -1;
 
-    public InputHistory(int capacity = 500)
+    /// <param name="capacity">How many entries to keep; the oldest is dropped past this.</param>
+    /// <param name="ignore">
+    /// Lines that must never be recorded, asked per <see cref="Add"/> rather than captured once — so the
+    /// setting behind it takes effect on the next command, not the next session (the same rule
+    /// <c>LocalEcho</c> follows). The gate lives here rather than at the call site so that no future
+    /// caller can add a line without passing it: this is the invariant, not a courtesy.
+    /// <see cref="HistorySecrets.LooksLikeCredential"/> is what the client passes.
+    /// </param>
+    public InputHistory(int capacity = 500, Func<string, bool>? ignore = null)
     {
         if (capacity <= 0)
         {
@@ -28,6 +42,7 @@ public sealed class InputHistory
         }
 
         _capacity = capacity;
+        _ignore = ignore;
     }
 
     /// <summary>Sent commands, oldest first.</summary>
@@ -37,12 +52,18 @@ public sealed class InputHistory
     public bool IsRecalling => _index >= 0;
 
     /// <summary>Records a sent command and ends any recall in progress. Consecutive duplicates and
-    /// blank lines are ignored, matching common shell behaviour.</summary>
+    /// blank lines are ignored, matching common shell behaviour, as is anything the ignore rule this
+    /// history was constructed with rejects (see <see cref="HistorySecrets"/>).</summary>
     public void Add(string command)
     {
         ResetCursor();
 
         if (string.IsNullOrEmpty(command))
+        {
+            return;
+        }
+
+        if (_ignore is not null && _ignore(command))
         {
             return;
         }
@@ -108,6 +129,36 @@ public sealed class InputHistory
         var draft = _stash ?? string.Empty;
         ResetCursor();
         return draft;
+    }
+
+    /// <summary>
+    /// Recalls one entry by index — what the history surface's <c>⏎</c> does. It is <see cref="Recall"/>
+    /// with the destination chosen rather than stepped to: the live draft is stashed on the first recall
+    /// exactly the same way, so <c>↓</c> afterwards walks forward from the picked entry and eventually
+    /// hands the draft back, and editing the inserted line re-bases it. Reusing this machinery is the
+    /// point — a surface that set the command line by itself would be a second, quietly different answer
+    /// to "where did my half-typed line go".
+    /// </summary>
+    /// <returns>
+    /// The entry to display, or <c>null</c> when <paramref name="index"/> is not one (so the caller
+    /// leaves the draft untouched, and no stash is taken).
+    /// </returns>
+    public string? RecallAt(int index, string currentDraft)
+    {
+        if (index < 0 || index >= _entries.Count)
+        {
+            return null;
+        }
+
+        // Only the *first* recall parks the draft: arriving here mid-recall (↑ then the surface) must not
+        // overwrite the parked line with the recalled one the bar is currently showing.
+        if (_index < 0)
+        {
+            _stash = currentDraft ?? string.Empty;
+        }
+
+        _index = index;
+        return _entries[_index];
     }
 
     /// <summary>

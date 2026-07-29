@@ -73,6 +73,7 @@ internal static class MacroKeys
         new(ConsoleModifiers.Control, ConsoleKey.P, "opens the command surface"),
         new(ConsoleModifiers.Control, ConsoleKey.B, "arms the pane prefix"),
         new(ConsoleModifiers.Control, ConsoleKey.F, "freezes the pane"),
+        new(ConsoleModifiers.Control, ConsoleKey.R, "searches the command history"),
         new((ConsoleModifiers)0, ConsoleKey.F2, "opens Triggers"),
         new((ConsoleModifiers)0, ConsoleKey.F3, "opens Aliases"),
         new((ConsoleModifiers)0, ConsoleKey.F4, "opens this screen"),
