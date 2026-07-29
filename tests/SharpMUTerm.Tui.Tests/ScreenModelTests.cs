@@ -174,12 +174,15 @@ public class ScreenModelTests
         var sets = Sets();
         var model = WorldsScreenRenderer.Model(worlds, sets, selectedWorld: 0, selectedCharacter: 0);
 
-        await Assert.That(model.PaneCount).IsEqualTo(3);
+        // Four panes: the fourth is the selected world's two security checkboxes, appended so that the
+        // three that were here keep the indices everything below (and every other test) addresses.
+        await Assert.That(model.PaneCount).IsEqualTo(4);
 
         // Two worlds then [+ world] / [- del]; two characters then [+ add] / [⧉ duplicate] /
         // [- remove]. Buttons are appended after each list, so every index below still addresses
-        // the same item it always did.
-        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 4, 5, 1 });
+        // the same item it always did — which is what the list counts assert independently of the total.
+        await Assert.That(model.ListSizes).IsEquivalentTo(new[] { 2, 2, 1, 2 });
+        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 4, 5, 1, 2 });
 
         // Worlds are selection only — there is no checkbox on a world row.
         await Assert.That(model.ToggleAt(0, 0)).IsNull();
@@ -231,8 +234,70 @@ public class ScreenModelTests
         var model = WorldsScreenRenderer.Model(Worlds(), Sets(), selectedWorld: 1, selectedCharacter: 0);
 
         // The character pane holds one row — [+ add character]. Duplicate and remove would act on
-        // nothing, so they aren't drawn and ⏎ can't land on a silent no-op.
-        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 4, 1, 0 });
+        // nothing, so they aren't drawn and ⏎ can't land on a silent no-op. The security pane still
+        // holds its two checkboxes: they belong to the world, which is selected, not to a character.
+        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 4, 1, 0, 2 });
+        await Assert.That(model.ListSizes).IsEquivalentTo(new[] { 2, 0, 0, 2 });
+    }
+
+    /// <summary>
+    /// The world's two security booleans, which had no UI at all — the screen summarised them in a
+    /// read-only line and left the only way to change them in the JSON. Two flags, two checkboxes, two
+    /// rows, because a <c>ScreenRow</c> carries at most one checkbox.
+    /// </summary>
+    [Test]
+    public async Task Worlds_SecurityPaneTogglesTlsAndCertificateValidation()
+    {
+        var worlds = Worlds();
+        var world = worlds[0];
+        var model = WorldsScreenRenderer.Model(worlds, Sets(), 0, 0);
+
+        model.ToggleAt(WorldsScreenRenderer.SecurityPane, 0)!.Value.Flip();
+        await Assert.That(world.UseTls).IsTrue();
+
+        model.ToggleAt(WorldsScreenRenderer.SecurityPane, 1)!.Value.Flip();
+        await Assert.That(world.AllowInvalidCertificates).IsTrue();
+    }
+
+    /// <summary>
+    /// Both security toggles go through the undo log like everything else on these screens, so Esc puts
+    /// certificate validation back on. This is the one row where an edit that outlived a cancelled
+    /// screen would be a security change nobody agreed to.
+    /// </summary>
+    [Test]
+    public async Task Worlds_SecurityTogglesAreUndone_ByCancellingTheScreen()
+    {
+        var worlds = Worlds();
+        var world = worlds[0];
+        world.UseTls = true;
+        var edits = new ScreenEdits();
+        var model = WorldsScreenRenderer.Model(worlds, Sets(), 0, 0);
+
+        edits.Apply(model.ToggleAt(WorldsScreenRenderer.SecurityPane, 0)!.Value);
+        edits.Apply(model.ToggleAt(WorldsScreenRenderer.SecurityPane, 1)!.Value);
+        await Assert.That(world.UseTls).IsFalse();
+        await Assert.That(world.AllowInvalidCertificates).IsTrue();
+
+        edits.Revert();
+
+        await Assert.That(world.UseTls).IsTrue();
+        await Assert.That(world.AllowInvalidCertificates).IsFalse();
+    }
+
+    /// <summary>
+    /// The security pane belongs to the <em>world</em>, so it follows the WORLDS selection rather than
+    /// the character's — flipping TLS on the second world must not touch the first.
+    /// </summary>
+    [Test]
+    public async Task Worlds_SecurityPaneFollowsTheSelectedWorld()
+    {
+        var worlds = Worlds();
+
+        WorldsScreenRenderer.Model(worlds, Sets(), selectedWorld: 1, selectedCharacter: 0)
+            .ToggleAt(WorldsScreenRenderer.SecurityPane, 0)!.Value.Flip();
+
+        await Assert.That(worlds[1].UseTls).IsTrue();
+        await Assert.That(worlds[0].UseTls).IsFalse();
     }
 
     [Test]
@@ -277,47 +342,70 @@ public class ScreenModelTests
     }
 
     /// <summary>
-    /// F9's auto-start checkbox lives on the <c>format</c> row itself (row 0) rather than on a third
-    /// row of its own: it and the format are one stored value, so Space and ⏎ act on one row. Its
-    /// snapshot still restores the format, not the boolean.
+    /// Logging is two more fields of the character's own row — the format (whose <c>None</c> is "off",
+    /// so one control covers one stored value) and the folder. They are appended after the name and the
+    /// on-connect line, so the two ordinals that were here still mean what they meant. This replaces
+    /// F9's screen, whose rows edited whichever character happened to be active.
     /// </summary>
     [Test]
-    public async Task Options_LoggingAutoStartTogglesTheFormat_AndUndoRestoresTheOriginalOne()
+    public async Task Worlds_TheCharacterRowCarriesItsLogFormatAndFolder()
     {
-        var logging = new LoggingSettings { Format = LogFormat.Html };
-        var edits = new ScreenEdits();
+        var worlds = Worlds();
+        var character = worlds[0].Characters[0];
+        character.Logging = new LoggingSettings { Format = LogFormat.Html, Directory = "/logs/kaz" };
+        var model = WorldsScreenRenderer.Model(worlds, Sets(), 0, 0);
+        var row = model.RowAt(WorldsScreenRenderer.CharactersPane, 0);
 
-        edits.Apply(OptionsScreenRenderer.Model(OptionsScreenRenderer.LoggingScreen(logging)).ToggleAt(0, 0)!.Value);
-        await Assert.That(logging.Format).IsEqualTo(LogFormat.None);
+        await Assert.That(row.FieldCount).IsEqualTo(4);
+        await Assert.That(row.FieldAt(WorldsScreenRenderer.CharacterNameField)!.Value.Get()).IsEqualTo("Kaz");
+        await Assert.That(row.FieldAt(WorldsScreenRenderer.LogFormatField)!.Value.Get()).IsEqualTo("Html");
+        await Assert.That(row.FieldAt(WorldsScreenRenderer.LogDirectoryField)!.Value.Get()).IsEqualTo("/logs/kaz");
 
-        edits.Revert();
-
-        await Assert.That(logging.Format).IsEqualTo(LogFormat.Html);
-    }
-
-    [Test]
-    public async Task Options_LoggingAutoStartTurnsOnAsPlainWhenNothingWasChosen()
-    {
-        var logging = new LoggingSettings { Format = LogFormat.None };
-
-        OptionsScreenRenderer.Model(OptionsScreenRenderer.LoggingScreen(logging)).ToggleAt(0, 0)!.Value.Flip();
-
-        await Assert.That(logging.Format).IsEqualTo(LogFormat.Plain);
+        // The format cycles like every other enum field, and None is how logging is turned off.
+        await Assert.That(row.FieldAt(WorldsScreenRenderer.LogFormatField)!.Value.Choices)
+            .IsEquivalentTo(new[] { "None", "Plain", "Html", "Both" });
     }
 
     /// <summary>
-    /// The same row carries both, which is what makes it one setting rather than two: ⏎ opens the
-    /// format on the row Space starts and stops logging from.
+    /// The bug the move exists to kill: an edit made on this screen reaches the character whose row it
+    /// was made on, and no other. F9 resolved "the active character, or else the first one configured"
+    /// and never said which, so the same screen wrote to a different character's log depending on what
+    /// was connected.
     /// </summary>
     [Test]
-    public async Task Options_LoggingFormatAndAutoStartAreOneRow()
+    public async Task Worlds_ALogEditReachesTheSelectedCharacterAndNoOther()
     {
-        var model = OptionsScreenRenderer.Model(
-            OptionsScreenRenderer.LoggingScreen(new LoggingSettings { Format = LogFormat.Html }));
+        var worlds = Worlds();
+        var (kaz, mira) = (worlds[0].Characters[0], worlds[0].Characters[1]);
+        var edits = new ScreenEdits();
 
-        await Assert.That(model.Sizes[0]).IsEqualTo(2);
-        await Assert.That(model.RowAt(0, 0).Toggle).IsNotNull();
-        await Assert.That(model.RowAt(0, 0).FieldCount).IsEqualTo(1);
-        await Assert.That(model.FieldAt(0, 0, 0)!.Value.Get()).IsEqualTo("Html");
+        var second = WorldsScreenRenderer.Model(worlds, Sets(), 0, 1)
+            .FieldAt(WorldsScreenRenderer.CharactersPane, 1, WorldsScreenRenderer.LogFormatField)!.Value;
+        await Assert.That(edits.Apply(second, "Both")).IsNull();
+
+        await Assert.That(mira.Logging.Format).IsEqualTo(LogFormat.Both);
+        await Assert.That(kaz.Logging.Format).IsEqualTo(LogFormat.None);
+
+        edits.Revert();
+
+        await Assert.That(mira.Logging.Format).IsEqualTo(LogFormat.None);
+    }
+
+    /// <summary>
+    /// The folder is optional, and blank means null — "unset, use the per-session default" — rather
+    /// than an empty string, so the two spellings of "no folder" cannot drift apart in config.
+    /// </summary>
+    [Test]
+    public async Task Worlds_ABlankLogFolderIsStoredAsNull()
+    {
+        var worlds = Worlds();
+        var character = worlds[0].Characters[0];
+        character.Logging.Directory = "/logs/kaz";
+        var field = WorldsScreenRenderer.Model(worlds, Sets(), 0, 0)
+            .FieldAt(WorldsScreenRenderer.CharactersPane, 0, WorldsScreenRenderer.LogDirectoryField)!.Value;
+
+        await Assert.That(new ScreenEdits().Apply(field, "   ")).IsNull();
+
+        await Assert.That(character.Logging.Directory).IsNull();
     }
 }

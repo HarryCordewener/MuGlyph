@@ -78,6 +78,20 @@ internal sealed class ScreenSelection
     }
 
     /// <summary>
+    /// Puts the keyboard in a pane before the screen first opens, without moving any cursor — used when
+    /// the key that opened the screen means "start here" (F9 opens F5 on the character whose log it
+    /// used to edit). Out-of-range panes are ignored, and an empty pane is corrected by the first
+    /// <see cref="Clamp"/>, so a seeded focus can never park the cursor somewhere with no rows.
+    /// </summary>
+    internal void FocusPane(int pane)
+    {
+        if (pane >= 0 && pane < _cursors.Length)
+        {
+            Pane = pane;
+        }
+    }
+
+    /// <summary>
     /// Moves the focused pane's cursor by <paramref name="delta"/> rows, clamped to the pane's
     /// current size — deliberately not wrapping, so holding ↑ parks on the first row instead of
     /// teleporting to the last. Returns whether the cursor actually moved.

@@ -16,6 +16,50 @@ public class ScreenSelectionTests
         await Assert.That(selection.Index).IsEqualTo(0);
     }
 
+    /// <summary>
+    /// A screen can be opened focused on a pane other than the first — F9 opens F5 in the character
+    /// pane, which is where the log it used to edit now lives. Seeded cursors are left alone: the pane
+    /// the key means is a different question from the row the app resumed on.
+    /// </summary>
+    [Test]
+    public async Task FocusPane_StartsTheKeyboardInAnotherPaneWithoutMovingAnyCursor()
+    {
+        var selection = new ScreenSelection(3);
+        selection.Seed(1, 2);
+
+        selection.FocusPane(1);
+
+        await Assert.That(selection.Pane).IsEqualTo(1);
+        await Assert.That(selection.Index).IsEqualTo(2);
+        await Assert.That(selection.CursorIn(0)).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task FocusPane_IgnoresAPaneTheScreenHasNot()
+    {
+        var selection = new ScreenSelection(2);
+
+        selection.FocusPane(7);
+        selection.FocusPane(-1);
+
+        await Assert.That(selection.Pane).IsEqualTo(0);
+    }
+
+    /// <summary>
+    /// A focus seeded onto a pane that turns out to be empty is corrected by the first clamp, so the
+    /// screen can ask for a pane without knowing whether the config filled it.
+    /// </summary>
+    [Test]
+    public async Task FocusPane_OnAnEmptyPaneIsCorrectedByTheFirstClamp()
+    {
+        var selection = new ScreenSelection(3);
+
+        selection.FocusPane(1);
+        selection.Clamp(Sizes(2, 0, 1));
+
+        await Assert.That(selection.Pane).IsEqualTo(2);
+    }
+
     [Test]
     public async Task Move_StepsWithinThePane()
     {

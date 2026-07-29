@@ -48,7 +48,7 @@ public class ScreenFooterTests
         var sets = Sets();
         var worlds = Worlds();
         var macros = sets[0].Macros;
-        var logging = OptionsScreenRenderer.LoggingScreen(new LoggingSettings());
+        var options = OptionsScreenRenderer.InputSpellcheckScreen();
         var accent = WorldsScreenRenderer.AccentFor(worlds, 0);
 
         return new List<(string, string, string)>
@@ -68,9 +68,9 @@ public class ScreenFooterTests
             ("F6 timers",
                 TimersScreenRenderer.FooterLine(sets, 0, 80),
                 TimersScreenRenderer.FooterLine(sets, 0, 80, Editing)),
-            ("F7/F8/F9 options",
-                OptionsScreenRenderer.FooterLine(logging.Rows, 80),
-                OptionsScreenRenderer.FooterLine(logging.Rows, 80, Editing)),
+            ("F7/F8 options",
+                OptionsScreenRenderer.FooterLine(options.Rows, 80),
+                OptionsScreenRenderer.FooterLine(options.Rows, 80, Editing)),
         };
     }
 

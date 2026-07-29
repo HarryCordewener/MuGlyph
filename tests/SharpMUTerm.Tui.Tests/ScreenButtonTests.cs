@@ -59,8 +59,10 @@ public class ScreenButtonTests
         var worlds = Worlds();
         var model = WorldsScreenRenderer.Model(worlds, Sets(), selectedWorld: 0, selectedCharacter: 0);
 
-        // 2 worlds + [+ world] + [- del]; 2 characters + [+ add] + [⧉ duplicate] + [- remove]; 1 set.
-        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 4, 5, 1 });
+        // 2 worlds + [+ world] + [- del]; 2 characters + [+ add] + [⧉ duplicate] + [- remove]; 1 set;
+        // and the world's 2 security checkboxes, a pane with no buttons of its own.
+        await Assert.That(model.ListSizes).IsEquivalentTo(new[] { 2, 2, 1, 2 });
+        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 4, 5, 1, 2 });
 
         await Assert.That(model.ButtonAt(0, 2)!.Value.Label).IsEqualTo(WorldsScreenRenderer.AddWorldLabel);
         await Assert.That(model.ButtonAt(0, 3)!.Value.Label).IsEqualTo(WorldsScreenRenderer.RemoveWorldLabel);
@@ -84,7 +86,8 @@ public class ScreenButtonTests
     {
         var model = WorldsScreenRenderer.Model(Worlds(), Sets(), selectedWorld: 1, selectedCharacter: 0);
 
-        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 4, 1, 0 });
+        await Assert.That(model.ListSizes).IsEquivalentTo(new[] { 2, 0, 0, 2 });
+        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 4, 1, 0, 2 });
         await Assert.That(model.ButtonAt(1, 0)!.Value.Label).IsEqualTo(WorldsScreenRenderer.AddCharacterLabel);
         await Assert.That(model.ButtonAt(1, 1)).IsNull();
     }

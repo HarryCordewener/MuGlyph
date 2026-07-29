@@ -27,7 +27,8 @@ works.
   F3; `[+ timer]` / `[- del]` on F6; `[+ binding] Num<n>` / `[- del]` on F4. All
   are `ScreenRow`s carrying a `ScreenButton`; ⏎ runs one, and Delete on a list row
   runs that pane's remove button. The button rows changed pinned row counts in
-  `ScreenModelTests`, twice: F5's (`{2,2,1}` → `{4,5,1}` and `{2,0,0}` → `{4,1,0}`),
+  `ScreenModelTests`, twice: F5's (`{2,2,1}` → `{4,5,1}` and `{2,0,0}` → `{4,1,0}`;
+  the security pane later appended a fourth entry to both),
   then F2/F3/F6's when they grew the same buttons (`Sizes[0]` 2 → 5, `{1,1}` →
   `{4,1}`, `{1,2}` → `{3,2}`). The second round asserts `ListSizes` *as well*, so
   the original pinned meaning ("this pane holds two rules") is still asserted and
@@ -67,10 +68,27 @@ works.
   `AutomationCloneTests.RenamingLeavesTheCompiledMatcherAlone` pins.
 - **Rows still not editable** (deliberately): a macro's *key* (rebinding needs a
   key-capture mode, not a text buffer), a character's password (it is
-  `[JsonIgnore]` and belongs in a credential store), a world's TLS/certificate
-  "security" line (two booleans, so checkboxes, not a field), and everything
-  derived (the numpad grid, the session/state readouts). **All of them now say
-  so on screen** — see *Editable vs read-only rows* under Critical Gotchas.
+  `[JsonIgnore]` and belongs in a credential store), and everything derived (the
+  numpad grid, the session/state readouts). **All of them now say so on screen** —
+  see *Editable vs read-only rows* under Critical Gotchas.
+- **A world's TLS and certificate flags are live**, as the two checkboxes of F5's
+  fourth pane, drawn where the read-only `security  TLS on · certs strict` line
+  used to be. Two booleans is two checkboxes and a `ScreenRow` carries one, so it
+  is two rows — and rows need a pane, which is the one thing on this screen that
+  could not hang off an existing row. The pane is **appended** (index 3) rather
+  than slotted in beside the world it describes, because a pane index is a cursor
+  coordinate and inserting one renumbers every stop the screen and its tests
+  navigate by. `accept invalid certificates` is drawn in `ScreenPalette.Warn` with
+  the `▲` a refused value gets **while it is both checked and encrypting**, and
+  plainly otherwise — see *A row that switches off a check* under Critical Gotchas.
+- **Logging moved from F9 onto F5, per character.** `LoggingSettings` hangs off
+  `CharacterDefinition`, but F9 resolved "the active character, or else the first
+  one configured" and never said which — so the same screen edited a different
+  character's log depending on what was connected. The log format and folder are
+  now fields 2 and 3 of the **character's own row**, drawn in the CHARACTER form
+  under a heading that names the character. **F9 still works**: it opens F5 on the
+  character pane (see *Two doors into F5* under Critical Gotchas). The
+  `logging` / `logging-edit` view names survive and now render that screen.
 
 ### 2. Real-terminal verification still owed
 
@@ -303,7 +321,7 @@ What the framework actually provides (read at v2.5.14, not assumed):
   (`HeaderLine`, `FooterLine`, body columns) plus a **`*ScreenView`** that composes
   them into controls. The renderer's `Render(...)` merges the same blocks back
   into one line list — **the unit tests go through it**, so keep it.
-- F7/F8/F9 share `OptionsScreenRenderer`/`OptionsScreenView`, which take an
+- F7/F8 share `OptionsScreenRenderer`/`OptionsScreenView`, which take an
   `OptionsScreen` (title + F-key + rows): those screens are a single options list,
   so their body is one full-width elevated card rather than a column split.
 - Shared chrome lives in `ScreenPalette` (colours), `ScreenChrome` (hint/action
@@ -378,16 +396,31 @@ What the framework actually provides (read at v2.5.14, not assumed):
   through `ReadOnly`, or the well/no-well counts stop matching.
 - **A derived indicator is never a checkbox.** A checkbox promises Space does
   something. F2's highlight summary is a **caption on the `highlight` section**
-  (above the two swatch rows it derives from, not below them); F9's auto-start is
-  now the `format` row's *own* toggle — one row, one stored value, Space for
-  on/off and ⏎ for which format — rather than a second row mirroring the first.
-  `OptionRow` carrying both a `Bind` and an `Edit` is what makes that one row.
+  (above the two swatch rows it derives from, not below them). F5's `security`
+  line was the other way round — a summary of two booleans that had no UI at all —
+  and is now the two checkboxes themselves.
+- **A row that switches off a check gets said out loud.** `accept invalid
+  certificates` is the only setting on these screens that can disable a check the
+  user is entitled to assume is running, so while it is checked *and* TLS is on it
+  is drawn in `ScreenPalette.Warn` with the `▲` a refused value gets and names the
+  consequence (`anyone can impersonate this host`) rather than restating its label.
+  With TLS off it is quiet whatever it holds and says `no effect until TLS is on`:
+  a warning that fired on an unencrypted connection would train the eye to skip the
+  one that matters. Two shouting cases in the whole palette, and no more.
+- **Two doors into F5.** F5 opens it on the connected world/character; **F9** opens
+  the same screen with focus on the character pane, where the log settings it used
+  to own now live. It is a seeding difference and nothing else — same renderer,
+  same session, same undo log — so there is no second surface to keep in step.
+  `HeaderLine` therefore takes the **F-key it was opened with**: a header that
+  always said `F5` would name a key which, pressed on the F9-opened screen,
+  re-opens it (`SettingsOverlay.Toggle` treats a different key as "reopen") instead
+  of closing it. `SettingsScreenViewTests` renders both doors and pins this.
 - **Footer context lines all answer "where is the cursor".**
   `ScreenChrome.Position`/`Context` build them: `<noun> i/n`, then whatever
   identifies the selection (`set Comms`, `character 1/2`, the option's section,
-  the binding's name). F4 and F7–F9 used to report an inventory instead
+  the binding's name). F4 and F7/F8 used to report an inventory instead
   (`9 bindings · 8 of 9 numpad keys bound`, `3 options · 1 section`).
-- **There is no `‹ back`.** F7/F8/F9 drew one; nothing else did, and there is no
+- **There is no `‹ back`.** F7/F8 (and the retired F9) drew one; nothing else did, and there is no
   navigation stack behind a settings screen — Esc closes it.
 - **Header hints are derived, not written.** `HeaderLine(width, model, focus)`
   reads `model.HasEditableRow`, so a screen physically cannot advertise `⏎ edit`
@@ -436,11 +469,11 @@ What the framework actually provides (read at v2.5.14, not assumed):
   its key pump inside `Run()`, which a snapshot never enters.
 - **Screens edit config in place.** Cloning `AppConfiguration` would drop
   `[JsonIgnore]` fields like a character's in-memory password, so Esc is a replayed
-  undo. A toggle's snapshot captures the **value**, not the boolean — F9's
-  "auto-start" is really a `LogFormat`, and cancelling must put `Html` back, not
-  `Plain`.
-- Pane shape: F4/F7/F8/F9 are single-pane (no ⇥); F5 has three panes; the rest have
-  two.
+  undo. A toggle's snapshot captures the **value**, not the boolean — F5's
+  trigger-set assignment is really a position in a list, and cancelling must put
+  that whole list back, not merely "assigned".
+- Pane shape: F4/F7/F8 are single-pane (no ⇥); **F5 has four** (worlds → characters
+  → trigger sets → the world's security checkboxes); the rest have two.
 
 ### TelnetNegotiationCore
 
@@ -479,7 +512,7 @@ What the framework actually provides (read at v2.5.14, not assumed):
 | `src/SharpMUTerm.Tui/SharpMUTermApp.cs` | Central app: header/status/input bands, `SyncInputWidth`, `PromptMarkup`, pane fill, `SettingsScreens()`, `OnDriverMouseEvent`/`PaneSnapshot`, snapshot views |
 | `src/SharpMUTerm.Tui/WorldsScreenRenderer.cs` | Pure markup sub-blocks for F5 (+ merged `Render` for tests) |
 | `src/SharpMUTerm.Tui/WorldsScreenView.cs` | Composes F5 sub-blocks into real control panels |
-| `src/SharpMUTerm.Tui/OptionsScreenRenderer.cs`, `OptionsScreenView.cs` | The shared single-list screen behind F7/F8/F9 |
+| `src/SharpMUTerm.Tui/OptionsScreenRenderer.cs`, `OptionsScreenView.cs` | The shared single-list screen behind F7/F8 |
 | `src/SharpMUTerm.Tui/ScreenPalette.cs`, `ScreenChrome.cs`, `MarkupText.cs` | Shared screen chrome: colours, hint/action fragments and bands, markup width/padding helpers |
 | `src/SharpMUTerm.Tui/SettingsOverlay.cs` | Frameless full-screen overlay; routes keys to the screen's session and rebuilds its content |
 | `src/SharpMUTerm.Tui/SettingsSession.cs` | Key → action for an open settings screen (the whole interaction contract, testable) |

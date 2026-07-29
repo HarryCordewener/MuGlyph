@@ -6,7 +6,7 @@ using SharpConsoleUI.Layout;
 namespace SharpMUTerm.Tui;
 
 /// <summary>
-/// Composes an options screen (F7 Text &amp; ANSI, F8 Input &amp; spellcheck, F9 Logging) from real
+/// Composes an options screen (F7 Text &amp; ANSI, F8 Input &amp; spellcheck) from real
 /// panels rather than one merged markup blob: a header band carrying the keyboard hints, the options
 /// list on a single full-width elevated card, and a Cancel/Save action bar pinned to the last row.
 /// These screens are one list, not two panes, so there is no column split and no vertical rule — the

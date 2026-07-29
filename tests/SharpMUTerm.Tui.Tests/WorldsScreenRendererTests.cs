@@ -96,6 +96,81 @@ public class WorldsScreenRendererTests
         await Assert.That(text).Contains("TLS on");
     }
 
+    /// <summary>
+    /// The world's two security flags, as the two checkboxes that replaced the read-only line
+    /// summarising them. The world summary at the top of the column still reads <c>TLS on</c>, which is
+    /// where a one-glance answer belongs — the rows are where it is changed.
+    /// </summary>
+    [Test]
+    public async Task Render_SecurityIsTwoCheckboxesUnderTheSecurityLabel()
+    {
+        var lines = WorldsScreenRenderer.Render(Worlds(), TriggerSets(), selectedWorld: 0, selectedCharacter: 0);
+        var tls = lines.Single(l => l.Contains("security") && l.Contains("TLS"));
+        var certificates = lines.Single(l => l.Contains("accept invalid certificates"));
+
+        await Assert.That(tls).Contains("[[x]]");
+        await Assert.That(certificates).Contains("[[ ]]");
+        await Assert.That(lines.Any(l => l.Contains("certs strict"))).IsFalse();
+    }
+
+    /// <summary>
+    /// The certificate row while validation is actually off: the warn ink and the <c>▲</c> a refused
+    /// value gets, and a consequence rather than a restatement of the label.
+    /// </summary>
+    [Test]
+    public async Task Render_TurningOffCertificateValidationIsDrawnAsAWarning()
+    {
+        var worlds = Worlds();
+        worlds[0].AllowInvalidCertificates = true;
+
+        var row = WorldsScreenRenderer.Render(worlds, TriggerSets(), 0, 0)
+            .Single(l => l.Contains("accept invalid certificates"));
+
+        await Assert.That(row).Contains("[[x]]");
+        await Assert.That(row).Contains(ScreenPalette.Warn);
+        await Assert.That(row).Contains("▲ anyone can impersonate this host");
+    }
+
+    /// <summary>
+    /// A character's log settings, in that character's own form. This is what the F9 Logging screen
+    /// used to draw for whichever character happened to be active, without naming it.
+    /// </summary>
+    [Test]
+    public async Task Render_CharacterFormShowsThatCharactersLog()
+    {
+        var worlds = Worlds();
+        worlds[0].Characters[0].Logging = new LoggingSettings
+        {
+            Format = LogFormat.Html,
+            Directory = "/var/log/mu",
+        };
+
+        var lines = WorldsScreenRenderer.Render(worlds, TriggerSets(), selectedWorld: 0, selectedCharacter: 0);
+
+        await Assert.That(lines.Any(l => l.Contains("CHARACTER · Corvid"))).IsTrue();
+        await Assert.That(lines.Any(l => l.Contains("log") && l.Contains("Html"))).IsTrue();
+        await Assert.That(lines.Any(l => l.Contains("log folder") && l.Contains("/var/log/mu"))).IsTrue();
+
+        // The row says whose settings these are, for the reader who arrived by the F9 they used to
+        // live behind — where the same two values silently belonged to somebody.
+        await Assert.That(lines.Any(l => l.Contains("this character only"))).IsTrue();
+    }
+
+    /// <summary>
+    /// The other character's log, on the same screen, showing its own values: the second half of "whose
+    /// settings are these" is that picking a different character shows a different answer.
+    /// </summary>
+    [Test]
+    public async Task Render_AnUnsetLogReadsAsNoneAndTheDefaultFolder()
+    {
+        var lines = WorldsScreenRenderer.Render(Worlds(), TriggerSets(), selectedWorld: 0, selectedCharacter: 1);
+
+        await Assert.That(lines.Any(l => l.Contains("CHARACTER · Rookery"))).IsTrue();
+        await Assert.That(lines.Any(l => l.Contains("log") && l.Contains(LogFormat.None.ToString()))).IsTrue();
+        await Assert.That(lines.Any(l => l.Contains("log folder")
+            && l.Contains(WorldsScreenRenderer.DefaultDirectory))).IsTrue();
+    }
+
     [Test]
     public async Task Render_CharactersTableShowsOfflineAndLoginMode()
     {

@@ -20,9 +20,63 @@ internal static class WorldsScreenRenderer
     private const int CharLabelWidth = 10;
     private const int CharDetailColumnWidth = 40;
 
-    /// <summary>How wide the cursor bar runs across a character row — the row's own column header.</summary>
-    private const int CharacterRowWidth = 62;
+    /// <summary>
+    /// How wide the cursor bar runs across a row of the detail column — a character row, or one of the
+    /// world's security checkboxes. A row longer than this keeps its own width (the bar is padding, not
+    /// a clip), which is how the certificate warning can run past the column the rest of them share.
+    /// </summary>
+    private const int DetailRowWidth = 62;
     private const string DividerGlyph = " │ ";
+
+    /// <summary>
+    /// The screen's panes, in ⇥ order. Named rather than written as literals because the renderer, the
+    /// model, the app's seeding and the tests all address the same numbers.
+    /// </summary>
+    internal const int WorldsPane = 0;
+
+    internal const int CharactersPane = 1;
+
+    internal const int TriggerSetsPane = 2;
+
+    /// <summary>
+    /// The selected world's security checkboxes. Appended rather than inserted after the WORLDS list it
+    /// belongs to: a pane index is a cursor coordinate, and renumbering the two panes below it would
+    /// move every stop the screen (and its tests) already navigate by — the same rule that keeps a
+    /// value's editor hanging off an existing row instead of a new one.
+    /// </summary>
+    internal const int SecurityPane = 3;
+
+    /// <summary>
+    /// The WORLDS-list row's field ordinals, in the order ⇥ steps through them, and the ordinals the
+    /// detail column draws an open edit's caret at. Named constants rather than literals, because a
+    /// field inserted anywhere but the end would otherwise silently draw the caret on the wrong row.
+    /// </summary>
+    internal const int WorldNameField = 0;
+
+    internal const int HostField = 1;
+
+    internal const int PortField = 2;
+
+    internal const int EncodingField = 3;
+
+    internal const int KeepaliveField = 4;
+
+    /// <summary>
+    /// The character row's field ordinals. The name leads, as it does on every list screen; the two log
+    /// fields are appended after the on-connect line, and are drawn in the character form below.
+    /// </summary>
+    internal const int CharacterNameField = 0;
+
+    internal const int OnConnectField = 1;
+
+    internal const int LogFormatField = 2;
+
+    internal const int LogDirectoryField = 3;
+
+    /// <summary>The F-key that opens this screen, and the second key that opens it on a character's log.</summary>
+    internal const string FKey = "F5";
+
+    internal const string LogFKey = "F9";
 
     /// <summary>
     /// Which item of a list a pane's cursor has selected. The cursor also visits the pane's button
@@ -118,11 +172,18 @@ internal static class WorldsScreenRenderer
     /// hints are derived from <paramref name="model"/> and <paramref name="focus"/> rather than
     /// written here, so the header cannot advertise an edit the screen doesn't offer.
     /// </summary>
-    internal static string HeaderLine(int width, ScreenModel? model = null, ScreenFocus? focus = null)
+    /// <param name="fkey">
+    /// The key that opened the screen, which is the key the header offers to close it with. It is a
+    /// parameter rather than a constant because this screen has two doors: F5, and F9 straight onto the
+    /// selected character's log. A header that always said <c>F5</c> would name a key that, pressed from
+    /// an F9-opened screen, re-opens it somewhere else instead of closing it.
+    /// </param>
+    internal static string HeaderLine(
+        int width, ScreenModel? model = null, ScreenFocus? focus = null, string fkey = FKey)
     {
         var title = $"[bold {Value}] Worlds & Characters[/]";
         var hints = ScreenChrome.Hints(
-            ScreenChrome.ListHints, "F5", model?.HasEditableRow ?? false, focus, model?.HasRemovableRow ?? false);
+            ScreenChrome.ListHints, fkey, model?.HasEditableRow ?? false, focus, model?.HasRemovableRow ?? false);
         return SpreadLR(" " + title, hints, width);
     }
 
@@ -143,16 +204,27 @@ internal static class WorldsScreenRenderer
     internal const string RemoveCharacterLabel = "- remove";
 
     /// <summary>
-    /// The screen's three navigable panes, in ⇥ order: the WORLDS list (no checkbox on a world's row,
+    /// The screen's four navigable panes, in ⇥ order: the WORLDS list (no checkbox on a world's row,
     /// but ⏎ opens the world's own fields — the ones the detail column lists), the selected world's
-    /// characters (Space flips auto-login, ⏎ edits the character's name and on-connect line), and the
-    /// selected character's assigned trigger sets (Space assigns/unassigns). The last two collapse to
-    /// empty when there is nothing selected above them, and ⇥ skips empty panes, so the cursor never
-    /// lands somewhere with no rows.
+    /// characters (Space flips auto-login, ⏎ edits the character's name, on-connect line and log), the
+    /// selected character's assigned trigger sets (Space assigns/unassigns), and the selected world's
+    /// two security checkboxes. All but the first collapse to empty when there is nothing selected above
+    /// them, and ⇥ skips empty panes, so the cursor never lands somewhere with no rows.
     /// <para>
-    /// A world's fields hang off its list row rather than becoming a pane of their own: the detail
-    /// column is a projection of whatever the WORLDS list has selected, so its values already belong
-    /// to that row, and a fourth pane would put ⇥ somewhere the eye doesn't go.
+    /// A world's *typed* values hang off its list row rather than becoming a pane of their own: the
+    /// detail column is a projection of whatever the WORLDS list has selected, so those values already
+    /// belong to that row. Its two booleans cannot — a row carries at most one checkbox, and there are
+    /// two of them — so they are the one thing on this screen that needs a pane, and it is appended
+    /// (see <see cref="SecurityPane"/>) rather than slotted in beside the world it describes.
+    /// </para>
+    /// <para>
+    /// A character's logging is two fields of the character's own row, drawn in the character form. It
+    /// lives here because this is where the character it applies to is: F9 used to edit it on a
+    /// screen of its own that resolved "the active character, or else the first one configured" and
+    /// never said which — so the same screen edited a different character's log depending on what was
+    /// connected. There is no Space-to-start checkbox because the row's checkbox is auto-login and a
+    /// row has one; <see cref="LogFormat.None"/> already spells "off" as one of the format's own
+    /// choices, which is one control over one stored value rather than two over one.
     /// </para>
     /// <para>
     /// Each list pane ends in its own buttons, because a button acts on the list it is drawn under and
@@ -187,13 +259,17 @@ internal static class WorldsScreenRenderer
             : ScreenModel.Rows(world.Characters, c => ScreenRow.Of(
                 ScreenToggle.Bind(() => c.AutoLogin, v => c.AutoLogin = v),
                 ScreenField.Name("name", () => c.Name, v => c.Name = v),
-                ScreenField.Optional("on connect", () => c.OnConnect, v => c.OnConnect = v)))
+                ScreenField.Optional("on connect", () => c.OnConnect, v => c.OnConnect = v),
+                ScreenField.Enumeration("log", () => c.Logging.Format, v => c.Logging.Format = v),
+                ScreenField.Optional("log folder", () => c.Logging.Directory, v => c.Logging.Directory = v)))
                 .Concat(CharacterButtons(world, selectedCharacter))
                 .ToArray();
 
+        var securityRows = world is null ? Array.Empty<ScreenRow>() : SecurityRows(world);
+
         if (!HasCharacter(worlds, selectedWorld, selectedCharacter))
         {
-            return new ScreenModel(worldRows, characterRows, Array.Empty<ScreenRow>());
+            return new ScreenModel(worldRows, characterRows, Array.Empty<ScreenRow>(), securityRows);
         }
 
         var character = worlds[selectedWorld].Characters[selectedCharacter];
@@ -225,8 +301,28 @@ internal static class WorldsScreenRenderer
                 }));
         }
 
-        return new ScreenModel(worldRows, characterRows, setRows);
+        return new ScreenModel(worldRows, characterRows, setRows, securityRows);
     }
+
+    /// <summary>
+    /// The selected world's two security booleans, in the order the WORLD block draws them. They are
+    /// checkboxes rather than one typed value because that is what they are — two independent flags,
+    /// which no single field could offer without inventing a vocabulary for the four combinations of
+    /// them — and they are two rows because a <see cref="ScreenRow"/> carries at most one checkbox.
+    /// <para>
+    /// Certificate validation is a plain <c>bool</c> here and is deliberately still bound in the
+    /// direction config stores it: the checkbox reads <c>accept invalid certificates</c>, so the
+    /// dangerous state is the *checked* one and the screen can paint it as such (see
+    /// <see cref="CertificateRow"/>). A checkbox showing the inverse of its stored value would read
+    /// more comfortably and would be one negation away from silently turning verification off.
+    /// </para>
+    /// </summary>
+    private static ScreenRow[] SecurityRows(WorldDefinition world) => new[]
+    {
+        ScreenRow.Of(ScreenToggle.Bind(() => world.UseTls, v => world.UseTls = v)),
+        ScreenRow.Of(ScreenToggle.Bind(
+            () => world.AllowInvalidCertificates, v => world.AllowInvalidCertificates = v)),
+    };
 
     /// <summary>
     /// The WORLDS list's buttons. Deleting is offered only when there is a world under the cursor to
@@ -332,7 +428,7 @@ internal static class WorldsScreenRenderer
             var accentHex = Hex(world.Accent);
             var name = selected ? $"[bold {Value}]{Escape(world.Name)}[/]" : $"[{Value}]{Escape(world.Name)}[/]";
             left.Add(ScreenChrome.Cursor(
-                $"{marker} [{accentHex}]▚[/] {name}", cursor.IsOn(0, i), LeftColumnWidth));
+                $"{marker} [{accentHex}]▚[/] {name}", cursor.IsOn(WorldsPane, i), LeftColumnWidth));
             left.Add($"    [{Label}]{Escape(world.Host)}:{world.Port.ToString(CultureInfo.InvariantCulture)}[/]");
             left.Add($"    [{Label}]{world.Characters.Count.ToString(CultureInfo.InvariantCulture)} chars[/]");
         }
@@ -344,7 +440,7 @@ internal static class WorldsScreenRenderer
 
         left.Add(string.Empty);
         left.AddRange(ScreenChrome.Buttons(
-            WorldButtons(worlds, selectedWorld), cursor, 0, worlds.Count, LeftColumnWidth));
+            WorldButtons(worlds, selectedWorld), cursor, WorldsPane, worlds.Count, LeftColumnWidth));
         return left;
     }
 
@@ -373,23 +469,33 @@ internal static class WorldsScreenRenderer
             + $"  [{accent}]TLS {OnOff(world.UseTls)}[/][{Label}] · {Escape(world.Encoding)}[/]",
             string.Empty,
             $"[{accent}]├ WORLD[/]",
-            WorldField("name", Field($"[{Value}]{Escape(world.Name)}[/]", cursor, selectedWorld, 0)),
-            WorldField("host", Field($"[{Value}]{Escape(world.Host)}[/]", cursor, selectedWorld, 1)),
+            WorldField("name", Field(
+                $"[{Value}]{Escape(world.Name)}[/]", cursor, selectedWorld, WorldNameField)),
+            WorldField("host", Field(
+                $"[{Value}]{Escape(world.Host)}[/]", cursor, selectedWorld, HostField)),
             WorldField("port", Field(
-                $"[{Value}]{world.Port.ToString(CultureInfo.InvariantCulture)}[/]", cursor, selectedWorld, 2)),
-            WorldField("security", ScreenChrome.ReadOnly(Security(world))),
-            WorldField("encoding", Field($"[{Value}]{Escape(world.Encoding)}[/]", cursor, selectedWorld, 3)),
+                $"[{Value}]{world.Port.ToString(CultureInfo.InvariantCulture)}[/]",
+                cursor,
+                selectedWorld,
+                PortField)),
+        };
+
+        right.AddRange(SecurityColumn(world, cursor));
+        right.AddRange(new[]
+        {
+            WorldField("encoding", Field(
+                $"[{Value}]{Escape(world.Encoding)}[/]", cursor, selectedWorld, EncodingField)),
             WorldField("keepalive", Field(
                 world.KeepaliveSeconds > 0
                     ? $"[{Value}]{world.KeepaliveSeconds.ToString(CultureInfo.InvariantCulture)}s[/]"
                     : $"[{Label}]off[/]",
                 cursor,
                 selectedWorld,
-                4)),
+                KeepaliveField)),
             string.Empty,
             $"[{accent}]├ CHARACTERS[/]   [{Label}]a character is a connection[/]",
             $"[{Label}]  name          state       login        trigger sets[/]",
-        };
+        });
 
         if (world.Characters.Count == 0)
         {
@@ -401,24 +507,93 @@ internal static class WorldsScreenRenderer
             {
                 right.Add(ScreenChrome.Cursor(
                     CharacterRow(world.Characters[i], i == selectedCharacter),
-                    cursor.IsOn(1, i),
-                    CharacterRowWidth));
+                    cursor.IsOn(CharactersPane, i),
+                    DetailRowWidth));
             }
         }
 
         right.Add(string.Empty);
         right.AddRange(ScreenChrome.Buttons(
-            CharacterButtons(world, selectedCharacter), cursor, 1, world.Characters.Count, CharacterRowWidth));
+            CharacterButtons(world, selectedCharacter),
+            cursor,
+            CharactersPane,
+            world.Characters.Count,
+            DetailRowWidth));
         return right;
     }
 
     /// <summary>
-    /// The character form — labels left-aligned with their values, one field per row. The editable
-    /// ones are the character row's own fields (name, then on-connect) and are the only two drawn in a
-    /// field well. The other three deliberately are not: the password is
+    /// The world's security block: two checkbox rows where a read-only <c>security  TLS on · certs
+    /// strict</c> summary used to sit. The summary said everything and offered nothing — the two flags
+    /// behind it had no UI at all — so it is replaced by the rows themselves rather than kept above
+    /// them; the world's title strip at the top of this column still reads <c>TLS on</c>, which is where
+    /// a one-glance answer belongs.
+    /// <para>
+    /// They keep the <c>security</c> label column so the block still reads as one setting with two
+    /// switches, and so the checkboxes line up under the field wells above them rather than starting at
+    /// the margin.
+    /// </para>
+    /// </summary>
+    private static List<string> SecurityColumn(WorldDefinition world, ScreenFocus cursor) => new()
+    {
+        ScreenChrome.Cursor(
+            WorldField("security", Checkbox("TLS", world.UseTls, "encrypt this connection")),
+            cursor.IsOn(SecurityPane, 0),
+            DetailRowWidth),
+        ScreenChrome.Cursor(
+            WorldField(string.Empty, CertificateRow(world)), cursor.IsOn(SecurityPane, 1), DetailRowWidth),
+    };
+
+    /// <summary>
+    /// The certificate checkbox. It is the one row on these screens that can switch off a check the user
+    /// is otherwise entitled to assume is running, so — unlike the encoding beside it — it does not
+    /// stay quiet about it: checked *and* encrypting, it is drawn in <see cref="ScreenPalette.Warn"/>
+    /// with the same <c>▲</c> a refused value gets, and says what the state actually costs rather than
+    /// restating its own label.
+    /// <para>
+    /// With TLS off it is drawn plainly whatever it holds, and says so: nothing is being validated
+    /// either way, and a warning that fires on a connection carrying no certificates would train the
+    /// eye to ignore the one that matters.
+    /// </para>
+    /// </summary>
+    private static string CertificateRow(WorldDefinition world)
+    {
+        const string label = "accept invalid certificates";
+
+        if (!world.UseTls)
+        {
+            return Checkbox(label, world.AllowInvalidCertificates, "no effect until TLS is on");
+        }
+
+        return world.AllowInvalidCertificates
+            ? $"[{Warn}][[x]] {Escape(label)}  ▲ anyone can impersonate this host[/]"
+            : Checkbox(label, false, "certificates must be valid");
+    }
+
+    /// <summary>
+    /// A checkbox row, checked in the accent and unchecked dim — the same shape F2's editor pane draws,
+    /// so a checkbox means the same thing (Space presses it) wherever these screens put one.
+    /// </summary>
+    private static string Checkbox(string label, bool value, string hint)
+    {
+        var text = $"{Escape(label)}[{Label}] — {Escape(hint)}[/]";
+        return value ? $"[{Accent}][[x]][/] [{Value}]{text}[/]" : $"[dim][[ ]][/] [{Label}]{text}[/]";
+    }
+
+    /// <summary>
+    /// The character form — labels left-aligned with their values, one field per row. The editable ones
+    /// are the character row's own fields (name, on-connect, then the two log values) and are the only
+    /// four drawn in a field well. The other three deliberately are not: the password is
     /// <see cref="System.Text.Json.Serialization.JsonIgnoreAttribute"/>d and belongs in a credential
     /// store, auto-login is a readout of the character row's own checkbox, and the session line is a
     /// report of what the connection is doing rather than a setting at all.
+    /// <para>
+    /// The log rows are here, under a heading that names the character, because logging <em>is</em> per
+    /// character: <c>LoggingSettings</c> hangs off <see cref="CharacterDefinition"/>. On its own screen
+    /// it had to guess whose settings to show and said nothing about the answer; here the question
+    /// cannot come up, and the row says <c>this character only</c> anyway for the reader arriving from
+    /// the F9 it used to live on.
+    /// </para>
     /// </summary>
     internal static List<string> FormColumn(
         CharacterDefinition character, string accent, ScreenFocus? focus = null, int selectedCharacter = -1)
@@ -429,14 +604,41 @@ internal static class WorldsScreenRenderer
             $"[bold {accent}]└ CHARACTER · {Escape(character.Name)}[/]",
             string.Empty,
             CharField("name", Field(
-                $"[{Value}]{Escape(character.Name)}[/]", cursor, selectedCharacter, 0, pane: 1)),
+                $"[{Value}]{Escape(character.Name)}[/]",
+                cursor,
+                selectedCharacter,
+                CharacterNameField,
+                pane: CharactersPane)),
             CharField("password", $"{ScreenChrome.ReadOnly("••••••••")} [{Label}]keychain[/]"),
             CharField("on connect", Field(
-                $"[{Value}]{Escape(character.OnConnect ?? "—")}[/]", cursor, selectedCharacter, 1, pane: 1)),
+                $"[{Value}]{Escape(character.OnConnect ?? "—")}[/]",
+                cursor,
+                selectedCharacter,
+                OnConnectField,
+                pane: CharactersPane)),
             CharField("auto-login", ScreenChrome.ReadOnly(character.AutoLogin ? "yes" : "no")),
             CharField("session", ScreenChrome.ReadOnly("offline")),
+            CharField("log", Field(
+                $"[{Value}]{character.Logging.Format.ToString()}[/]",
+                cursor,
+                selectedCharacter,
+                LogFormatField,
+                pane: CharactersPane) + $" [{Label}]— this character only[/]"),
+            CharField("log folder", Field(
+                $"[{Value}]{Escape(character.Logging.Directory ?? DefaultDirectory)}[/]",
+                cursor,
+                selectedCharacter,
+                LogDirectoryField,
+                pane: CharactersPane)),
         };
     }
+
+    /// <summary>
+    /// What an unset log directory reads as. The field itself holds null — the logger picks a
+    /// per-session folder under the config directory — so the row names the state rather than showing
+    /// an empty well that would look like a value someone had blanked.
+    /// </summary>
+    internal const string DefaultDirectory = "(default)";
 
     /// <summary>Draws a value as a field, showing the buffer and caret when its edit is the open one.</summary>
     private static string Field(string display, ScreenFocus cursor, int index, int field, int pane = 0) =>
@@ -469,7 +671,7 @@ internal static class WorldsScreenRenderer
         var list = new List<string> { $"[{Label}]assigned trigger sets[/]", string.Empty };
         for (var i = 0; i < rows.Count; i++)
         {
-            list.Add(ScreenChrome.Cursor(rows[i], cursor.IsOn(2, i), barWidth));
+            list.Add(ScreenChrome.Cursor(rows[i], cursor.IsOn(TriggerSetsPane, i), barWidth));
         }
 
         return list;
@@ -483,11 +685,6 @@ internal static class WorldsScreenRenderer
         var sets = Escape(string.Join(", ", character.TriggerSets));
         return $"{marker} {name} [{Label}]○ offline[/]  [{Label}]{login}[/] [{Label}]{sets}[/]";
     }
-
-    private static string Security(WorldDefinition world) =>
-        world.UseTls
-            ? $"TLS on · certs {(world.AllowInvalidCertificates ? "lax" : "strict")}"
-            : "TLS off";
 
     private static string WorldField(string label, string value) =>
         $"  [{Label}]{label.PadLeft(WorldLabelWidth)}[/]  {value}";

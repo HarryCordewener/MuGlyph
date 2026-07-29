@@ -64,13 +64,30 @@ public class ScreenNameTests
                 TimersScreenRenderer.Model(sets, 0).FieldAt(0, 0, TimersScreenRenderer.NameField)!.Value,
                 () => timer.Name),
             ("F5 worlds",
-                WorldsScreenRenderer.Model(worlds, sets, 0, 0).FieldAt(0, 0, 0)!.Value,
+                WorldsScreenRenderer.Model(worlds, sets, 0, 0)
+                    .FieldAt(
+                        WorldsScreenRenderer.WorldsPane, 0, WorldsScreenRenderer.WorldNameField)!.Value,
                 () => world.Name),
             ("F5 characters",
-                WorldsScreenRenderer.Model(worlds, sets, 0, 0).FieldAt(1, 0, 0)!.Value,
+                WorldsScreenRenderer.Model(worlds, sets, 0, 0)
+                    .FieldAt(
+                        WorldsScreenRenderer.CharactersPane, 0, WorldsScreenRenderer.CharacterNameField)!.Value,
                 () => character.Name),
         };
     }
+
+    /// <summary>Field 0 of every list row — what ⏎ opens, whatever each screen calls that ordinal.</summary>
+    private static List<ScreenField> FirstFields(List<TriggerSet> sets, List<WorldDefinition> worlds) =>
+        new()
+        {
+            TriggersScreenRenderer.Model(sets, 0).FieldAt(0, 0, 0)!.Value,
+            AliasesScreenRenderer.Model(sets, 0).FieldAt(0, 0, 0)!.Value,
+            KeypadScreenRenderer.Model(sets[0].Macros).FieldAt(0, 0, 0)!.Value,
+            TimersScreenRenderer.Model(sets, 0).FieldAt(0, 0, 0)!.Value,
+            WorldsScreenRenderer.Model(worlds, sets, 0, 0).FieldAt(WorldsScreenRenderer.WorldsPane, 0, 0)!.Value,
+            WorldsScreenRenderer.Model(worlds, sets, 0, 0)
+                .FieldAt(WorldsScreenRenderer.CharactersPane, 0, 0)!.Value,
+        };
 
     /// <summary>
     /// The rule the four automation screens broke: the row's first field is the thing it is called.
@@ -91,11 +108,11 @@ public class ScreenNameTests
             await Assert.That(field.Get()).IsEqualTo(expected[i]).Because(screen);
         }
 
-        // The name really is the *first* field, which is what makes ⏎ open it.
-        await Assert.That(TriggersScreenRenderer.NameField).IsEqualTo(0);
-        await Assert.That(AliasesScreenRenderer.NameField).IsEqualTo(0);
-        await Assert.That(KeypadScreenRenderer.NameField).IsEqualTo(0);
-        await Assert.That(TimersScreenRenderer.NameField).IsEqualTo(0);
+        // The name really is the *first* field, which is what makes ⏎ open it. Asserted through the
+        // models rather than against the ordinal constants: comparing a constant to a literal is a
+        // claim the compiler already settles, and says nothing about which field the screen built.
+        await Assert.That(FirstFields(sets, worlds).Select(f => f.Label).Distinct())
+            .IsEquivalentTo(new[] { "name" });
     }
 
     [Test]

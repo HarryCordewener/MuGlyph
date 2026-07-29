@@ -22,7 +22,8 @@ internal static class WorldsScreenView
         int selectedWorld,
         int selectedCharacter,
         int width,
-        ScreenFocus? focus = null)
+        ScreenFocus? focus = null,
+        string fkey = WorldsScreenRenderer.FKey)
     {
         // Both panes end in button rows, so a raw cursor can point past its list; resolving once here
         // keeps every block of the screen agreeing on which world and character are selected.
@@ -32,7 +33,7 @@ internal static class WorldsScreenView
 
         var model = WorldsScreenRenderer.Model(worlds, triggerSets, selectedWorld, selectedCharacter);
         var header = ScreenChrome.Band(
-            WorldsScreenRenderer.HeaderLine(width, model, focus), ScreenPalette.HeaderBg);
+            WorldsScreenRenderer.HeaderLine(width, model, focus, fkey), ScreenPalette.HeaderBg);
         var footer = ScreenChrome.Band(
             WorldsScreenRenderer.FooterLine(worlds, selectedWorld, selectedCharacter, accent, width, focus),
             ScreenPalette.FooterBg);

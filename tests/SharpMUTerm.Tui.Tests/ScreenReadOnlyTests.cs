@@ -94,23 +94,78 @@ public class ScreenReadOnlyTests
         var worldName = lines.Single(l => l.Contains("     name[/]", StringComparison.Ordinal));
         await Assert.That(InAWell(worldName)).IsTrue();
 
-        // Two booleans with no UI at all; a later task gives them one. Until then it must not look like
-        // one — this is the row the whole rule exists for.
+        // The two booleans that used to be summarised here now have checkboxes, so the row is no longer
+        // a readout — but it is still not a *field*, and must not grow a well: Space presses it, ⏎ does
+        // nothing to it, and the well would promise the wrong key.
         await Assert.That(InAWell(Row(lines, "security"))).IsFalse();
-        await Assert.That(Row(lines, "security")).Contains(ScreenPalette.Muted);
+        await Assert.That(HasCheckbox(Row(lines, "security"))).IsTrue();
     }
 
     /// <summary>
-    /// The character form, where three of five rows are readouts: a password that lives in a credential
-    /// store, a mirror of the character row's own checkbox, and the state of a connection.
+    /// The other half of that rule, on the screen that grew the checkboxes: every checkbox the WORLD
+    /// block draws belongs to a row the cursor can reach and Space can press. The security pane's rows
+    /// are exactly those two, so the counts have to match — a summary redrawn as a checkbox is exactly
+    /// the case where they wouldn't.
     /// </summary>
     [Test]
-    public async Task Worlds_TheCharacterFormWellsOnlyTheTwoRowsThatCanBeTyped()
+    public async Task Worlds_EveryCheckboxInTheWorldBlockIsANavigableToggleRow()
+    {
+        var worlds = Worlds();
+        var lines = WorldsScreenRenderer.DetailColumn(worlds, Sets(), 0, 0, ScreenPalette.Accent);
+        var model = WorldsScreenRenderer.Model(worlds, Sets(), 0, 0);
+        var pane = WorldsScreenRenderer.SecurityPane;
+
+        // The characters table below draws no checkboxes of its own, so every box in this column is a
+        // security row.
+        await Assert.That(lines.Count(HasCheckbox)).IsEqualTo(model.Sizes[pane]);
+        for (var row = 0; row < model.Sizes[pane]; row++)
+        {
+            await Assert.That(model.ToggleAt(pane, row)).IsNotNull();
+        }
+    }
+
+    /// <summary>
+    /// The one row on these screens that can switch off a check the user is entitled to assume is
+    /// running. Checked while TLS is on, it is drawn in the warn ink with the <c>▲</c> a refused value
+    /// gets and says what the state costs; unchecked, it is as quiet as the encoding above it. Asserted
+    /// both ways round, so the shouting can neither disappear nor spread.
+    /// </summary>
+    [Test]
+    public async Task Worlds_TheCertificateRowShoutsOnlyWhileItIsActuallySwitchedOff()
+    {
+        var worlds = Worlds();
+        var strict = CertificateRow(WorldsScreenRenderer.DetailColumn(worlds, Sets(), 0, 0, ScreenPalette.Accent));
+        await Assert.That(strict).DoesNotContain(ScreenPalette.Warn);
+        await Assert.That(strict).Contains("[[ ]]");
+
+        worlds[0].AllowInvalidCertificates = true;
+        var lax = CertificateRow(WorldsScreenRenderer.DetailColumn(worlds, Sets(), 0, 0, ScreenPalette.Accent));
+        await Assert.That(lax).Contains(ScreenPalette.Warn);
+        await Assert.That(lax).Contains("▲");
+        await Assert.That(lax).Contains("[[x]]");
+
+        // With nothing encrypted there is no certificate to check either way, and a warning that fired
+        // there would train the eye to skip the one that matters.
+        worlds[0].UseTls = false;
+        var plaintext = CertificateRow(WorldsScreenRenderer.DetailColumn(worlds, Sets(), 0, 0, ScreenPalette.Accent));
+        await Assert.That(plaintext).DoesNotContain(ScreenPalette.Warn);
+        await Assert.That(plaintext).Contains("no effect until TLS is on");
+    }
+
+    /// <summary>
+    /// The character form, where three of seven rows are readouts: a password that lives in a credential
+    /// store, a mirror of the character row's own checkbox, and the state of a connection. The other
+    /// four — the name, the on-connect line and the two log values — are the character row's own fields.
+    /// </summary>
+    [Test]
+    public async Task Worlds_TheCharacterFormWellsOnlyTheRowsThatCanBeTyped()
     {
         var lines = WorldsScreenRenderer.FormColumn(Worlds()[0].Characters[0], ScreenPalette.Accent);
 
-        await Assert.That(InAWell(Row(lines, "name"))).IsTrue();
-        await Assert.That(InAWell(Row(lines, "on connect"))).IsTrue();
+        foreach (var label in new[] { "name", "on connect", "log", "log folder" })
+        {
+            await Assert.That(InAWell(Row(lines, label))).IsTrue().Because(label + " is editable");
+        }
 
         foreach (var label in new[] { "password", "auto-login", "session" })
         {
@@ -191,7 +246,7 @@ public class ScreenReadOnlyTests
     }
 
     /// <summary>
-    /// The same rule for the three options screens, which is where F9's auto-start indicator was: every
+    /// The same rule for the options screens, which is where F9's auto-start indicator was: every
     /// checkbox drawn in the list belongs to a row whose model entry actually carries a toggle.
     /// </summary>
     [Test]
@@ -201,8 +256,6 @@ public class ScreenReadOnlyTests
         {
             OptionsScreenRenderer.TextAnsiScreen(),
             OptionsScreenRenderer.InputSpellcheckScreen(),
-            OptionsScreenRenderer.LoggingScreen(new LoggingSettings { Format = LogFormat.Html }),
-            OptionsScreenRenderer.LoggingScreen(new LoggingSettings { Format = LogFormat.None }),
         };
 
         foreach (var screen in screens)
@@ -271,9 +324,16 @@ public class ScreenReadOnlyTests
         }
     }
 
+    /// <summary>
+    /// The certificate checkbox, found by its label: it is the one security row with no label column of
+    /// its own, because it is the second switch of the <c>security</c> row above it.
+    /// </summary>
+    private static string CertificateRow(IReadOnlyList<string> lines) =>
+        lines.Single(l => l.Contains("accept invalid certificates", StringComparison.Ordinal));
+
     /// <summary>The line of a label/value block whose label is <paramref name="label"/>.</summary>
     private static string Row(IReadOnlyList<string> lines, string label) =>
-        lines.Single(l => Regex.IsMatch(Visible(l), $@"^\s*{Regex.Escape(label)}\s"));
+        lines.Single(l => Regex.IsMatch(Visible(l), $@"^\s*{Regex.Escape(label)}\s\s"));
 
     /// <summary>A markup line as it prints: tags stripped, escaped brackets folded back to one.</summary>
     private static string Visible(string markup)
@@ -298,7 +358,8 @@ public class ScreenReadOnlyTests
             TimersScreenRenderer.HeaderLine(80, TimersScreenRenderer.Model(sets, 0)),
             Header(OptionsScreenRenderer.TextAnsiScreen()),
             Header(OptionsScreenRenderer.InputSpellcheckScreen()),
-            Header(OptionsScreenRenderer.LoggingScreen(new LoggingSettings())),
+            WorldsScreenRenderer.HeaderLine(
+                80, WorldsScreenRenderer.Model(worlds, sets, 0, 0), null, WorldsScreenRenderer.LogFKey),
         };
     }
 
@@ -320,9 +381,7 @@ public class ScreenReadOnlyTests
             ("F6 timers", TimersScreenRenderer.FooterLine(sets, 0, 80)),
             ("F7 text", OptionsScreenRenderer.FooterLine(OptionsScreenRenderer.TextAnsiScreen().Rows, 80)),
             ("F8 input", OptionsScreenRenderer.FooterLine(OptionsScreenRenderer.InputSpellcheckScreen().Rows, 80)),
-            ("F9 logging",
-                OptionsScreenRenderer.FooterLine(
-                    OptionsScreenRenderer.LoggingScreen(new LoggingSettings()).Rows, 80)),
+            ("F9 worlds (the character's log)", WorldsScreenRenderer.FooterLine(worlds, 0, 0, accent, 80)),
         };
     }
 }

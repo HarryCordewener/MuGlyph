@@ -64,6 +64,11 @@ internal static class ScreenPalette
     /// </summary>
     internal const string FieldBg = "#0a0e18";
 
-    /// <summary>A refused value's marker — the one place these screens raise their voice.</summary>
+    /// <summary>
+    /// A refused value's marker, and — the only other place these screens raise their voice — a setting
+    /// that switches off a check the user would otherwise assume is running: F5's <c>accept invalid
+    /// certificates</c>, drawn in this while it is both checked and encrypting. Two cases, no more: a
+    /// palette that shouts at every risky-looking row teaches the eye to skip the colour.
+    /// </summary>
     internal const string Warn = "#ff6b6b";
 }

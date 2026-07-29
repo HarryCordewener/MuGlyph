@@ -867,7 +867,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         new(ConsoleKey.F6, new[] { "timers" }, TimersScreen),
         new(ConsoleKey.F7, new[] { "textansi" }, TextAnsiScreen),
         new(ConsoleKey.F8, new[] { "input" }, InputSpellcheckScreen),
-        new(ConsoleKey.F9, new[] { "logging" }, LoggingScreen),
+        new(ConsoleKey.F9, new[] { "logging" }, CharacterLoggingScreen),
     };
 
     /// <summary>
@@ -948,41 +948,68 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
-    /// The logging settings the F9 screen edits: the active character's, falling back to the first
-    /// configured character so a disconnected screen still edits something that can be saved. Only a
-    /// config with no characters at all yields a detached default — without a character there is no
-    /// session to log.
+    /// The logging settings the status bar reports on: the active character's. With nothing connected
+    /// there is no session being logged, so the bar reads the defaults (<c>LOG off</c>) rather than some
+    /// other character's format — the settings themselves are edited on F5, per character, where the
+    /// character they belong to is on screen.
     /// </summary>
     private LoggingSettings ActiveLogging()
     {
+        if (ActiveCharacterKey() is null)
+        {
+            return new LoggingSettings();
+        }
+
         var world = _config.Worlds.ElementAtOrDefault(ActiveWorldIndex());
-        var character = world?.Characters.ElementAtOrDefault(ActiveCharacterIndex())
-            ?? _config.Worlds.SelectMany(w => w.Characters).FirstOrDefault();
-        return character?.Logging ?? new LoggingSettings();
+        return world?.Characters.ElementAtOrDefault(ActiveCharacterIndex())?.Logging ?? new LoggingSettings();
     }
 
     /// <summary>
-    /// Opens the F5 Worlds &amp; Characters screen: three panes (worlds → characters → the selected
-    /// character's trigger sets), seeded on whatever is connected so the screen opens where the user
-    /// already is.
+    /// Opens the F5 Worlds &amp; Characters screen: four panes (worlds → characters → the selected
+    /// character's trigger sets → the selected world's security checkboxes), seeded on whatever is
+    /// connected so the screen opens where the user already is.
     /// </summary>
-    private ScreenBinding WorldsScreen()
+    private ScreenBinding WorldsScreen() => WorldsScreen(WorldsScreenRenderer.FKey, onCharacters: false);
+
+    /// <summary>
+    /// F9 opens the same screen, focused on the character pane. Logging is per character and now lives
+    /// in that character's form, so the key that used to open a Logging screen of its own is kept as a
+    /// second door into where the setting moved rather than retired: an F-key is muscle memory, and one
+    /// that had quietly stopped doing anything would be worse than the screen it replaced.
+    /// <para>
+    /// It is a seeding difference and nothing more — the same renderer, the same session shape, the same
+    /// undo log — so there is no second surface to keep in step. The header is told which key opened it,
+    /// so the screen offers F9 to close what F9 opened.
+    /// </para>
+    /// </summary>
+    private ScreenBinding CharacterLoggingScreen() =>
+        WorldsScreen(WorldsScreenRenderer.LogFKey, onCharacters: true);
+
+    private ScreenBinding WorldsScreen(string fkey, bool onCharacters)
     {
-        // SelectionIn, not CursorIn: both panes end in their own buttons, and the cursor has to leave
-        // the list to press one. The *selection* is what the detail column and the delete buttons are
-        // about, and it stays on the row the user was looking at.
+        // SelectionIn, not CursorIn: both list panes end in their own buttons, and the cursor has to
+        // leave the list to press one. The *selection* is what the detail column and the delete buttons
+        // are about, and it stays on the row the user was looking at.
         var session = new SettingsSession(selection => WorldsScreenRenderer.Model(
-            _config.Worlds, _config.TriggerSets, selection.SelectionIn(0), selection.SelectionIn(1)));
-        session.Selection.Seed(0, ActiveWorldIndex());
-        session.Selection.Seed(1, ActiveCharacterIndex());
+            _config.Worlds,
+            _config.TriggerSets,
+            selection.SelectionIn(WorldsScreenRenderer.WorldsPane),
+            selection.SelectionIn(WorldsScreenRenderer.CharactersPane)));
+        session.Selection.Seed(WorldsScreenRenderer.WorldsPane, ActiveWorldIndex());
+        session.Selection.Seed(WorldsScreenRenderer.CharactersPane, ActiveCharacterIndex());
+        if (onCharacters)
+        {
+            session.Selection.FocusPane(WorldsScreenRenderer.CharactersPane);
+        }
 
         return new ScreenBinding(session, () => WorldsScreenView.Build(
             _config.Worlds,
             _config.TriggerSets,
-            session.Selection.SelectionIn(0),
-            session.Selection.SelectionIn(1),
+            session.Selection.SelectionIn(WorldsScreenRenderer.WorldsPane),
+            session.Selection.SelectionIn(WorldsScreenRenderer.CharactersPane),
             _system.DesktopDimensions.Width,
-            session.Focus()));
+            session.Focus(),
+            fkey));
     }
 
     /// <summary>
@@ -1051,18 +1078,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         OptionsScreen(() => OptionsScreenRenderer.InputSpellcheckScreen(_config.Input));
 
     /// <summary>
-    /// Opens the F9 Logging screen, bound to the active character's logging settings. The settings
-    /// object is resolved once, when the screen opens: re-resolving it per keystroke would let the
-    /// screen edit one character's log and then save another's if the active session changed underneath.
-    /// </summary>
-    private ScreenBinding LoggingScreen()
-    {
-        var logging = ActiveLogging();
-        return OptionsScreen(() => OptionsScreenRenderer.LoggingScreen(logging));
-    }
-
-    /// <summary>
-    /// The shared open path for the single-list option screens (F7/F8/F9). <paramref name="screen"/> is
+    /// The shared open path for the single-list option screens (F7/F8). <paramref name="screen"/> is
     /// re-projected from config on every key, so a flipped checkbox shows up in both the row it lives
     /// on and the model the next keystroke navigates.
     /// </summary>
@@ -1083,11 +1099,21 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// because a still frame should land on the thing that screen's editing actually added: F5 rewrites
     /// a host's suffix ("no way to change a host" is the gap the whole mode closes), and F2 steps on to
     /// its route group and moves the dot, which is the only way to see that a radio list is live rather
-    /// than a report.
+    /// than a report. The <c>logging</c> view opens F5 on the character pane, so it steps twice more to
+    /// reach the log format — past the name and the on-connect line — because the character's log is
+    /// the whole reason that view exists.
     /// </summary>
     private static IEnumerable<ConsoleKeyInfo> EditSnapshotKeys(string view)
     {
         yield return Stroke('\r', ConsoleKey.Enter);
+
+        if (string.Equals(view, "logging", StringComparison.OrdinalIgnoreCase))
+        {
+            // name → on connect → log: the character row's fields, in order.
+            yield return Stroke('\t', ConsoleKey.Tab);
+            yield return Stroke('\t', ConsoleKey.Tab);
+            yield break;
+        }
 
         if (string.Equals(view, "triggers", StringComparison.OrdinalIgnoreCase))
         {

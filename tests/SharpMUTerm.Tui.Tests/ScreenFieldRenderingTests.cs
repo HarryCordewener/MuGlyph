@@ -204,15 +204,44 @@ public class ScreenFieldRenderingTests
     [Test]
     public async Task Options_DrawsTheBufferOnTheValueRowUnderTheCursor()
     {
-        var screen = OptionsScreenRenderer.LoggingScreen(new LoggingSettings { Format = LogFormat.Plain });
+        var screen = OptionsScreenRenderer.InputSpellcheckScreen();
 
-        // Navigable row 0 is "format"; row 1 is "directory".
-        var format = OptionsScreenRenderer.BodyColumn(screen.Rows, Edit(0, 0, 0, "Html"));
+        // Navigable rows: 0 local echo, 1 drafts, 2 newline key, 3 check spelling, 4 dictionary.
+        var newline = OptionsScreenRenderer.BodyColumn(screen.Rows, Edit(0, 2, 0, "Ctrl+Enter"));
+        await Assert.That(Carets(newline)).IsEqualTo(1);
+        await Assert.That(newline.Single(HasCaret)).Contains("newline key");
+
+        var dictionary = OptionsScreenRenderer.BodyColumn(screen.Rows, Edit(0, 4, 0, "en_GB"));
+        await Assert.That(dictionary.Single(HasCaret)).Contains("dictionary");
+    }
+
+    /// <summary>
+    /// The character's log values are the character row's own fields, so their carets are drawn in the
+    /// character form — where they are read — and nowhere else. This is what F9's screen used to do for
+    /// a character it never named.
+    /// </summary>
+    [Test]
+    public async Task Worlds_TheCharacterFormDrawsTheLogBuffers()
+    {
+        var character = Worlds()[0].Characters[0];
+
+        var format = WorldsScreenRenderer.FormColumn(
+            character,
+            ScreenPalette.Accent,
+            Edit(WorldsScreenRenderer.CharactersPane, 0, WorldsScreenRenderer.LogFormatField, "Both"),
+            0);
         await Assert.That(Carets(format)).IsEqualTo(1);
-        await Assert.That(format.Single(HasCaret)).Contains("format");
+        await Assert.That(format.Single(HasCaret)).Contains("log");
+        await Assert.That(format.Single(HasCaret)).Contains("Both");
 
-        var directory = OptionsScreenRenderer.BodyColumn(screen.Rows, Edit(0, 1, 0, "/logs"));
-        await Assert.That(directory.Single(HasCaret)).Contains("directory");
+        var folder = WorldsScreenRenderer.FormColumn(
+            character,
+            ScreenPalette.Accent,
+            Edit(WorldsScreenRenderer.CharactersPane, 0, WorldsScreenRenderer.LogDirectoryField, "/logs/kaz"),
+            0);
+        await Assert.That(Carets(folder)).IsEqualTo(1);
+        await Assert.That(folder.Single(HasCaret)).Contains("log folder");
+        await Assert.That(folder.Single(HasCaret)).Contains("/logs/kaz");
     }
 
     [Test]

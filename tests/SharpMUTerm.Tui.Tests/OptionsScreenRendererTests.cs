@@ -1,4 +1,3 @@
-using SharpMUTerm.Core.Configuration;
 using SharpMUTerm.Tui;
 
 namespace SharpMUTerm.Tui.Tests;
@@ -56,17 +55,18 @@ public class OptionsScreenRendererTests
 
     /// <summary>
     /// The header names the screen and how to leave it, and nothing else. It used to open with a
-    /// <c>‹ back</c> affordance — on these three screens only, pointing at a navigation stack that does
+    /// <c>‹ back</c> affordance — on the options screens only, pointing at a navigation stack that does
     /// not exist. The assertion is kept pointed the other way rather than dropped, so it cannot come
     /// back by accident.
     /// </summary>
     [Test]
     public async Task Render_HeaderAndFooter_MatchPattern()
     {
-        var lines = OptionsScreenRenderer.Render("Logging", "F9", Array.Empty<OptionsScreenRenderer.OptionRow>());
+        var lines = OptionsScreenRenderer.Render(
+            "Input & spellcheck", "F8", Array.Empty<OptionsScreenRenderer.OptionRow>());
         await Assert.That(lines[0]).DoesNotContain("‹ back");
-        await Assert.That(lines[0]).Contains("Logging");
-        await Assert.That(lines[0]).Contains("F9");
+        await Assert.That(lines[0]).Contains("Input & spellcheck");
+        await Assert.That(lines[0]).Contains("F8");
         await Assert.That(lines[^1]).Contains("Cancel");
         await Assert.That(lines[^1]).Contains("Save");
     }
@@ -103,25 +103,5 @@ public class OptionsScreenRendererTests
         await Assert.That(lines.Any(l => l.Contains("newline key") && l.Contains("Shift+Enter"))).IsTrue();
         await Assert.That(lines.Any(l => l.Contains("check spelling"))).IsTrue();
         await Assert.That(lines.Any(l => l.Contains("dictionary") && l.Contains("en_US"))).IsTrue();
-    }
-
-    [Test]
-    public async Task Logging_ReflectsPassedSettings()
-    {
-        var logging = new LoggingSettings { Format = LogFormat.Html, Directory = "/var/log/mu" };
-        var lines = OptionsScreenRenderer.Logging(logging);
-        await Assert.That(lines.Any(l => l.Contains("format") && l.Contains("Html"))).IsTrue();
-        await Assert.That(lines.Any(l => l.Contains("directory") && l.Contains("/var/log/mu"))).IsTrue();
-        await Assert.That(lines.Any(l => l.Contains("auto-start on connect") && l.Contains("[[x]]"))).IsTrue();
-    }
-
-    [Test]
-    public async Task Logging_NoneFormat_AutoStartUnchecked_AndUsesDefaultDirectoryText()
-    {
-        var logging = new LoggingSettings { Format = LogFormat.None, Directory = null };
-        var lines = OptionsScreenRenderer.Logging(logging);
-        await Assert.That(lines.Any(l => l.Contains("directory") && l.Contains("(default)"))).IsTrue();
-        var autoStart = lines.Single(l => l.Contains("auto-start on connect"));
-        await Assert.That(autoStart).Contains("[[ ]]");
     }
 }

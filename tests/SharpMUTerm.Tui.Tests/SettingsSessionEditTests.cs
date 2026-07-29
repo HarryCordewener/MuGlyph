@@ -361,6 +361,87 @@ public class SettingsSessionEditTests
         await Assert.That(world.Host).IsEqualTo("example.net");
     }
 
+    /// <summary>
+    /// The security pane is reachable with the key the header advertises, and Space presses it — a pane
+    /// ⇥ could not get to would be two checkboxes nobody can use. It is the last pane, so ⇥ walks
+    /// worlds → characters → trigger sets → security, and Shift+⇥ comes straight back.
+    /// </summary>
+    [Test]
+    public async Task TabReachesTheWorldsSecurityCheckboxes_AndSpacePressesThem()
+    {
+        var world = new WorldDefinition
+        {
+            Name = "Aardwolf",
+            Host = "aardmud.org",
+            Characters = new List<CharacterDefinition> { new() { Name = "Kaz", TriggerSets = { "Comms" } } },
+        };
+        var worlds = new List<WorldDefinition> { world };
+        var sets = new List<TriggerSet> { new() { Name = "Comms" } };
+        var session = new SettingsSession(selection => WorldsScreenRenderer.Model(
+            worlds,
+            sets,
+            selection.SelectionIn(WorldsScreenRenderer.WorldsPane),
+            selection.SelectionIn(WorldsScreenRenderer.CharactersPane)));
+
+        for (var hop = 0; hop < 3; hop++)
+        {
+            await Assert.That(session.Handle(Key(ConsoleKey.Tab))).IsEqualTo(ScreenAction.Redraw);
+        }
+
+        await Assert.That(session.Selection.Pane).IsEqualTo(WorldsScreenRenderer.SecurityPane);
+
+        await Assert.That(session.Handle(Key(ConsoleKey.Spacebar))).IsEqualTo(ScreenAction.Redraw);
+        await Assert.That(world.UseTls).IsTrue();
+
+        session.Handle(Key(ConsoleKey.DownArrow));
+        session.Handle(Key(ConsoleKey.Spacebar));
+        await Assert.That(world.AllowInvalidCertificates).IsTrue();
+
+        // Esc is the screen's cancel, and it must take a security change with it.
+        await Assert.That(session.Handle(Key(ConsoleKey.Escape))).IsEqualTo(ScreenAction.Cancel);
+        session.Edits.Revert();
+        await Assert.That(world.UseTls).IsFalse();
+        await Assert.That(world.AllowInvalidCertificates).IsFalse();
+    }
+
+    /// <summary>
+    /// The character row's fields, in the order ⇥ steps through them: the log values are appended after
+    /// the two that were there, so the ordinals the screens and their tests already address are
+    /// untouched, and ⏎ still opens the name.
+    /// </summary>
+    [Test]
+    public async Task TheCharacterRowStepsFromItsNameThroughToItsLog()
+    {
+        var character = new CharacterDefinition { Name = "Kaz", OnConnect = "look" };
+        var worlds = new List<WorldDefinition>
+        {
+            new()
+            {
+                Name = "Aardwolf",
+                Host = "aardmud.org",
+                Characters = new List<CharacterDefinition> { character },
+            },
+        };
+        var session = new SettingsSession(selection => WorldsScreenRenderer.Model(
+            worlds,
+            Array.Empty<TriggerSet>(),
+            selection.SelectionIn(WorldsScreenRenderer.WorldsPane),
+            selection.SelectionIn(WorldsScreenRenderer.CharactersPane)));
+
+        session.Handle(Key(ConsoleKey.Tab));
+        session.Handle(Key(ConsoleKey.Enter));
+        await Assert.That(session.Focus().Edit!.Value.Field).IsEqualTo(WorldsScreenRenderer.CharacterNameField);
+
+        session.Handle(Key(ConsoleKey.Tab));
+        session.Handle(Key(ConsoleKey.Tab));
+        await Assert.That(session.Focus().Edit!.Value.Field).IsEqualTo(WorldsScreenRenderer.LogFormatField);
+
+        // ↑↓ cycle an enum, which is what makes the log format usable without typing it.
+        session.Handle(Key(ConsoleKey.DownArrow));
+        session.Handle(Key(ConsoleKey.Enter));
+        await Assert.That(character.Logging.Format).IsNotEqualTo(LogFormat.None);
+    }
+
     [Test]
     public async Task EditingATriggersPatternRecompilesItsMatcher()
     {

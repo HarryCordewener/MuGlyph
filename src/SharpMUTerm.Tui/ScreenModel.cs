@@ -3,9 +3,8 @@ namespace SharpMUTerm.Tui;
 /// <summary>
 /// A checkbox row on a settings screen, bound to the config it shows: how to read the flag, how to
 /// flip it, and how to put back exactly what was there before. The snapshot exists because not every
-/// checkbox is a plain <c>bool</c> property — F9's "auto-start on connect" is really a
-/// <see cref="SharpMUTerm.Core.Configuration.LogFormat"/>, and Esc has to restore <c>Html</c>, not
-/// merely "on".
+/// checkbox is a plain <c>bool</c> property — F5's trigger-set assignment is really a position in a
+/// list, and Esc has to restore that whole list, not merely "assigned".
 /// </summary>
 /// <param name="Get">Reads the flag as the renderer draws it.</param>
 /// <param name="Flip">Inverts the flag.</param>

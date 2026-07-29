@@ -422,7 +422,7 @@ internal readonly record struct ScreenField(
             ScreenColours.Palette);
     }
 
-    /// <summary>An enum value, typed or cycled by name — F9's log format is the canonical case.</summary>
+    /// <summary>An enum value, typed or cycled by name — a character's log format is the canonical case.</summary>
     internal static ScreenField Enumeration<TEnum>(string label, Func<TEnum> get, Action<TEnum> set)
         where TEnum : struct, Enum
     {

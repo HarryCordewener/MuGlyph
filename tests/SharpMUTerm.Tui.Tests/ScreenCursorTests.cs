@@ -174,7 +174,7 @@ public class ScreenCursorTests
         await Assert.That(TimersScreenRenderer.HeaderLine(0)).Contains(ScreenChrome.ListHints);
         await Assert.That(WorldsScreenRenderer.HeaderLine(0)).Contains(ScreenChrome.ListHints);
         await Assert.That(KeypadScreenRenderer.HeaderLine(0)).Contains(ScreenChrome.SingleListHints);
-        await Assert.That(OptionsScreenRenderer.HeaderLine("Logging", "F9", 0))
+        await Assert.That(OptionsScreenRenderer.HeaderLine("Input & spellcheck", "F8", 0))
             .Contains(ScreenChrome.SingleListHints);
 
         // A header handed no model describes a screen that only navigates, so it may not claim ⏎
@@ -186,13 +186,36 @@ public class ScreenCursorTests
             TimersScreenRenderer.HeaderLine(0),
             WorldsScreenRenderer.HeaderLine(0),
             KeypadScreenRenderer.HeaderLine(0),
-            OptionsScreenRenderer.HeaderLine("Logging", "F9", 0),
+            OptionsScreenRenderer.HeaderLine("Input & spellcheck", "F8", 0),
         })
         {
             await Assert.That(header).DoesNotContain("⏎ edit");
             await Assert.That(header).DoesNotContain("⏎ rebind");
             await Assert.That(header).DoesNotContain("⏎ change");
         }
+    }
+
+    /// <summary>
+    /// F5 has two doors — F5 itself and F9, which opens it on the character whose log used to live on a
+    /// screen of its own — and the header names the one that was used. A header that always said
+    /// <c>F5</c> would be naming a key that, pressed there, re-opens the screen instead of closing it.
+    /// </summary>
+    [Test]
+    public async Task HeaderHints_NameTheKeyTheScreenWasOpenedWith()
+    {
+        var model = WorldsScreenRenderer.Model(
+            new List<WorldDefinition> { new() { Name = "Aardwolf", Host = "aardmud.org" } },
+            Sets(),
+            0,
+            -1);
+
+        var f5 = WorldsScreenRenderer.HeaderLine(80, model);
+        var f9 = WorldsScreenRenderer.HeaderLine(80, model, null, WorldsScreenRenderer.LogFKey);
+
+        await Assert.That(f5).Contains("F5");
+        await Assert.That(f5).DoesNotContain("F9");
+        await Assert.That(f9).Contains("F9");
+        await Assert.That(f9).DoesNotContain("F5");
     }
 
     /// <summary>
@@ -250,7 +273,7 @@ public class ScreenCursorTests
         {
             new() { Name = "Aardwolf", Host = "aardmud.org", Characters = new List<CharacterDefinition> { new() } },
         };
-        var logging = OptionsScreenRenderer.LoggingScreen(new LoggingSettings());
+        var options = OptionsScreenRenderer.InputSpellcheckScreen();
 
         return new List<(string, ScreenModel)>
         {
@@ -262,8 +285,8 @@ public class ScreenCursorTests
                 WorldsScreenRenderer.Model(worlds, sets, 0, 0),
                 m => WorldsScreenRenderer.HeaderLine(0, m)),
             Pair(
-                OptionsScreenRenderer.Model(logging),
-                m => OptionsScreenRenderer.HeaderLine(logging.Title, logging.FKey, 0, m)),
+                OptionsScreenRenderer.Model(options),
+                m => OptionsScreenRenderer.HeaderLine(options.Title, options.FKey, 0, m)),
         };
     }
 

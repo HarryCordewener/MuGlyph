@@ -5,13 +5,19 @@ using static SharpMUTerm.Tui.ScreenPalette;
 namespace SharpMUTerm.Tui;
 
 /// <summary>
-/// Produces the markup sub-blocks shared by the F7 (Text &amp; ANSI), F8 (Input &amp; spellcheck), and
-/// F9 (Logging) screens — the header band, the options list (toggle/value rows grouped under dim
-/// section headers), and the footer action bar. The three screens differ only in their title, F-key,
-/// and rows, so the blocks take an <see cref="OptionsScreen"/> rather than being written per screen.
+/// Produces the markup sub-blocks shared by the F7 (Text &amp; ANSI) and F8 (Input &amp; spellcheck)
+/// screens — the header band, the options list (toggle/value rows grouped under dim section headers),
+/// and the footer action bar. The two screens differ only in their title, F-key, and rows, so the
+/// blocks take an <see cref="OptionsScreen"/> rather than being written per screen.
 /// <see cref="OptionsScreenView"/> composes them into a real panel for the live/snapshot view;
 /// <see cref="Render(string, string, IReadOnlyList{OptionRow})"/> merges the same blocks into a single
 /// line list for the unit tests. Pure so every block is testable.
+/// <para>
+/// F9 was a third one, "Logging", and is gone: its rows edited one character's
+/// <see cref="LoggingSettings"/> — whichever was connected, or else the first configured — while
+/// presenting as a global preference. Logging now sits in the character's own form on F5, and F9 opens
+/// that screen there. See <see cref="WorldsScreenRenderer.FormColumn"/>.
+/// </para>
 /// </summary>
 internal static class OptionsScreenRenderer
 {
@@ -31,11 +37,10 @@ internal static class OptionsScreenRenderer
     /// config the value writes to, which is what makes a value row activatable with ⏎. A row with
     /// neither still takes the cursor but nothing happens there.
     /// <para>
-    /// A row carrying both is F9's log format: Space starts and stops logging, ⏎ picks the format it
-    /// writes. They were two rows — a <c>format</c> value and an <c>auto-start on connect</c> checkbox
-    /// whose state was simply <c>format != None</c> — which is two controls over one stored value, and
-    /// nothing on screen said they were the same setting. The keypad's bindings are the same shape
-    /// (Space enables the macro, ⏎ edits its command), so <see cref="ScreenRow"/> already supports it.
+    /// Carrying both is supported and currently unused: F9's log format was the case that needed it
+    /// (Space started and stopped logging, ⏎ picked the format), and that row now lives on F5 where its
+    /// character is. F4's bindings are the same shape one layer down — Space enables the macro, ⏎ edits
+    /// its command — so <see cref="ScreenRow"/> keeps the capability whether or not this screen uses it.
     /// </para>
     /// </summary>
     public readonly record struct OptionRow(
@@ -74,9 +79,9 @@ internal static class OptionsScreenRenderer
     /// here, so the header cannot advertise an edit the screen doesn't offer; called without them it
     /// describes a screen that only navigates.
     /// <para>
-    /// There is deliberately no <c>‹ back</c> affordance. These three screens were the only ones that
-    /// drew one, and it pointed nowhere: there is no navigation stack behind a settings screen, Esc
-    /// closes it, and the header already says so two columns to the right.
+    /// There is deliberately no <c>‹ back</c> affordance. These screens were the only ones that drew
+    /// one, and it pointed nowhere: there is no navigation stack behind a settings screen, Esc closes
+    /// it, and the header already says so two columns to the right.
     /// </para>
     /// </summary>
     internal static string HeaderLine(
@@ -191,7 +196,7 @@ internal static class OptionsScreenRenderer
     /// <summary>
     /// One row: its checkbox column (a box, or the blank that keeps the labels in one column), its
     /// label, the value it holds if it holds one, and its hint. A row can carry both a checkbox and a
-    /// value, which is how F9 draws one setting as one row.
+    /// value, which is the shape F4's bindings use one layer down.
     /// </summary>
     private static string RenderRow(OptionRow row, ScreenFieldEdit? edit)
     {
@@ -296,52 +301,9 @@ internal static class OptionsScreenRenderer
         });
     }
 
-    /// <summary>
-    /// The F9 "Logging" screen, reflecting a character's <see cref="LoggingSettings"/>. Its two rows
-    /// are its two settings: the log format — whose checkbox starts and stops logging, because
-    /// <see cref="LogFormat.None"/> *is* "off" — and where the file goes.
-    /// <para>
-    /// The format and the auto-start checkbox used to be separate rows over the same stored value, and
-    /// nothing said so: setting the format to <c>None</c> silently unchecked a box three lines down.
-    /// One row, one value, two keys — Space for on/off, ⏎ for which format — leaves nothing derived to
-    /// keep in sync.
-    /// </para>
-    /// </summary>
-    internal static OptionsScreen LoggingScreen(LoggingSettings logging)
-    {
-        ArgumentNullException.ThrowIfNull(logging);
-
-        // Off means None, on means whatever format was last chosen (Plain when there isn't one). The
-        // binding's snapshot restores the *format*, not the boolean, so cancelling a toggle-off puts
-        // Html back rather than downgrading it to Plain.
-        var chosen = logging.Format == LogFormat.None ? LogFormat.Plain : logging.Format;
-        var autoStart = new ScreenToggle(
-            () => logging.Format != LogFormat.None,
-            () => logging.Format = logging.Format == LogFormat.None ? chosen : LogFormat.None,
-            () =>
-            {
-                var previous = logging.Format;
-                return () => logging.Format = previous;
-            });
-
-        return new OptionsScreen("Logging", "F9", new List<OptionRow>
-        {
-            new("├ SESSION LOG", null, null),
-            new("format", logging.Format.ToString(), logging.Format != LogFormat.None,
-                "auto-start on connect",
-                autoStart,
-                ScreenField.Enumeration("format", () => logging.Format, v => logging.Format = v)),
-            new("directory", logging.Directory ?? "(default)", null, null, null,
-                ScreenField.Optional("directory", () => logging.Directory, v => logging.Directory = v)),
-        });
-    }
-
     /// <summary>The F7 "Text &amp; ANSI" screen body.</summary>
     public static List<string> TextAnsi() => Render(TextAnsiScreen());
 
     /// <summary>The F8 "Input &amp; spellcheck" screen body.</summary>
     public static List<string> InputSpellcheck() => Render(InputSpellcheckScreen());
-
-    /// <summary>The F9 "Logging" screen body, reflecting a character's <see cref="LoggingSettings"/>.</summary>
-    public static List<string> Logging(LoggingSettings logging) => Render(LoggingScreen(logging));
 }
