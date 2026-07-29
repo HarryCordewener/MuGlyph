@@ -61,6 +61,19 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private readonly Dictionary<string, int> _freezePoints = new(StringComparer.Ordinal);
     private readonly HashSet<string> _connectedKeys = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// The output window each open session prints into. This is the session ↔ pane link NAWS resolves
+    /// through: a session's pane is whichever pane hosts this window, so a split changes what the
+    /// session's server should be told without the terminal changing size at all. Written by
+    /// <see cref="AttachSession"/> from <see cref="BindSession"/> — the one place that decides where a
+    /// session's lines land — so the size we report and the text we print can never disagree about
+    /// which window a session owns.
+    /// </summary>
+    private readonly Dictionary<WorldSession, string> _sessionWindows = new();
+
+    /// <summary>The size each session was last told over NAWS, so an unchanged one isn't re-announced.</summary>
+    private readonly Dictionary<WorldSession, (int Width, int Height)> _reportedSizes = new();
+
     private readonly ConsoleWindowSystem _system;
     private readonly Window _window;
     private readonly MarkupControl _header;
@@ -252,7 +265,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
         _window.OnResize += (_, _) =>
         {
-            ReportWindowSize();
+            // NAWS is deliberately not reported from here. At this moment the panes still carry the
+            // *old* window's arranged rectangles — the new ones don't exist until the next frame is
+            // laid out — so a report made here would announce a size that was already wrong. The
+            // repaint this resize forces reports them once they are real; see ReportPaneSizes.
             _header.SetContent(new List<string> { HeaderMarkup() }); // re-align the status cluster to the new width
             SyncInputWidth(); // keep the input band spanning the full row after a resize
             SyncInputBars();  // and re-derive how tall the bars may grow in the new window
@@ -269,6 +285,16 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // was ever recorded, and every tab switch recalled the empty string it had stored.
         _window.FocusControl(_input);
         _window.PreviewKeyPressed += OnWindowKey;
+
+        // NAWS rides the frame. Pane rectangles exist only while an arranged layout does, and every
+        // layout change (a resize, a split, a closed tab, a zoom, a window moved between panes) tears
+        // the pane area down and rebuilds it — so inside RebuildPaneArea, where the change is made,
+        // there is nothing to measure yet. PostBufferPaint is raised after the arrange pass, which
+        // makes it the first moment the new layout can be read, and every one of those changes
+        // repaints. One hook therefore covers the lot, and none of them can be forgotten later.
+        // (The event's adder is a silent no-op while a window has no renderer; this one has had one
+        // since its constructor ran, and NawsPaneReportTests fails loudly if that ever stops holding.)
+        _window.PostBufferPaint += (_, _, _) => ReportPaneSizes();
         // Pane drag-and-drop listens at the driver, not at a control: SharpConsoleUI delivers mouse
         // frames to the control that was pressed (it captures on Button1Pressed), so a control-level
         // handler would only ever see the *source* pane. The driver stream carries every frame in
@@ -484,6 +510,23 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
+    /// Renders one more frame, the way a test drives the client on past a change it has just made —
+    /// a split, a resize, a session that has only now connected. It marks the window dirty first
+    /// because <c>RenderCoordinator.RenderWindows</c> skips any window with no pending work, so a
+    /// second <see cref="RenderFrame"/> on an untouched window would arrange nothing and paint
+    /// nothing, and the layout a test is waiting to read would never be built.
+    /// <para>
+    /// It exists for <see cref="ReportPaneSizes"/>, which rides the paint: NAWS is announced from the
+    /// frame that realises a layout, so proving it is announced means driving a real frame.
+    /// </para>
+    /// </summary>
+    internal void RenderNextFrame()
+    {
+        _system.ForceFullRepaint();
+        RenderFrame();
+    }
+
+    /// <summary>
     /// Drives a genuine pane drag through the headless driver for the <c>drag</c> snapshot: primary
     /// button down on the first pane's tab strip, then a drag frame over the second pane's left edge.
     /// The button is deliberately left down so the frame captures the live drop preview. Requires a
@@ -643,7 +686,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         try
         {
             await session.ConnectAsync().ConfigureAwait(false);
-            ReportWindowSize();
+
+            // A freshly connected session has never been told anything, and there is no guarantee of
+            // another frame soon enough to matter — so announce now, on the UI thread, where the pane
+            // geometry and the report bookkeeping live.
+            OnUiThread(ReportPaneSizes);
         }
         catch
         {
@@ -729,19 +776,25 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
     private void BindSession(WorldSession session)
     {
+        // The window this session's output lands in. It is a local rather than the constant used four
+        // times over because the routing and the NAWS registry have to name the same window: report a
+        // pane the session doesn't print into and the server is told the size of something else.
+        var windowId = MainWindowId;
+
         _active = session;
-        if (_workspace.FindWindow(MainWindowId) is { } mainWindow)
+        AttachSession(session, windowId);
+        if (_workspace.FindWindow(windowId) is { } mainWindow)
         {
             mainWindow.Title = session.World.Name;
         }
 
-        var main = _panes[MainWindowId];
+        var main = _panes[windowId];
         foreach (var line in session.Scrollback.Snapshot())
         {
             main.AppendLine(_formatter.ToMarkup(line));
         }
 
-        session.LinePrinted += (_, line) => OnUi(() => OnLine(MainWindowId, line));
+        session.LinePrinted += (_, line) => OnUi(() => OnLine(windowId, line));
         session.PromptChanged += (_, _) => OnUi(UpdateStatus);
         session.StateChanged += (_, _) => OnUi(UpdateStatus);
         session.GmcpReceived += (_, e) => OnUi(() =>
@@ -754,6 +807,25 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         session.SpawnLine += (_, e) => OnUi(() => OnSpawnLine(e.Target, e.Line));
         RefreshTabTitles();
         UpdateStatus();
+    }
+
+    /// <summary>
+    /// Registers the window a session's output lands in, which is what
+    /// <see cref="ReportPaneSizes"/> resolves that session's pane — and so its NAWS size — through.
+    /// Re-registering a session forgets the size it was told, because the window it is being pointed
+    /// at is a different rectangle until proven otherwise.
+    /// <para>
+    /// Internal as well as called from <see cref="BindSession"/>: it is the seam the NAWS tests attach
+    /// a session over a fake telnet transport with, there being no other way to have two connected
+    /// worlds in a headless frame.
+    /// </para>
+    /// </summary>
+    internal void AttachSession(WorldSession session, string windowId)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrEmpty(windowId);
+        _sessionWindows[session] = windowId;
+        _reportedSizes.Remove(session);
     }
 
     /// <summary>The optional output-view timestamp gutter, or null when the column is off. Headless
@@ -3099,25 +3171,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     internal PaneDragSurface PaneSnapshot()
     {
-        var origin = ContentOrigin();
         var rects = new Dictionary<string, PaneRect>(StringComparer.Ordinal);
         var windows = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        KeyValuePair<string, TabControl>[] realised;
-        lock (_paneTabsLock)
+        foreach (var (paneId, _, rect) in RealisedPanes())
         {
-            realised = _paneTabs.ToArray();
-        }
-
-        foreach (var (paneId, tabs) in realised)
-        {
-            if (_window.GetLayoutNode(tabs) is not { } node)
-            {
-                continue;
-            }
-
-            var bounds = node.AbsoluteBounds;
-            rects[paneId] = new PaneRect(origin.X + bounds.X, origin.Y + bounds.Y, bounds.Width, bounds.Height);
+            rects[paneId] = rect;
 
             if (_workspace.Layout.FindPane(paneId)?.ActiveTab is { } windowId)
             {
@@ -3126,6 +3185,65 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         return new PaneDragSurface(rects, windows);
+    }
+
+    /// <summary>
+    /// Every pane that currently has an arranged tab control, with its whole rectangle in desktop
+    /// cells — tab strip included. A layout node exists only while the arranged layout does, so a pane
+    /// rebuilt since the last frame is simply absent (see <see cref="RebuildPaneArea"/>).
+    /// </summary>
+    private List<(string PaneId, TabControl Tabs, PaneRect Rect)> RealisedPanes()
+    {
+        var origin = ContentOrigin();
+
+        KeyValuePair<string, TabControl>[] realised;
+        lock (_paneTabsLock)
+        {
+            realised = _paneTabs.ToArray();
+        }
+
+        var panes = new List<(string, TabControl, PaneRect)>(realised.Length);
+        foreach (var (paneId, tabs) in realised)
+        {
+            if (_window.GetLayoutNode(tabs) is not { } node)
+            {
+                continue;
+            }
+
+            var bounds = node.AbsoluteBounds;
+            panes.Add((paneId, tabs, new PaneRect(origin.X + bounds.X, origin.Y + bounds.Y, bounds.Width, bounds.Height)));
+        }
+
+        return panes;
+    }
+
+    /// <summary>
+    /// Each realised pane's <em>output</em> rectangle: the pane less its tab strip and the tab
+    /// control's own margins — the cells a window's text is actually arranged into, which is what a
+    /// server needs for NAWS. The arithmetic mirrors the framework's
+    /// <c>TabLayout.ArrangeChildren</c> and reads the strip's depth off the live control
+    /// (<see cref="TabControl.TabHeaderHeight"/>: one row for the classic header, two for the
+    /// separator styles) rather than assuming a row.
+    /// <para>
+    /// Internal because the NAWS tests read it back beside <see cref="PaneSnapshot"/> — the pair is
+    /// the claim that the reported rows exclude the chrome.
+    /// </para>
+    /// </summary>
+    internal IReadOnlyDictionary<string, PaneRect> PaneOutputRects()
+    {
+        var rects = new Dictionary<string, PaneRect>(StringComparer.Ordinal);
+        foreach (var (paneId, tabs, rect) in RealisedPanes())
+        {
+            var margin = tabs.Margin;
+            var top = margin.Top + tabs.TabHeaderHeight;
+            rects[paneId] = new PaneRect(
+                rect.X + margin.Left,
+                rect.Y + top,
+                Math.Max(0, rect.Width - margin.Left - margin.Right),
+                Math.Max(0, rect.Height - top - margin.Bottom));
+        }
+
+        return rects;
     }
 
     /// <summary>
@@ -3405,17 +3523,89 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         UpdateInputChrome();
     }
 
-    private void ReportWindowSize()
+    /// <summary>
+    /// Tells every connected session, over NAWS, how big its own output area is — the pane its window
+    /// lives in, less that pane's tab strip. Not the terminal: this client is built around splits, so
+    /// a world sharing the screen with another has perhaps half the columns the window has, and a
+    /// server told the window's width wraps to a width that does not exist. Nor only the focused
+    /// world: a session nobody is looking at is still receiving text, and a size it was told once and
+    /// never again is wrong from the first split onwards.
+    /// <para>
+    /// A window that is not its pane's visible tab is still reported, at its pane's size. It is the
+    /// size that window will be shown at the moment its tab is picked, and the lines arriving into its
+    /// buffer meanwhile are wrapped by the server at whatever it was last told — so the choice is
+    /// between the size the text will be read at and a stale one. Reporting nothing is the same stale
+    /// answer with less code.
+    /// </para>
+    /// <para>
+    /// A session is told only when the answer has changed since the last thing we told it. That is
+    /// not debouncing — nothing is delayed or merged, and every change is announced on the very next
+    /// frame — it is what stops a per-frame hook re-announcing an unchanged size sixty times a second.
+    /// A session that disconnects forgets what it was told, so a reconnect (which resets the server's
+    /// idea of NAWS along with everything else) announces again.
+    /// </para>
+    /// </summary>
+    private void ReportPaneSizes()
     {
-        var session = _active;
-        if (session is null || !session.IsConnected)
+        if (_sessionWindows.Count == 0)
         {
             return;
         }
 
-        // Advertise the terminal size to the server over NAWS whenever the window resizes so wrapping
-        // stays correct. The compositor already redraws the UI itself on a size shift.
-        _ = session.SetWindowSizeAsync(Math.Max(1, _window.Width), Math.Max(1, _window.Height));
+        var rects = PaneOutputRects();
+
+        // Enumerated in place: this runs on the UI thread, which is also the only thread that
+        // registers a session (see AttachSession), and nothing in the loop registers one. The
+        // dictionary being written to inside it is the other one.
+        foreach (var (session, windowId) in _sessionWindows)
+        {
+            if (!session.IsConnected)
+            {
+                _reportedSizes.Remove(session);
+                continue;
+            }
+
+            // FindWindow resolves the pane hosting the window whether or not it is the visible tab.
+            if (_workspace.Layout.FindWindow(windowId) is not { } pane ||
+                !rects.TryGetValue(pane.Id, out var rect) ||
+                rect.IsEmpty)
+            {
+                continue;
+            }
+
+            var size = (Width: Math.Max(1, rect.Width), Height: Math.Max(1, rect.Height));
+            if (_reportedSizes.TryGetValue(session, out var last) && last == size)
+            {
+                continue;
+            }
+
+            _reportedSizes[session] = size;
+            _ = AnnounceWindowSizeAsync(session, size.Width, size.Height);
+        }
+    }
+
+    /// <summary>
+    /// Sends one session's NAWS report. The callers cannot await it — a paint callback and a connect
+    /// continuation — but the failure is not swallowed the way the old fire-and-forget was: a write
+    /// that throws says so in that world's own output, and the cached size is dropped so the next
+    /// frame tries again rather than believing the server knows a size it was never sent.
+    /// </summary>
+    private async Task AnnounceWindowSizeAsync(WorldSession session, int width, int height)
+    {
+        try
+        {
+            await session.SetWindowSizeAsync(width, height).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Deliberately broad: this task is nobody's to observe, so anything escaping it would be
+            // an unobserved exception at a finalizer instead of a line the user can read.
+            OnUiThread(() =>
+            {
+                _reportedSizes.Remove(session);
+                session.PrintSystem($"*** Could not report the window size: {ex.Message}");
+            });
+        }
     }
 
     private void SetStatus(string markup) => _statusBar.SetContent(new List<string> { markup });

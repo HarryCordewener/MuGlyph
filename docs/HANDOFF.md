@@ -4,8 +4,8 @@ Context for whoever (human or agent) picks up this work next.
 
 - **Repository:** `SharpMUSH/SharpMUTerm`
 - **Start from:** a fresh branch off `main`
-- **Tests:** 1129 across the solution (414 Core / 83 Graphics / 42 Scripting /
-  28 Web / 562 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
+- **Tests:** 1251 across the solution (416 Core / 83 Graphics / 42 Scripting /
+  30 Web / 680 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
   from this repo; building against a local SharpConsoleUI clone surfaces 2 upstream
   NuGet advisory warnings for AngleSharp, which are the framework's, not ours)
 
@@ -384,6 +384,38 @@ What the framework actually provides (read at v2.5.14, not assumed):
   (an explicit target column/row count), in the same family as the missing Sixel back-end
   above. `/graphics` now prints the cell box next to the pixel buffer for every image in
   the web view, so the gap is visible without a graphics terminal.
+
+### NAWS is per pane, and it rides the frame
+
+- **A world is told its own pane, not the window.** `SharpMUTermApp.ReportPaneSizes` walks every
+  session, resolves the pane hosting the window that session prints into, and reports that pane's
+  **output** rectangle — `PaneOutputRects()`, which is the pane less its tab strip (read off the
+  live control's `TabHeaderHeight`, 1 for the classic header and 2 for the separator styles) and
+  less the tab control's margins. On a 120×32 terminal with one vertical split that is **46×26 per
+  world**; the old code told both servers 120×32, so they wrapped to a width that existed nowhere
+  on screen.
+- **The session ↔ window link is `_sessionWindows`**, written by `AttachSession` from
+  `BindSession` — the same place that decides where a session's `LinePrinted` lines go, so the
+  rectangle we report and the window we print into cannot drift apart. (`WorkspaceWindow.SessionKey`
+  looks like the link and is not: the main window is created before any session exists and carries a
+  null key.)
+- **It is reported from `PostBufferPaint`, not from `RebuildPaneArea`.** Pane rectangles only exist
+  while an arranged layout does, and every layout change tears the pane area down — so *inside* the
+  rebuild there is nothing to measure, and `PaneSnapshot()`/`PaneOutputRects()` come back empty. The
+  post-paint hook is the first moment the new layout can be read, and every resize, split, close,
+  zoom and move repaints, so one hook covers all of them. For the same reason `OnResize` deliberately
+  does **not** report: at that moment the panes still hold the old window's rectangles.
+- **A session is told only when the answer changed.** That is not debouncing (nothing is delayed or
+  merged, and a change is announced on the very next frame) — it is what keeps a per-frame hook from
+  re-sending an unchanged size sixty times a second. A session that disconnects forgets what it was
+  told, so a reconnect announces again.
+- **A hidden tab is still reported**, at its pane's size: that is the size it will be shown at, and
+  the alternative is the stale size that was the bug.
+- **`ForceRender()` on a clean window paints nothing** — `RenderCoordinator.RenderWindows` skips any
+  window whose `PendingWork` is `None`. A headless test that renders a second frame to see a change
+  therefore has to dirty the window first, which is what `SharpMUTermApp.RenderNextFrame()` is for
+  (`ForceFullRepaint()` then render). Without it the second frame arranges nothing and every
+  assertion reads the first frame's geometry.
 
 ### SharpConsoleUI tabs
 
