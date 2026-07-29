@@ -314,6 +314,37 @@ Things that will waste your time if you don't know them.
   that and got away with it until the catalog grew tall enough to push its bottom
   border off-screen.
 
+- **Vertical space at the window root is *sticky first, Fill last*** — read at v2.5.14 in
+  `Layout/WindowContentLayout.cs`, because "the workspace is greedy and starves the input
+  bars" is a plausible-sounding diagnosis that this layout cannot produce. `MeasureChildren`
+  makes three bands: sticky-top, sticky-bottom, and flow. Sticky children of both bands are
+  measured **first**, each with `constraints.SubtractHeight(runningTotalOfItsOwnBand)`, and
+  are then trusted for whatever they returned. Flow children with no `Height` and
+  `VerticalAlignment.Fill` (or any `IScrollableContainer`) are *flex*: they are measured last,
+  with `MaxHeight = (windowRows − stickyTop − stickyBottom − fixedFlowRows) / flexChildCount`,
+  and arranged at that share (remainder rows go to the earliest ones). So:
+  - Our `_header` is `StickyTop`, the two `InputBarControl`s and `_statusBar` are
+    `StickyBottom` (`SetUpBar` sets `StickyPosition.Bottom`), and only `_workspaceRow` is
+    Fill. The bars therefore get their `MeasureDOM` height **before** the workspace is
+    measured at all, and the workspace gets what is left — the bars cannot be squeezed by
+    workspace content, however tall that content wants to be.
+  - There is **no minimum-height concept** at the window root. `IWindowControl` has `Height`
+    (an *explicit, tight* height, synced onto the node every frame) but no `MinHeight`;
+    `ILayoutAware`/`LayoutRequirements` is dead code in the DOM path, and
+    `IFillReportsMinimumHeight` is honoured only by `ScrollLayout`, never by
+    `WindowContentLayout`. A Fill child *can* be arranged at zero rows — a flow control never
+    starves a sticky one, but sticky rows starve the flow area.
+  - **Nothing checks that the two sticky bands fit.** Their budgets do not subtract each
+    other, so in a very small terminal (80×6: a header and a status line that each wrap to two
+    rows) the bands over-commit, the flow area collapses to zero and the status line is
+    arranged below the last screen row. `SyncInputBars` is what keeps that from happening —
+    its veto now counts the chrome rows (`InputLayout.Room`/`WrappedRows`), not just the
+    window height.
+  - Assert this with **arranged bounds**, not with arithmetic: `InputAreaLayoutTests` reads
+    `ActualHeight` off each control after a real frame and then counts the rows the frame
+    actually paints in each bar's band colour. `InputLayout`'s unit tests all pass whatever the
+    window then does with the number the bar asked for.
+
 ### SharpConsoleUI inline graphics
 
 What the framework actually provides (read at v2.5.14, not assumed):

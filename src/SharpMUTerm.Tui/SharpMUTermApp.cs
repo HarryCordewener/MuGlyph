@@ -974,8 +974,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
         // The configured heights are what the bars want; the window gets a veto. Two bars each grown to
         // eight lines is most of a 24-row terminal, and an input area that leaves no output above it is
-        // not an input area — so the bars share a quarter of the window each, floor of one.
-        var room = Math.Max(1, HeaderHeight() / (shown ? 4 : 2));
+        // not an input area — so the bars share a quarter of the window each, floor of one. The share is
+        // taken from what the chrome leaves rather than from the whole window: the framework reserves
+        // every sticky row before the workspace is measured at all, and it does not check that the two
+        // sticky bands fit, so rows promised to the header and the status line and then spent on a bar
+        // come out of the output area (see InputLayout.Room).
+        var room = InputLayout.Room(HeaderHeight(), ChromeRows(), shown ? 2 : 1);
         foreach (var bar in new[] { _input, _second })
         {
             bar.MinRows = Math.Min(_config.Input.Rows, room);
@@ -991,6 +995,16 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // A hidden bar cannot be the one ⏎ sends from; hand it back rather than leave it off screen.
         ArmBar(!shown && ReferenceEquals(_armed, _second) ? _input : _armed);
     }
+
+    /// <summary>
+    /// How many rows the header and the status line take between them — the chrome the input area has to
+    /// leave alone. Both are single lines of markup that the window wraps, and both are ours, so the
+    /// count is arithmetic on the text rather than a reading of the last frame: the veto has to be right
+    /// on the first frame too, and nothing has been arranged yet when the window is built.
+    /// </summary>
+    private int ChromeRows() =>
+        InputLayout.WrappedRows(MarkupWidth(_header.Text), HeaderWidth())
+        + InputLayout.WrappedRows(MarkupWidth(_statusBar.Text), HeaderWidth());
 
     /// <summary>
     /// The input area following a change of visible window: the second bar's visibility, both drafts,
@@ -2625,6 +2639,23 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
     /// <summary>How many rows tall the primary command line currently is.</summary>
     internal int PrimaryInputRows => _input.Rows();
+
+    /// <summary>
+    /// What the last frame actually gave each band of the window: the header, the workspace, each
+    /// command line, and the status line, as the framework arranged them. Deliberately read from the
+    /// arranged bounds rather than from <see cref="InputBarControl.Rows"/> — a bar asking for three
+    /// rows and a window handing it none agree on the arithmetic and disagree on the screen, and only
+    /// these numbers can tell the two apart. Zero until a frame has been rendered.
+    /// </summary>
+    internal (int Header, int Workspace, int Primary, int Second, int Status) LaidOutRows => (
+        _header.ActualHeight,
+        _workspaceRow.ActualHeight,
+        _input.ActualHeight,
+        _second.Visible ? _second.ActualHeight : 0,
+        _statusBar.ActualHeight);
+
+    /// <summary>The two band colours a command line paints itself in — armed, and the one ⏎ ignores.</summary>
+    internal (Color Armed, Color Idle) InputBandColors => (_input.BandColor, _input.IdleBandColor);
 
     /// <summary>
     /// Hands a key to the armed command line and reports whether it took it. Focus is put back on that
