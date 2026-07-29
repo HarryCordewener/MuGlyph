@@ -47,7 +47,8 @@ fallbacks) for inline images/maps.
 - **Scripting** — sandboxed MoonSharp `ScriptHost` (world/output/trigger/alias/timer/gmcp/log).
 - **Tui** — **SharpConsoleUI** app: a `TabControl` of output windows (main + trigger-routed **spawn
   windows** + web view, with unread badges), each a `MarkupControl` fed StyledLine → Spectre-style
-  markup via `MarkupFormatter` (clickable `[link=…]` MXP/Pueblo/web spans); a `PromptControl` input,
+  markup via `MarkupFormatter` (clickable `[link=…]` MXP/Pueblo/web spans); an `InputBarControl`
+  command line (wrapping, auto-growing, per-window drafts, plus an optional per-window second bar),
   status line, `Ctrl+Q` quit, NAWS-on-resize. The tab/pane set is driven by the tested `Core.Workspaces`
   model, with **splits** (thin single-line dividers) and the **connection rail** now rendered as well.
 

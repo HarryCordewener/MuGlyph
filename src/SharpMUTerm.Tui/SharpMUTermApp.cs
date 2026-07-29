@@ -44,8 +44,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private readonly Workspace _workspace;
     private readonly Dictionary<string, MarkupControl> _panes = new(StringComparer.Ordinal);
     private readonly DraftStore _drafts;
+    private readonly InputBarVisibility _secondBars;
     private readonly InputHistory _history = new();
-    private bool _suppressInputChanged;
+
+    /// <summary>
+    /// The second bar's own recall list. The bars exist to keep two lines apart (an IC one and an OOC
+    /// one), and a shared history would put the other bar's sends under ↑ on both — which is the same
+    /// mixing the second bar was added to stop.
+    /// </summary>
+    private readonly InputHistory _secondHistory = new();
 
     // Per-window markup line buffer (the scrollback source of truth) and, per frozen pane, the buffer
     // length of its active window at the moment it froze — the split point between pinned scrollback and
@@ -68,7 +75,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// while a rebuild clears and refills it would throw.
     /// </summary>
     private readonly object _paneTabsLock = new();
-    private readonly PromptControl _input;
+
+    /// <summary>
+    /// The two command lines. <see cref="_input"/> is the one every window has; <see cref="_second"/>
+    /// is shown per window and sends to the same place — the point is two persistent drafts, not two
+    /// destinations. <see cref="_armed"/> is the one ⏎ sends from, and is what the caret sits on.
+    /// </summary>
+    private readonly InputBarControl _input = new();
+    private readonly InputBarControl _second = new();
+    private InputBarControl _armed;
     private readonly GmcpStats _stats = new();
     private readonly SharpMUTerm.Web.WebPageFetcher _fetcher = new();
     private readonly WebImageLoader _imageLoader = new();
@@ -130,6 +145,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private Edge? _moveEdge;
     private readonly Dictionary<string, char> _moveLetters = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// The chords the app claims globally, by the action each runs. It is the same delegate
+    /// <c>RegisterGlobalShortcut</c> was handed, kept so <see cref="SimulateKey"/> can run the shortcuts
+    /// in the order the framework does — a headless test never enters <c>Run()</c>, where that ordering
+    /// otherwise lives.
+    /// </summary>
+    private readonly Dictionary<(ConsoleModifiers Modifiers, ConsoleKey Key), Func<bool>> _shortcuts = new();
+
     /// <summary>Assembles pane drag-and-drop out of the driver's raw mouse frames (see PaneDragTracker).</summary>
     private readonly PaneDragTracker _paneDrag = new();
 
@@ -151,6 +174,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _theme = ResolveTheme(config);
         _formatter = new MarkupFormatter(_theme, config.Text);
         _drafts = new DraftStore(() => config.Input.KeepDrafts);
+        _secondBars = new InputBarVisibility(() => config.Input.SecondBar);
+        _armed = _input;
 
         // Resume the last session's workspace (panes/windows/focus) when the config carries one;
         // otherwise start with a single main window. Real startup and the demo share this path.
@@ -191,21 +216,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // from the model and rebuilt whenever the layout changes; the initial row goes into the window.
         _workspaceRow = BuildWorkspaceRow();
 
-        // The input row reads as one solid full-width band: the PromptControl fills the field area to
-        // the right edge with InputBackgroundColor on its own, and we paint the prompt cells with the
-        // same colour (via PromptMarkup) so the label at the left carries the band too — no gap.
-        var inputBg = ToColor(new Rgb(0x33, 0x39, 0x4c));
-
-        // Draft-safe history is ours (InputHistory), not the framework's: ↑ stashes the live draft,
-        // ↓ past the newest entry restores it. So the built-in recall is off.
-        _input = Controls.Prompt(PromptMarkup("›"))
-            .WithHistory(false)
-            .WithInputBackgroundColor(inputBg)
-            .WithInputFocusedBackgroundColor(inputBg)
-            .StickyBottom()
-            .Build();
-        _input.Entered += (_, text) => OnCommandEntered(text);
-        _input.InputChanged += (_, text) => OnInputChanged(text);
+        // The input area is one or two bars pinned above the status line. Each paints its own full-width
+        // band (see InputBarControl), so the row reads as solid from the prompt to the right edge with
+        // no gap where a label ends. Draft-safe history is ours (InputHistory) and per bar.
+        SetUpBar(_input, InputBar.Primary);
+        SetUpBar(_second, InputBar.Secondary);
+        _second.Visible = false;
 
         _statusBar = Controls.Markup("[dim]not connected[/]").StickyBottom().Build();
 
@@ -227,6 +243,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             .AddControl(_header)
             .AddControl(_workspaceRow)
             .AddControl(_input)
+            .AddControl(_second)
             .AddControl(_statusBar)
             .Build();
 
@@ -238,11 +255,19 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             ReportWindowSize();
             _header.SetContent(new List<string> { HeaderMarkup() }); // re-align the status cluster to the new width
             SyncInputWidth(); // keep the input band spanning the full row after a resize
+            SyncInputBars();  // and re-derive how tall the bars may grow in the new window
         };
 
-        // The PromptControl otherwise measures to its content width, leaving the band short of the right
-        // edge; pinning Width to the window makes the field fill (and its background paint) run edge-to-edge.
+        // Pinning each bar's Width to the window makes its band paint edge to edge; without it a bar
+        // measures to its content and the row stops mid-screen.
         SyncInputWidth();
+        SyncInputBars();
+
+        // The command line starts with the keyboard. It is the whole reason the per-window drafts read
+        // as broken: SharpConsoleUI focuses nothing on its own, the app never asked, and so every plain
+        // keystroke went to a control that had no use for it — no typing reached the prompt, no draft
+        // was ever recorded, and every tab switch recalled the empty string it had stored.
+        _window.FocusControl(_input);
         _window.PreviewKeyPressed += OnWindowKey;
         // Pane drag-and-drop listens at the driver, not at a control: SharpConsoleUI delivers mouse
         // frames to the control that was pressed (it captures on Button1Pressed), so a control-level
@@ -372,7 +397,27 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _history.Add("say Well met, traveller.");
             if (_history.Recall("wh") is { } recalled)
             {
-                ApplyRecalledText(recalled);
+                _input.Text = recalled;
+                UpdateInputChrome();
+            }
+        }
+
+        // The command line carrying a real draft: one long enough to wrap, so the frame shows the bar
+        // grown past its floor instead of a single row scrolled sideways. `draft2` additionally raises
+        // this window's second bar and puts an OOC line in it, with ⏎ armed on the second — the pair of
+        // states no amount of staring at the default frame would show.
+        if (string.Equals(view, "draft", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(view, "draft2", StringComparison.OrdinalIgnoreCase))
+        {
+            _input.SetAndNotify(
+                "pose walks slowly across the plaza, pausing at the fountain to trail a hand through the "
+                + "cold water, then turns north toward the gate where the courier is catching breath.");
+
+            if (string.Equals(view, "draft2", StringComparison.OrdinalIgnoreCase))
+            {
+                ToggleSecondBar();
+                _second.SetAndNotify("ooc back in five — kettle");
+                ArmBar(_second);
             }
         }
 
@@ -541,7 +586,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _statusIdentity = ("Corvid", "aetherfall.mux", 4201, "connected");
         _statusBar.SetContent(new List<string> { StatusBarMarkup("Corvid", "aetherfall.mux", 4201, "connected") });
         _header.SetContent(new List<string> { HeaderMarkup() });
-        _input.Input = "say hello there";
+        _input.SetAndNotify("say hello there");
         RebuildPaneArea(); // realise the Chat spawn tab, then refresh badges
     }
 
@@ -787,15 +832,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
     }
 
-    private void OnCommandEntered(string command)
+    private void OnCommandEntered(InputBar bar, string command)
     {
-        // The entered command clears this window's draft and its unsent-input marker, and joins
-        // the draft-safe history so ↑/↓ can recall it without clobbering a future draft.
-        _history.Add(command);
+        // The entered command clears this window's draft for the bar it came from and its unsent-input
+        // marker, and joins that bar's draft-safe history so ↑/↓ can recall it without clobbering a
+        // future draft. The bar has already emptied itself — ⏎ never moves the caret off it.
+        HistoryFor(bar).Add(command);
         var windowId = ActiveWindowId();
-        _drafts.Clear(windowId);
-        _workspace.SetUnsentInput(windowId, false);
-        _input.Input = string.Empty;
+        _drafts.Clear(windowId, bar);
+        _workspace.SetUnsentInput(windowId, AnyBarHasText());
         RefreshTabTitles();
 
         // `/web <url>` opens the in-TUI web view; everything else goes to the world.
@@ -827,27 +872,21 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>Tracks the per-window input draft and the <c>✎</c> unsent-input marker as you type.</summary>
-    private void OnInputChanged(string text)
+    private void OnInputChanged(InputBar bar, string text)
     {
-        // Programmatic recall (setting _input.Input) also raises InputChanged; skip our draft/history
-        // bookkeeping for it. A genuine keystroke while recalling re-bases the recalled line as the draft.
-        if (_suppressInputChanged)
+        // A recall sets the bar's text without raising this, so a recalled draft is not re-recorded and
+        // the history cursor survives. A genuine keystroke while recalling re-bases the recalled line.
+        if (HistoryFor(bar).IsRecalling)
         {
-            return;
-        }
-
-        if (_history.IsRecalling)
-        {
-            _history.Rebase();
-            UpdateInputChrome();
+            HistoryFor(bar).Rebase();
         }
 
         var windowId = ActiveWindowId();
 
         // The store decides whether to keep it — that is where F8's "keep per-tab drafts" lives.
-        _drafts.Record(windowId, text);
+        _drafts.Record(windowId, bar, text);
 
-        _workspace.SetUnsentInput(windowId, !string.IsNullOrEmpty(text));
+        _workspace.SetUnsentInput(windowId, AnyBarHasText());
         RefreshTabTitles();
         UpdateInputChrome();
     }
@@ -855,31 +894,163 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>The window id of the visible tab (the input line belongs to it).</summary>
     private string ActiveWindowId() => _workspace.Layout.FocusedPane.ActiveTab ?? MainWindowId;
 
+    /// <summary>The bar ⏎ currently sends from — the armed one, and the only one with a caret.</summary>
+    private InputBarControl ActiveBar() => _armed;
+
+    /// <summary>Which of the two a bar is, for the draft store and the history lists.</summary>
+    private InputBar BarKind(InputBarControl bar) =>
+        ReferenceEquals(bar, _second) ? InputBar.Secondary : InputBar.Primary;
+
+    /// <summary>The recall list belonging to a bar. Each keeps its own; see <see cref="_secondHistory"/>.</summary>
+    private InputHistory HistoryFor(InputBar bar) => bar == InputBar.Secondary ? _secondHistory : _history;
+
+    /// <summary>Whether either bar is holding unsent text — what the <c>✎</c> tab marker means.</summary>
+    private bool AnyBarHasText() =>
+        !_input.Buffer.IsEmpty || (_second.Visible && !_second.Buffer.IsEmpty);
+
     /// <summary>
-    /// Handles ↑/↓ as draft-safe history recall on a single-line input. Multi-line drafts keep the
-    /// arrows for cursor movement, and ↓ at the live draft is left to the control. Returns whether the
-    /// key was consumed.
+    /// Wires one bar: its send, its draft recording, and the two ways the caret can move to it. Both
+    /// bars are built the same way and differ only in which draft and which history they carry, which
+    /// is the point — the second bar sends to the same window, it just holds a different line.
+    /// </summary>
+    private void SetUpBar(InputBarControl bar, InputBar kind)
+    {
+        bar.StickyPosition = StickyPosition.Bottom;
+        bar.HorizontalAlignment = HorizontalAlignment.Stretch;
+        bar.BandColor = ToColor(new Rgb(0x33, 0x39, 0x4c));
+        bar.IdleBandColor = ToColor(new Rgb(0x26, 0x2b, 0x3a));
+        bar.TextColor = ToColor(_theme.Resolve(TerminalColor.Default, isBackground: false));
+        bar.HasSibling = () => _second.Visible;
+        bar.Entered += text => OnCommandEntered(kind, text);
+        bar.Changed += text => OnInputChanged(kind, text);
+        bar.ActivationRequested += ArmBar;
+        bar.CycleRequested += () => ArmBar(ReferenceEquals(bar, _input) ? _second : _input);
+    }
+
+    /// <summary>
+    /// Makes one bar the one ⏎ sends from: it lights up, takes the caret and the keyboard focus, and
+    /// the other dims. Nothing else in the app decides this, so "which bar is armed" and "where the
+    /// caret is" cannot disagree.
+    /// </summary>
+    private void ArmBar(InputBarControl bar)
+    {
+        if (!bar.Visible)
+        {
+            return;
+        }
+
+        _armed = bar;
+        _input.Armed = ReferenceEquals(_armed, _input);
+        _second.Armed = ReferenceEquals(_armed, _second);
+        _window.FocusControl(_armed);
+        UpdateInputChrome();
+    }
+
+    /// <summary>
+    /// Shows or hides the active window's second command line (⌃B i, or the ⌃P surface). The answer is
+    /// per window, so the bar follows the tab you are on; hiding the armed bar hands ⏎ back to the
+    /// primary rather than leaving it pointed at something off screen.
+    /// </summary>
+    private void ToggleSecondBar()
+    {
+        _secondBars.Toggle(ActiveWindowId());
+        SyncInputBars();
+    }
+
+    /// <summary>
+    /// Brings the input area in line with the active window and the current preferences: whether the
+    /// second bar is up, and how tall the bars may grow. Called when the second bar is toggled, on every
+    /// resize, and on every settings save, so F8's numbers take effect without a restart.
+    /// <para>
+    /// It deliberately leaves the text alone. Recalling here would empty both bars whenever
+    /// <c>keep per-tab drafts</c> is off — the store hands back nothing in that mode by design — so
+    /// raising the second bar, or saving a settings screen, would throw away the line being typed.
+    /// The drafts are put back by <see cref="ChangeWindow"/>, which is where the window changed.
+    /// </para>
+    /// </summary>
+    private void SyncInputBars()
+    {
+        var shown = _secondBars.IsShown(ActiveWindowId());
+
+        // The configured heights are what the bars want; the window gets a veto. Two bars each grown to
+        // eight lines is most of a 24-row terminal, and an input area that leaves no output above it is
+        // not an input area — so the bars share a quarter of the window each, floor of one.
+        var room = Math.Max(1, HeaderHeight() / (shown ? 4 : 2));
+        foreach (var bar in new[] { _input, _second })
+        {
+            bar.MinRows = Math.Min(_config.Input.Rows, room);
+            bar.MaxRows = Math.Min(_config.Input.MaxRows, room);
+        }
+
+        if (_second.Visible != shown)
+        {
+            _second.Visible = shown;
+            _window.ForceRebuildLayout();
+        }
+
+        // A hidden bar cannot be the one ⏎ sends from; hand it back rather than leave it off screen.
+        ArmBar(!shown && ReferenceEquals(_armed, _second) ? _input : _armed);
+    }
+
+    /// <summary>
+    /// The input area following a change of visible window: the second bar's visibility, both drafts,
+    /// and both history cursors are the new window's. This is the only path that replaces the text.
+    /// </summary>
+    private void ChangeWindow()
+    {
+        SyncInputBars();
+        RecallDrafts(ActiveWindowId());
+    }
+
+    /// <summary>
+    /// Puts a window's stored drafts back into both bars. Assigning <c>Text</c> is deliberately not a
+    /// keystroke: it raises no change event, so recalling a draft neither re-records it nor resets the
+    /// unsent-input marker of the window being left.
+    /// </summary>
+    private void RecallDrafts(string windowId)
+    {
+        _history.ResetCursor();
+        _secondHistory.ResetCursor();
+        _input.Text = _drafts.Recall(windowId, InputBar.Primary);
+        _second.Text = _drafts.Recall(windowId, InputBar.Secondary);
+    }
+
+    /// <summary>
+    /// Handles ↑/↓ as draft-safe history recall. A command line tall enough to have another row keeps
+    /// the arrows for the caret — recall only happens where the caret has nowhere further to go, which
+    /// is the single-row case it has always been plus the top and bottom of a grown one.
     /// </summary>
     private bool TryRecallKey(KeyPressedEventArgs e)
     {
-        if (_input.Input.Contains('\n'))
-        {
-            return false;
-        }
+        var bar = ActiveBar();
+        var kind = BarKind(bar);
+        var history = HistoryFor(kind);
 
         string? text;
         switch (e.KeyInfo.Key)
         {
             case ConsoleKey.UpArrow:
-                text = _history.Recall(_input.Input);
+                if (bar.TryMoveRow(-1))
+                {
+                    e.Handled = true;
+                    return true;
+                }
+
+                text = history.Recall(bar.Text);
                 break;
             case ConsoleKey.DownArrow:
-                if (!_history.IsRecalling)
+                if (bar.TryMoveRow(1))
+                {
+                    e.Handled = true;
+                    return true;
+                }
+
+                if (!history.IsRecalling)
                 {
                     return false;
                 }
 
-                text = _history.Forward();
+                text = history.Forward();
                 break;
             default:
                 return false;
@@ -888,61 +1059,72 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         e.Handled = true;
         if (text is not null)
         {
-            ApplyRecalledText(text);
+            bar.Text = text;
+            _drafts.Record(ActiveWindowId(), kind, text);
+            UpdateInputChrome();
         }
 
         return true;
     }
 
-    /// <summary>Puts a recalled entry into the input without tripping draft/history bookkeeping.</summary>
-    private void ApplyRecalledText(string text)
-    {
-        _suppressInputChanged = true;
-        try
-        {
-            _input.Input = text;
-        }
-        finally
-        {
-            _suppressInputChanged = false;
-        }
-
-        UpdateInputChrome();
-    }
-
     /// <summary>
-    /// Refreshes the input region: the character-bound prompt (<c>Corvid@Aetherfall ›</c>) and the
-    /// status bar (which carries the live character count now that the gutter is gone).
+    /// Refreshes the input region: each bar's character-bound prompt (<c>Corvid@Aetherfall ›</c>) and
+    /// the status bar (which carries the live character count now that the gutter is gone). The armed
+    /// bar's prompt is the bright one and ends in <c>›</c>; the other is dimmed and ends in <c>·</c>,
+    /// so which line ⏎ will send is readable without hunting for the caret.
     /// </summary>
     private void UpdateInputChrome()
     {
         var session = _active;
         var character = session?.Character?.Name ?? (ActiveWorld() is { } aw ? aw.Character : null);
         var world = session?.World.Name ?? ActiveWorld()?.World.Name;
-        _input.Prompt = PromptMarkup(StatusFormatter.CharacterPrompt(character, world));
+        var label = StatusFormatter.CharacterPrompt(character, world);
+        _input.Prompt = PromptMarkup(label, _input.Armed);
+        _second.Prompt = PromptMarkup(SecondPromptLabel(label), _second.Armed);
         RefreshStatusBar();
     }
 
     /// <summary>
-    /// The input band's background hex — shared by the field fill (<c>WithInputBackgroundColor</c>) and
-    /// the prompt cells (<see cref="PromptMarkup"/>) so the input row reads as one solid full-width band.
-    /// Keep in sync with the <c>inputBg</c> RGB in the constructor.
+    /// The second bar's label: the same character prompt with its trailing <c>›</c> replaced by a
+    /// second-line marker, so the two bars read as one identity on two lines rather than as two
+    /// connections.
+    /// </summary>
+    private static string SecondPromptLabel(string label) =>
+        label.EndsWith("› ", StringComparison.Ordinal) ? label[..^2] + "» " : label;
+
+    /// <summary>
+    /// The input band's background hex — shared by the bar's own fill (<see cref="InputBarControl"/>)
+    /// and the prompt cells (<see cref="PromptMarkup"/>) so the input row reads as one solid full-width
+    /// band. Keep in sync with the <c>BandColor</c> RGB in <see cref="SetUpBar"/>.
     /// </summary>
     private const string InputBandHex = "#33394c";
 
-    /// <summary>
-    /// Wraps the prompt label so its cells carry the band background. The PromptControl already fills
-    /// the field to the right edge with the same colour, so painting the label to match makes the whole
-    /// row a continuous band with no gap at the prompt. Brackets in names are escaped to block injection.
-    /// </summary>
-    private static string PromptMarkup(string prompt) =>
-        $"[on {InputBandHex}]{prompt.Replace("[", "[[").Replace("]", "]]")}[/]";
+    /// <summary>The band behind the bar ⏎ will not send from. Keep in sync with <c>IdleBandColor</c>.</summary>
+    private const string IdleBandHex = "#262b3a";
 
     /// <summary>
-    /// Pins the input control's width to the window so the field (and its background fill) runs to the
-    /// right edge — otherwise the PromptControl measures to content width and the band stops mid-row.
+    /// Wraps a prompt label so its cells carry the band background and its brightness says whether this
+    /// is the bar ⏎ sends from. The bar already fills its row with the same colour, so painting the
+    /// label to match makes the whole row a continuous band with no gap at the prompt. Brackets in names
+    /// are escaped to block injection.
     /// </summary>
-    private void SyncInputWidth() => _input.Width = HeaderWidth();
+    private static string PromptMarkup(string prompt, bool armed = true)
+    {
+        var text = prompt.Replace("[", "[[").Replace("]", "]]");
+        return armed
+            ? $"[on {InputBandHex}]{text}[/]"
+            : $"[dim on {IdleBandHex}]{text}[/]";
+    }
+
+    /// <summary>
+    /// Pins each bar's width to the window so its band (and the wrap width derived from it) runs to the
+    /// right edge — otherwise a bar measures to its content and the row stops mid-screen.
+    /// </summary>
+    private void SyncInputWidth()
+    {
+        _input.Width = HeaderWidth();
+        _second.Width = HeaderWidth();
+    }
 
     /// <summary>The active connection's status-bar identity (character/host/port/state), or null.</summary>
     private (string Character, string Host, int Port, string State)? _statusIdentity;
@@ -1027,6 +1209,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 ?? throw new InvalidOperationException(
                     $"MacroKeys.AppShortcuts claims {claim.Modifiers}+{claim.Key} but nothing runs on it");
             _system.RegisterGlobalShortcut(claim.Modifiers, claim.Key, action);
+            _shortcuts[(claim.Modifiers, claim.Key)] = action;
         }
 
         foreach (var key in screens.Keys)
@@ -1084,6 +1267,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private void SaveConfiguration()
     {
+        // F8 edits the live InputSettings, so a saved height applies to the bars on the way out of the
+        // screen rather than at the next launch.
+        SyncInputBars();
+
         try
         {
             _config.LastSession = CaptureSession();
@@ -1566,7 +1753,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             LoggingOn: false,
             Zoomed: _workspace.Layout.ZoomedPaneId is not null,
             Frozen: _workspace.Layout.FocusedPane.Frozen,
-            TimestampsOn: _showTimestamps);
+            TimestampsOn: _showTimestamps,
+            SecondInputOn: _secondBars.IsShown(ActiveWindowId()));
         return CommandCatalog.Build(
             _workspace, BuildCharacterRefs(), _active?.SessionKey, context, SettingsCommands());
     }
@@ -1634,6 +1822,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             case "term:freeze":
             case "term:unfreeze":
                 ToggleFreeze();
+                return;
+            case "term:input2-on":
+            case "term:input2-off":
+                ToggleSecondBar();
                 return;
             case "term:clear":
                 if (_panes.TryGetValue(ActiveWindowId(), out var pane))
@@ -1709,7 +1901,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
         else if (url.StartsWith(MarkupFormatter.PromptScheme, StringComparison.Ordinal))
         {
-            _input.Input = Uri.UnescapeDataString(url[MarkupFormatter.PromptScheme.Length..]);
+            ActiveBar().SetAndNotify(Uri.UnescapeDataString(url[MarkupFormatter.PromptScheme.Length..]));
         }
         else
         {
@@ -1720,22 +1912,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private void OnTabChanged(string paneId, TabPage? newTab)
     {
         _workspace.Layout.Focus(paneId);
-        // A tab switch resets the history cursor (hIdx → -1) so recall restarts against this tab's draft.
-        _history.ResetCursor();
         if (newTab?.Tag is string id)
         {
             _workspace.ActivateWindow(id);
-            // Restore this window's saved input draft into the shared prompt (not a keystroke: no rebase).
-            _suppressInputChanged = true;
-            try
-            {
-                _input.Input = _drafts.Recall(id);
-            }
-            finally
-            {
-                _suppressInputChanged = false;
-            }
 
+            // Both drafts, the second bar's own visibility, and the history cursors all belong to the
+            // window now showing — the input area follows the tab.
+            ChangeWindow();
             RefreshTabTitles();
             UpdateInputChrome();
         }
@@ -2408,7 +2591,55 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <c>Run()</c>, which a headless test never enters — and it goes <em>through</em>
     /// <see cref="HandleWindowKey"/> rather than around it, so what it proves is what a keystroke does.
     /// </summary>
-    internal string? SimulateKey(ConsoleKeyInfo key) => HandleWindowKey(new KeyPressedEventArgs(key, false));
+    internal string? SimulateKey(ConsoleKeyInfo key)
+    {
+        // The framework runs a global shortcut before the window sees the key at all, so the harness
+        // does too — otherwise a test pressing ⌃B would find it typed into the command line, which is
+        // the opposite of what the running app does with it.
+        if (_shortcuts.TryGetValue((key.Modifiers, key.Key), out var shortcut))
+        {
+            shortcut();
+            return null;
+        }
+
+        return HandleWindowKey(new KeyPressedEventArgs(key, false));
+    }
+
+    /// <summary>Switches the visible window the way the tab strip does, so the tab-changed path runs.</summary>
+    internal void SimulateWindowChange(string windowId) => Activate(windowId);
+
+    /// <summary>What the command line ⏎ sends from is holding — the armed bar's text.</summary>
+    internal string ArmedInputText => ActiveBar().Text;
+
+    /// <summary>What each bar is holding, whichever is armed.</summary>
+    internal string PrimaryInputText => _input.Text;
+
+    /// <summary>What the second bar is holding, whether or not it is on screen.</summary>
+    internal string SecondaryInputText => _second.Text;
+
+    /// <summary>Whether the active window is showing its second command line.</summary>
+    internal bool SecondBarShown => _second.Visible;
+
+    /// <summary>Whether ⏎ would send from the second bar rather than the first.</summary>
+    internal bool SecondBarArmed => ReferenceEquals(_armed, _second);
+
+    /// <summary>How many rows tall the primary command line currently is.</summary>
+    internal int PrimaryInputRows => _input.Rows();
+
+    /// <summary>
+    /// Hands a key to the armed command line and reports whether it took it. Focus is put back on that
+    /// bar first: it is where the caret belongs, and where the framework delivers a paste.
+    /// </summary>
+    private bool RouteToInput(ConsoleKeyInfo key)
+    {
+        var bar = ActiveBar();
+        if (!bar.HasFocus)
+        {
+            _window.FocusControl(bar);
+        }
+
+        return bar.ProcessKey(key);
+    }
 
     /// <summary>
     /// Arms the ⌃B prefix and then feeds one key, as pressing the chord and the key would. The arming
@@ -2466,7 +2697,22 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             }
 
             // Draft-safe history recall on ↑/↓ — our own, so a half-typed draft survives (see InputHistory).
-            TryRecallKey(e);
+            // It asks the command line first, so the arrows only recall where the caret cannot move.
+            if (TryRecallKey(e))
+            {
+                return null;
+            }
+
+            // Everything else that is typing goes to the command line, focused or not. This is the app's
+            // focus policy, not the framework's: SharpConsoleUI routes a key to whichever control holds
+            // focus, and a client whose typing lands in a tab strip because the last click did is not one
+            // anybody wants. Routing here also keeps the keyboard focus on the bar, so paste (which the
+            // window sends to the focused IPasteTarget) and the terminal caret follow the same rule.
+            if (RouteToInput(e.KeyInfo))
+            {
+                e.Handled = true;
+            }
+
             return null;
         }
 
@@ -2567,6 +2813,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
             case 'm':
                 EnterMoveMode();
+                break;
+
+            case 'i':
+                ToggleSecondBar();
                 break;
 
             default:
@@ -2981,23 +3231,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         _workspace.Layout.CycleFocus();
-        if (FocusedTabs() is { } tabs)
-        {
-            _window.FocusControl(tabs);
-        }
 
-        // The input line follows focus: reset the history cursor and restore the window's draft.
-        _history.ResetCursor();
-        _suppressInputChanged = true;
-        try
-        {
-            _input.Input = _drafts.Recall(ActiveWindowId());
-        }
-        finally
-        {
-            _suppressInputChanged = false;
-        }
-
+        // The input area follows pane focus the same way it follows a tab change: both drafts, the
+        // second bar's visibility, and the history cursors are the newly focused window's. The keyboard
+        // stays on the command line rather than moving to the pane — typing belongs to the input.
+        ChangeWindow();
         RefreshTabTitles();
         UpdateInputChrome();
     }
@@ -3082,7 +3320,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         _panes.Remove(id);
-        _drafts.Clear(id);
+        _drafts.Forget(id);        // both bars: a closed window keeps neither of its two drafts
+        _secondBars.Forget(id);    // and a same-id window later starts from F8's default again
         _lines.Remove(id);         // don't resurrect old scrollback if a same-id spawn reopens
         _freezePoints.Remove(id);
         _workspace.CloseWindow(id);
@@ -3222,7 +3461,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // (see PrefixKey) and the strip says so rather than leaving the guess to be discovered.
         if (_prefixArmed)
         {
-            return $"{leftBar}  [#e5c07b]⌃B — awaiting[/]  [dim]| - z o x b m < > ← →[/]";
+            return $"{leftBar}  [#e5c07b]⌃B — awaiting[/]  [dim]| - z o x b m i < > ← →[/]";
         }
 
         var connected = _connectedKeys.Count;
@@ -3240,6 +3479,9 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
     /// <summary>The header width to lay out against — the live window width, or a sane default early on.</summary>
     private int HeaderWidth() => _window is { Width: > 0 } ? _window.Width : 160;
+
+    /// <summary>The window's height in rows, or a sensible one before it has been laid out.</summary>
+    private int HeaderHeight() => _window is { Height: > 0 } ? _window.Height : 48;
 
     /// <summary>Formats an <see cref="Rgb"/> as <c>#rrggbb</c> markup.</summary>
     private static string Hex(Rgb rgb) => $"#{rgb.R:x2}{rgb.G:x2}{rgb.B:x2}";
@@ -3265,10 +3507,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         right.Add($"[dim]{Escape($"{host}:{port}")}  {Escape(encoding)}[/]");
 
         // The character count lives at the bottom now (the input gutter is gone); while recalling
-        // history it becomes the "back to draft" hint instead.
-        right.Add(_history.IsRecalling
+        // history it becomes the "back to draft" hint instead. Both read the armed bar, so a count that
+        // moves is always the line ⏎ would send.
+        right.Add(HistoryFor(BarKind(ActiveBar())).IsRecalling
             ? $"[{AccentHex(AccentPalette[0])}]history[/] [dim]· ↓ back to draft[/]"
-            : $"[dim]{_input.Input.Length} chars[/]");
+            : $"[dim]{ActiveBar().Text.Length} chars[/]");
 
         right.Add("[dim]⌃P palette[/]");
         var rightBar = string.Join("   ", right);

@@ -6,7 +6,20 @@ namespace SharpMUTerm.Core.Commands;
 public sealed record CharacterRef(string WorldName, string CharacterName, string SessionKey, bool Connected);
 
 /// <summary>Live flags the catalog reads so stateful commands show their current value.</summary>
-public sealed record CommandContext(bool LoggingOn = false, bool Zoomed = false, bool Frozen = false, bool TimestampsOn = false);
+/// <param name="LoggingOn">Whether the focused character is logging.</param>
+/// <param name="Zoomed">Whether a pane is zoomed.</param>
+/// <param name="Frozen">Whether the focused pane's scrollback is frozen.</param>
+/// <param name="TimestampsOn">Whether output lines carry timestamps.</param>
+/// <param name="SecondInputOn">
+/// Whether the active window is showing its second command line. Per window, not per app — the
+/// surface acts on the window you are in, the same way <c>Clear window</c> does.
+/// </param>
+public sealed record CommandContext(
+    bool LoggingOn = false,
+    bool Zoomed = false,
+    bool Frozen = false,
+    bool TimestampsOn = false,
+    bool SecondInputOn = false);
 
 /// <summary>
 /// A configuration screen the command surface can open: what it calls itself, the id the host
@@ -87,6 +100,11 @@ public static class CommandCatalog
         items.Add(context.TimestampsOn
             ? new CommandItem(CommandGroup.Terminal, "Hide timestamps", "term:timestamps-off")
             : new CommandItem(CommandGroup.Terminal, "Show timestamps", "term:timestamps-on"));
+        items.Add(context.SecondInputOn
+            ? new CommandItem(
+                CommandGroup.Terminal, "Hide second input", "term:input2-off", "this window · ⌃B i")
+            : new CommandItem(
+                CommandGroup.Terminal, "Show second input", "term:input2-on", "this window · ⌃B i"));
 
         // LAYOUT
         items.Add(new CommandItem(CommandGroup.Layout, "Split right", "layout:split-right"));

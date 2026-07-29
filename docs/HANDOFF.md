@@ -217,7 +217,10 @@ Things that will waste your time if you don't know them.
 - **Snapshot view names:** `worlds`/`settings`, `triggers`, `route`, `highlight`,
   `aliases`, `timers`,
   `keypad`, `set`, `textansi`, `input`, `logging`, `freeze`, `spawn`, `split`, `move`,
-  `drag`, `history`, `menu`, `menu-split`, `web`, plus the default (no `--view`) workspace.
+  `drag`, `history`, `draft`, `draft2`, `menu`, `menu-split`, `web`, plus the default
+  (no `--view`) workspace. (`input` is the **F8 settings screen**; `draft`/`draft2` are the
+  **command line** itself — a wrapped draft that has grown the bar, and the same with the
+  per-window second bar raised and ⏎ armed on it.)
   **`web`** renders a page whose `<img>` is a `data:` URI through the real
   render → fetch → decode → compose path, and honours the degradation chain: bare, it
   shows the `[image: …]` placeholder, and `SHARPMUTERM_GRAPHICS=halfblock` in the
@@ -279,11 +282,22 @@ Things that will waste your time if you don't know them.
   or go `.Frameless()` (no title bar, buttons, resize, or border — content fills
   the whole window rect). Get the usable size from
   `_system.DesktopDimensions` (`.Width`/`.Height`).
-- **`PromptControl` has no general `BackgroundColor`** — only
-  `WithInputBackgroundColor` / `WithInputFocusedBackgroundColor` (colors the typed
-  field). It measures to content width; pin `_input.Width` to fill the row. It
-  parses its prompt string as markup, so you can paint the prompt cells with a
-  background span to make a seamless band.
+- **`PromptControl` is not the command line any more** — `InputBarControl` is. The
+  framework's prompt is single-line by construction (`SetInput` replaces `\n` with a
+  space, it measures one row, it scrolls sideways), and it unfocuses itself on ⏎
+  (`UnfocusOnEnter`, default `true`, not settable through the builder). Ours is a
+  `BaseControl` subclass painting through `CharacterBuffer` + `MarkupParser`, with the
+  text edits in `InputBuffer` and the wrap/grow/scroll arithmetic in `InputLayout` so
+  both are testable without a terminal. It still measures to content width, so pin
+  `Width` to fill the row, and it still parses its prompt as markup so the label cells
+  carry the band.
+- **Nothing focuses a control for you.** SharpConsoleUI gives initial keyboard focus
+  to no one, and the framework routes a key to `FocusManager.FocusedControl` (and a
+  paste to it, if it is an `IPasteTarget`). That is how per-window drafts came to look
+  broken: typing reached no input at all, so nothing was ever recorded to hand back.
+  `SharpMUTermApp` now focuses the command line in its constructor **and** routes every
+  typing key to the armed bar from `PreviewKeyPressed`, so a click on a tab strip cannot
+  swallow what you type next.
 - **The desktop panels are off, in every driver.** `ConsoleWindowSystemOptions`
   defaults them on: a top bar with the assembly name + a clock, and a bottom bar
   whose `TaskBarElement` lists window titles trimmed to fifteen cells
@@ -735,8 +749,11 @@ categories, and where each control sits:
 - **Live — the next line/keystroke sees it.** F7's `strip incoming ANSI colour`,
   `emoji substitution` (`WorldSession.ProcessOutputLine`/`ApplyEmoji`),
   `allow blink`, `underline hyperlinks` (`MarkupFormatter.AppendSpan`/`StyleTag`);
-  F8's `local echo` (`WorldSession.SendUserInputAsync`) and `keep per-tab drafts`
-  (`DraftStore`); every **field** of an F2 trigger / F3 alias / F6 timer / F4 macro,
+  F8's `local echo` (`WorldSession.SendUserInputAsync`), `keep per-tab drafts`
+  (`DraftStore`), and `second bar on new windows` (`InputBarVisibility`, which reads the
+  predicate per call); F8's `height`/`grows to` are live on **Save**
+  (`SharpMUTermApp.SyncInputBars`, called from `SaveConfiguration`); every **field** of
+  an F2 trigger / F3 alias / F6 timer / F4 macro,
   because the engines hold the *same objects* the screens edit; F6's `enabled` and
   `command`, read inside the timer callback. **These are held by reference on
   purpose** — `WorldSession` and `MarkupFormatter` take `TextSettings`/`InputSettings`

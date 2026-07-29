@@ -1,3 +1,4 @@
+using System.Globalization;
 using SharpMUTerm.Core.Configuration;
 using static SharpMUTerm.Tui.MarkupText;
 using static SharpMUTerm.Tui.ScreenPalette;
@@ -276,10 +277,16 @@ internal static class OptionsScreenRenderer
     /// <para>
     /// It was "Input &amp; spellcheck" and had a SPELLCHECK section holding <c>check spelling</c> and
     /// <c>dictionary</c>. Both are gone: this client has no speller, so the checkbox promised a check
-    /// that never ran and the dictionary named a file nothing opened. <c>newline key</c> went with
-    /// them — the command line is a single-line <c>PromptControl</c>, so there is no chord that could
-    /// put a newline in it. The rule these follow is the one the header hints already follow: a screen
-    /// may not advertise a key, or a setting, that does nothing.
+    /// that never ran and the dictionary named a file nothing opened. The rule they broke is the one
+    /// the header hints already follow: a screen may not advertise a key, or a setting, that does
+    /// nothing.
+    /// </para>
+    /// <para>
+    /// There is still no <c>newline key</c> row, and now for the opposite reason to the one that took
+    /// it away. The command line wraps and grows, so a newline can be typed — but only on chords this
+    /// host delivers, and the interesting answers (Shift+⏎, Ctrl+⏎) are ones no Unix terminal reports
+    /// distinctly through SharpConsoleUI's parser. A field offering them would be the same empty
+    /// promise as the speller. The chord is fixed and named where the keys are named.
     /// </para>
     /// </summary>
     internal static OptionsScreen InputScreen(InputSettings? input = null)
@@ -293,6 +300,18 @@ internal static class OptionsScreenRenderer
                 ScreenToggle.Bind(() => settings.LocalEcho, v => settings.LocalEcho = v)),
             new("keep per-tab drafts", null, settings.KeepDrafts, null,
                 ScreenToggle.Bind(() => settings.KeepDrafts, v => settings.KeepDrafts = v)),
+            new(string.Empty, null, null),
+            new("├ COMMAND LINE", null, null),
+            new("height (lines)", settings.Rows.ToString(CultureInfo.InvariantCulture), null, null, null,
+                ScreenField.Integer(
+                    "height (lines)", () => settings.Rows, v => settings.Rows = v,
+                    InputSettings.MinRows, InputSettings.MaxRowCeiling)),
+            new("grows to (lines)", settings.MaxRows.ToString(CultureInfo.InvariantCulture), null, null, null,
+                ScreenField.Integer(
+                    "grows to (lines)", () => settings.MaxRows, v => settings.MaxRows = v,
+                    InputSettings.MinRows, InputSettings.MaxRowCeiling)),
+            new("second bar on new windows", null, settings.SecondBar, null,
+                ScreenToggle.Bind(() => settings.SecondBar, v => settings.SecondBar = v)),
         });
     }
 
