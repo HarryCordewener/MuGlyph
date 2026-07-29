@@ -5,18 +5,23 @@ namespace SharpMUTerm.Tui;
 /// <summary>
 /// Formats a window's tab-strip label from its <see cref="WorkspaceWindow"/> state: the title, an
 /// unread badge like <c>(3)</c> while the tab is in the background, a <c>✎</c> pen when it holds an
-/// unsent input draft, a <c>⌁</c> when the window belongs to a <em>different</em> character than the
-/// one currently focused, and a <c>✕</c> close affordance on the active tab only. Pure so it can be
-/// unit-tested without a terminal.
+/// unsent input draft, and a <c>⌁</c> when the window belongs to a <em>different</em> character than
+/// the one currently focused. Pure so it can be unit-tested without a terminal.
 /// </summary>
 /// <remarks>
-/// SharpConsoleUI renders tab titles as plain text, so the design's per-character accent <em>colour</em>
-/// dot can't ride on the label — the traceability signal that survives is the <c>⌁</c> cross-character
-/// marker, which this emits. Accent colour still shows in the rail and (for the focused pane) its border.
+/// <para>SharpConsoleUI renders tab titles as plain text, so the design's per-character accent
+/// <em>colour</em> dot can't ride on the label — the traceability signal that survives is the <c>⌁</c>
+/// cross-character marker, which this emits. Accent colour still shows in the rail and (for the focused
+/// pane) its border.</para>
+/// <para>The close affordance is deliberately <em>not</em> here. A <c>✕</c> written into the label is
+/// just text: the framework's tab hit test sees it as part of the title and a click on it merely
+/// selects the tab. The real close button is <c>TabPage.IsClosable</c>, which the framework draws
+/// itself and hit-tests into <c>TabControl.TabCloseRequested</c> — see
+/// <c>SharpMUTermApp.BuildPaneTabs</c>.</para>
 /// </remarks>
 internal static class TabTitles
 {
-    public static string For(WorkspaceWindow window, string? focusedCharacterKey = null, bool isActive = false)
+    public static string For(WorkspaceWindow window, string? focusedCharacterKey = null)
     {
         ArgumentNullException.ThrowIfNull(window);
 
@@ -38,7 +43,6 @@ internal static class TabTitles
             ? " ⌁"
             : string.Empty;
 
-        var close = isActive ? $" {Glyphs.Close}" : string.Empty;
-        return owner + window.Title + unread + pen + cross + close;
+        return owner + window.Title + unread + pen + cross;
     }
 }

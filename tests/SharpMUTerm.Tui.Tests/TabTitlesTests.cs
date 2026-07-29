@@ -41,10 +41,14 @@ public class TabTitlesTests
     }
 
     [Test]
-    public async Task ActiveTab_AppendsACloseAffordance()
+    public async Task TheLabelCarriesNoCloseAffordance()
     {
+        // The ✕ used to be appended here for the active tab, and that was the bug: a tab title is
+        // drawn as plain text, so the framework's hit test counts those cells as part of the title
+        // and a click on them only selects the tab. The close button is now the framework's own
+        // TabPage.IsClosable — pinned in PaneTabCloseTests, which drives a real click through it.
         var main = new Workspace(mainWindowId: "main", mainTitle: "Server").FindWindow("main")!;
-        await Assert.That(TabTitles.For(main, focusedCharacterKey: null, isActive: true)).IsEqualTo($"Server {Glyphs.Close}");
+        await Assert.That(TabTitles.For(main)).DoesNotContain(Glyphs.Close);
     }
 
     [Test]

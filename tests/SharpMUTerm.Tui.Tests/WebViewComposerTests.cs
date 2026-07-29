@@ -147,6 +147,67 @@ public class WebViewComposerTests
         await Assert.That(blocks.OfType<WebImageBlock>().Count()).IsEqualTo(2);
     }
 
+    // ---- Wrapped placeholders -----------------------------------------------------------------
+
+    [Test]
+    public async Task WrappedPlaceholder_IsConsumedInFull()
+    {
+        // A long alt wraps like any other text. Consuming only its first line used to leave the tail
+        // stranded under the picture — which reads exactly like an image that failed to load.
+        var blocks = WebViewComposer.Compose(
+            Lines("a", "[image: a very long", "description of it]", "b"),
+            new[] { new WebImage(1, "pic.png", "a very long description of it", "[image: …]", LineCount: 2) },
+            Boxes(0));
+
+        await Assert.That(blocks.Count).IsEqualTo(3);
+        await Assert.That(((WebTextBlock)blocks[0]).Lines).IsEquivalentTo(new[] { "a" });
+        await Assert.That(blocks[1]).IsTypeOf<WebImageBlock>();
+        await Assert.That(((WebTextBlock)blocks[2]).Lines).IsEquivalentTo(new[] { "b" });
+    }
+
+    [Test]
+    public async Task WrappedPlaceholderRunningPastTheEndOfThePage_IsClamped()
+    {
+        var blocks = WebViewComposer.Compose(
+            Lines("a", "[image: wrapped"),
+            new[] { new WebImage(1, "pic.png", "wrapped", "[image: …]", LineCount: 9) },
+            Boxes(0));
+
+        await Assert.That(blocks.Count).IsEqualTo(2);
+        await Assert.That(((WebTextBlock)blocks[0]).Lines).IsEquivalentTo(new[] { "a" });
+        await Assert.That(blocks[1]).IsTypeOf<WebImageBlock>();
+    }
+
+    [Test]
+    public async Task AnImageOverlappingAnothersWrappedPlaceholder_IsSkipped()
+    {
+        var blocks = WebViewComposer.Compose(
+            Lines("[image: one", "wrapped]", "tail"),
+            new[]
+            {
+                new WebImage(0, "a.png", "one wrapped", "[image: …]", LineCount: 2),
+                new WebImage(1, "b.png", "b", "[image: b]"),
+            },
+            Boxes(0, 1));
+
+        await Assert.That(blocks.OfType<WebImageBlock>().Count()).IsEqualTo(1);
+        await Assert.That(blocks.OfType<WebImageBlock>().Single().Image.Source).IsEqualTo("a.png");
+        await Assert.That(blocks.OfType<WebTextBlock>().SelectMany(b => b.Lines)).IsEquivalentTo(new[] { "tail" });
+    }
+
+    [Test]
+    public async Task ZeroOrNegativeLineCount_StillConsumesOneLine()
+    {
+        var blocks = WebViewComposer.Compose(
+            Lines("a", "[image: alt]", "b"),
+            new[] { new WebImage(1, "pic.png", "alt", "[image: alt]", LineCount: 0) },
+            Boxes(0));
+
+        await Assert.That(blocks.Count).IsEqualTo(3);
+        await Assert.That(blocks.OfType<WebTextBlock>().SelectMany(b => b.Lines))
+            .IsEquivalentTo(new[] { "a", "b" });
+    }
+
     // ---- Defensive cases ----------------------------------------------------------------------
 
     [Test]
