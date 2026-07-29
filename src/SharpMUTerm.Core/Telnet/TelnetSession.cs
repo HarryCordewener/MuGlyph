@@ -21,6 +21,48 @@ public sealed class TelnetSessionOptions
 
     /// <summary>Read buffer size in bytes.</summary>
     public int ReceiveBufferSize { get; init; } = 8192;
+
+    /// <summary>The default order, used when no world encoding is configured or the name isn't one.</summary>
+    private static Encoding[] DefaultOrder =>
+    [
+        new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+        Encoding.Latin1,
+    ];
+
+    /// <summary>
+    /// The CHARSET preference order with <paramref name="name"/> first — a world's configured
+    /// <see cref="SharpMUTerm.Core.Configuration.WorldDefinition.Encoding"/> — followed by the
+    /// defaults as fallbacks, each listed once.
+    /// <para>
+    /// An unknown or unsupported name falls back to the default order rather than throwing: the F5
+    /// field accepts anything the machine's encoding provider might know, and a world whose encoding
+    /// was renamed out from under it must still connect. Preference order is a *negotiation*, so a
+    /// server that doesn't offer the head of the list simply lands further down it.
+    /// </para>
+    /// </summary>
+    public static Encoding[] PreferEncoding(string? name)
+    {
+        var order = DefaultOrder;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return order;
+        }
+
+        Encoding preferred;
+        try
+        {
+            preferred = Encoding.GetEncoding(name.Trim());
+        }
+        catch (ArgumentException)
+        {
+            return order;
+        }
+
+        // UTF-8 from GetEncoding emits a BOM preamble; the default instance deliberately does not,
+        // so keep ours rather than replacing it with a byte-order-marked twin.
+        var resolved = preferred.CodePage == Encoding.UTF8.CodePage ? order[0] : preferred;
+        return order.Where(e => e.CodePage != resolved.CodePage).Prepend(resolved).ToArray();
+    }
 }
 
 /// <summary>

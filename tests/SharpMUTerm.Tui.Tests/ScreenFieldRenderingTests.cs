@@ -201,18 +201,36 @@ public class ScreenFieldRenderingTests
         await Assert.That(name.Single(HasCaret)).Contains("Surve");
     }
 
+    /// <summary>
+    /// The shared options renderer draws the caret on the value row the cursor is on, skipping section
+    /// headers and spacers when it counts. The rows are synthetic because neither real options screen
+    /// carries a value any more — F7's <c>ambiguous width</c> and F8's <c>newline key</c>/
+    /// <c>dictionary</c> were removed with the features they named — but the renderer still has to do
+    /// this, so the assertion is kept and given rows of its own rather than dropped with them.
+    /// </summary>
     [Test]
     public async Task Options_DrawsTheBufferOnTheValueRowUnderTheCursor()
     {
-        var screen = OptionsScreenRenderer.InputSpellcheckScreen();
+        var first = "one";
+        var second = "two";
+        var rows = new List<OptionsScreenRenderer.OptionRow>
+        {
+            new("├ SECTION", null, null),
+            new("a toggle", null, true, null, ScreenToggle.Bind(() => true, _ => { })),
+            new("first value", first, null, null, null,
+                ScreenField.Text("first value", () => first, v => first = v)),
+            new(string.Empty, null, null),
+            new("second value", second, null, null, null,
+                ScreenField.Text("second value", () => second, v => second = v)),
+        };
 
-        // Navigable rows: 0 local echo, 1 drafts, 2 newline key, 3 check spelling, 4 dictionary.
-        var newline = OptionsScreenRenderer.BodyColumn(screen.Rows, Edit(0, 2, 0, "Ctrl+Enter"));
-        await Assert.That(Carets(newline)).IsEqualTo(1);
-        await Assert.That(newline.Single(HasCaret)).Contains("newline key");
+        // Navigable rows: 0 a toggle, 1 first value, 2 second value.
+        var opened = OptionsScreenRenderer.BodyColumn(rows, Edit(0, 1, 0, "typed"));
+        await Assert.That(Carets(opened)).IsEqualTo(1);
+        await Assert.That(opened.Single(HasCaret)).Contains("first value");
 
-        var dictionary = OptionsScreenRenderer.BodyColumn(screen.Rows, Edit(0, 4, 0, "en_GB"));
-        await Assert.That(dictionary.Single(HasCaret)).Contains("dictionary");
+        var later = OptionsScreenRenderer.BodyColumn(rows, Edit(0, 2, 0, "also"));
+        await Assert.That(later.Single(HasCaret)).Contains("second value");
     }
 
     /// <summary>

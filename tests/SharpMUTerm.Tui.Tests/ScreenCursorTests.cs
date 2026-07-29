@@ -273,7 +273,19 @@ public class ScreenCursorTests
         {
             new() { Name = "Aardwolf", Host = "aardmud.org", Characters = new List<CharacterDefinition> { new() } },
         };
-        var options = OptionsScreenRenderer.InputSpellcheckScreen();
+
+        // A synthetic options screen, not F7 or F8: both of those are all-checkbox screens now (their
+        // value rows named features that do not exist and went with them), so neither can stand for
+        // "an options screen that does offer an editor". The shared renderer still draws one.
+        var value = "en_US";
+        var options = new OptionsScreenRenderer.OptionsScreen(
+            "Values",
+            "F8",
+            new List<OptionsScreenRenderer.OptionRow>
+            {
+                new("a value", value, null, null, null,
+                    ScreenField.Text("a value", () => value, v => value = v)),
+            });
 
         return new List<(string, ScreenModel)>
         {
@@ -290,10 +302,15 @@ public class ScreenCursorTests
         };
     }
 
-    /// <summary>The same screens with nothing to edit — empty lists, and an options screen of toggles.</summary>
+    /// <summary>
+    /// The same screens with nothing to edit — empty lists, and the two real options screens, which
+    /// are now entirely checkboxes and so must <em>not</em> advertise <c>⏎ edit</c>.
+    /// </summary>
     private static List<(string Header, ScreenModel Model)> Bare()
     {
         var empty = new List<TriggerSet>();
+        var textAnsi = OptionsScreenRenderer.TextAnsiScreen();
+        var input = OptionsScreenRenderer.InputScreen();
         var toggles = new OptionsScreenRenderer.OptionsScreen(
             "Toggles",
             "F7",
@@ -304,6 +321,12 @@ public class ScreenCursorTests
 
         return new List<(string, ScreenModel)>
         {
+            Pair(
+                OptionsScreenRenderer.Model(textAnsi),
+                m => OptionsScreenRenderer.HeaderLine(textAnsi.Title, textAnsi.FKey, 0, m)),
+            Pair(
+                OptionsScreenRenderer.Model(input),
+                m => OptionsScreenRenderer.HeaderLine(input.Title, input.FKey, 0, m)),
             Pair(TriggersScreenRenderer.Model(empty, -1), m => TriggersScreenRenderer.HeaderLine(0, m)),
             Pair(AliasesScreenRenderer.Model(empty, -1), m => AliasesScreenRenderer.HeaderLine(0, m)),
             Pair(TimersScreenRenderer.Model(empty, -1), m => TimersScreenRenderer.HeaderLine(0, m)),

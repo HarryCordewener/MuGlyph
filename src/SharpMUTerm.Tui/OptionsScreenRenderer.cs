@@ -267,67 +267,38 @@ internal static class OptionsScreenRenderer
             new("├ UNICODE", null, null),
             new("emoji substitution", null, settings.EmojiSubstitution, null,
                 ScreenToggle.Bind(() => settings.EmojiSubstitution, v => settings.EmojiSubstitution = v)),
-            new("ambiguous width", settings.AmbiguousWidth, null, null, null,
-                ScreenField.Choice(
-                    "ambiguous width",
-                    () => settings.AmbiguousWidth,
-                    v => settings.AmbiguousWidth = v,
-                    AmbiguousWidths)),
         });
     }
 
     /// <summary>
-    /// How East Asian ambiguous-width characters may be measured. A fixed set rather than free text:
-    /// the measurer only knows these two, and a typo would silently fall back to one of them.
-    /// </summary>
-    private static readonly string[] AmbiguousWidths = { "narrow", "wide" };
-
-    /// <summary>
-    /// The F8 "Input &amp; spellcheck" screen, reflecting — and writing back to — the app's
+    /// The F8 "Input" screen, reflecting — and writing back to — the app's
     /// <see cref="InputSettings"/>.
+    /// <para>
+    /// It was "Input &amp; spellcheck" and had a SPELLCHECK section holding <c>check spelling</c> and
+    /// <c>dictionary</c>. Both are gone: this client has no speller, so the checkbox promised a check
+    /// that never ran and the dictionary named a file nothing opened. <c>newline key</c> went with
+    /// them — the command line is a single-line <c>PromptControl</c>, so there is no chord that could
+    /// put a newline in it. The rule these follow is the one the header hints already follow: a screen
+    /// may not advertise a key, or a setting, that does nothing.
+    /// </para>
     /// </summary>
-    internal static OptionsScreen InputSpellcheckScreen(InputSettings? input = null)
+    internal static OptionsScreen InputScreen(InputSettings? input = null)
     {
         var settings = input ?? new InputSettings();
 
-        return new OptionsScreen("Input & spellcheck", "F8", new List<OptionRow>
+        return new OptionsScreen("Input", "F8", new List<OptionRow>
         {
             new("├ INPUT", null, null),
             new("local echo", null, settings.LocalEcho, null,
                 ScreenToggle.Bind(() => settings.LocalEcho, v => settings.LocalEcho = v)),
             new("keep per-tab drafts", null, settings.KeepDrafts, null,
                 ScreenToggle.Bind(() => settings.KeepDrafts, v => settings.KeepDrafts = v)),
-            new("newline key", settings.NewlineKey, null, null, null,
-                ScreenField.Text(
-                    "newline key", () => settings.NewlineKey, v => settings.NewlineKey = v, NewlineKeys)),
-            new(string.Empty, null, null),
-            new("├ SPELLCHECK", null, null),
-            new("check spelling", null, settings.CheckSpelling, null,
-                ScreenToggle.Bind(() => settings.CheckSpelling, v => settings.CheckSpelling = v)),
-            new("dictionary", settings.Dictionary, null, null, null,
-                ScreenField.Text(
-                    "dictionary", () => settings.Dictionary, v => settings.Dictionary = v, Dictionaries)),
         });
     }
-
-    /// <summary>
-    /// The chords worth offering for the newline key. Suggestions, not the permitted set: what a
-    /// terminal actually delivers for a modified Enter varies by emulator, so a closed list would refuse
-    /// the one chord a given terminal can send. Listing them is what stops the field being typed blind.
-    /// </summary>
-    private static readonly string[] NewlineKeys = { "Shift+Enter", "Ctrl+Enter", "Alt+Enter", "Ctrl+J" };
-
-    /// <summary>
-    /// The dictionaries worth offering. Open for the same reason: the speller loads whichever locale is
-    /// installed on the machine, and a list this screen closed would be a list of what its author
-    /// happened to have.
-    /// </summary>
-    private static readonly string[] Dictionaries =
-        { "en_US", "en_GB", "de_DE", "fr_FR", "es_ES", "nl_NL", "pt_BR", "sv_SE" };
 
     /// <summary>The F7 "Text &amp; ANSI" screen body.</summary>
     public static List<string> TextAnsi() => Render(TextAnsiScreen());
 
-    /// <summary>The F8 "Input &amp; spellcheck" screen body.</summary>
-    public static List<string> InputSpellcheck() => Render(InputSpellcheckScreen());
+    /// <summary>The F8 "Input" screen body.</summary>
+    public static List<string> Input() => Render(InputScreen());
 }

@@ -17,16 +17,27 @@ public sealed class TextSettings
     /// <summary>Underline MXP/Pueblo/web links so they read as clickable.</summary>
     public bool UnderlineHyperlinks { get; set; } = true;
 
-    /// <summary>Substitute emoji for shortcodes and emoticons in inbound text.</summary>
+    /// <summary>
+    /// Substitute emoji for shortcodes and emoticons in inbound text. The app-wide off switch over
+    /// <see cref="WorldDefinition.Emoji"/>, which is where a world opts in and says which
+    /// substitutions it wants — see <c>WorldSession.ApplyEmoji</c>.
+    /// </summary>
     public bool EmojiSubstitution { get; set; } = true;
 
-    /// <summary>How East Asian ambiguous-width characters are measured: <c>narrow</c> or <c>wide</c>.</summary>
-    public string AmbiguousWidth { get; set; } = "narrow";
+    // There is deliberately no "ambiguous width" here. It was a setting with nothing behind it: every
+    // column measurement in this app is SharpConsoleUI's (Helpers/UnicodeWidth.cs), which asks the
+    // Wcwidth tables and offers no East-Asian-ambiguous policy to set. Honouring it needs an upstream
+    // seam, and until there is one, the honest state is no control rather than a stored string.
 }
 
 /// <summary>
-/// Application-wide input and spellcheck preferences — the settings the F8 "Input &amp; spellcheck"
-/// screen edits.
+/// Application-wide input preferences — the settings the F8 "Input" screen edits.
+/// <para>
+/// Spellcheck used to live here (<c>CheckSpelling</c>, <c>Dictionary</c>) and was removed with its
+/// checkboxes: there is no speller in this client, so the two values described a feature that did not
+/// exist. So did <c>NewlineKey</c> — the command line is a single-line
+/// <c>PromptControl</c>, and no chord can put a newline into a control that has no second row.
+/// </para>
 /// </summary>
 public sealed class InputSettings
 {
@@ -35,13 +46,4 @@ public sealed class InputSettings
 
     /// <summary>Keep an unsent draft per tab so switching windows doesn't lose typing.</summary>
     public bool KeepDrafts { get; set; } = true;
-
-    /// <summary>The key that inserts a newline instead of sending (e.g. <c>Shift+Enter</c>).</summary>
-    public string NewlineKey { get; set; } = "Shift+Enter";
-
-    /// <summary>Spell-check the input line as it is typed.</summary>
-    public bool CheckSpelling { get; set; } = true;
-
-    /// <summary>The dictionary spellcheck loads (e.g. <c>en_US</c>).</summary>
-    public string Dictionary { get; set; } = "en_US";
 }

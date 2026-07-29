@@ -4,8 +4,8 @@ Context for whoever (human or agent) picks up this work next.
 
 - **Repository:** `SharpMUSH/SharpMUTerm`
 - **Start from:** a fresh branch off `main`
-- **Tests:** 946 across the solution (338 Core / 83 Graphics / 42 Scripting /
-  28 Web / 455 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
+- **Tests:** 999 across the solution (375 Core / 83 Graphics / 42 Scripting /
+  28 Web / 471 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
   from this repo; building against a local SharpConsoleUI clone surfaces 2 upstream
   NuGet advisory warnings for AngleSharp, which are the framework's, not ours)
 
@@ -480,6 +480,42 @@ What the framework actually provides (read at v2.5.14, not assumed):
 - Pane shape: F4/F7/F8 are single-pane (no ⇥); **F5 has four** (worlds → characters
   → trigger sets → the world's security checkboxes); the rest have two.
 
+### What a settings field actually reaches (audited)
+
+Writing to `AppConfiguration` is not the same as doing something. The three
+categories, and where each control sits:
+
+- **Live — the next line/keystroke sees it.** F7's `strip incoming ANSI colour`,
+  `emoji substitution` (`WorldSession.ProcessOutputLine`/`ApplyEmoji`),
+  `allow blink`, `underline hyperlinks` (`MarkupFormatter.AppendSpan`/`StyleTag`);
+  F8's `local echo` (`WorldSession.SendUserInputAsync`) and `keep per-tab drafts`
+  (`DraftStore`); every **field** of an F2 trigger / F3 alias / F6 timer / F4 macro,
+  because the engines hold the *same objects* the screens edit; F6's `enabled` and
+  `command`, read inside the timer callback. **These are held by reference on
+  purpose** — `WorldSession` and `MarkupFormatter` take `TextSettings`/`InputSettings`
+  and read them per line. Copy one into a field at construction and the checkbox
+  needs a restart again.
+- **Applied at connect.** A world's host/port/TLS/certificates
+  (`WorldDefinition.ToConnectionOptions`), its `encoding`
+  (`TelnetSessionOptions.PreferEncoding`), the character's `auto-login`/`on connect`
+  (`WorldSession.SendLoginAsync`), its log format + folder
+  (`SharpMUTermApp.OpenLog`), a timer's `interval`/`one-shot`, and **adding or
+  removing** any rule (the engines were handed the list once). Reconnect, don't
+  restart.
+- **Still inert, and why.** F4's numpad **bindings never fire**: nothing maps a key
+  press to `WorldSession.HandleKeyAsync`, and SharpConsoleUI's input parser never
+  produces `ConsoleKey.NumPad0..9` at all (grep it — there are no occurrences), so
+  the fix is application-keypad decoding in the driver, i.e. upstream. A world's
+  `keepalive` seconds only picks the status bar's fake ack figure — there is no
+  keepalive, and adding one wants a raw `IAC NOP` write that bypasses the
+  interpreter's escaping (`ITelnetSession` has no such path today).
+
+**The shell connects as the world's first configured character**
+(`SharpMUTermApp.OpenSession`). Before that it opened an *anonymous* session, which
+is why so much of F2–F6 was unreachable however correct Core was: no character
+meant no trigger sets, no auto-login, no log. Picking a *different* character still
+has no UI.
+
 ### Dropdowns (a field's candidate list)
 
 - **`ScreenChrome.Choices(column, edit, width)` is the whole feature**, called once
@@ -493,7 +529,7 @@ What the framework actually provides (read at v2.5.14, not assumed):
   would resize the whole screen on ⏎), and F2's editor already runs to two dozen
   rows (pushed-down rows would fall off the bottom, checkboxes included). It opens
   **downward**, and **upward** when there aren't enough rows below — F5's log format
-  and F7's ambiguous width are both second-from-last in their block. The caption
+  is second-from-last in its block. The caption
   keeps the edge nearest the field (`▾` below, `▴` above) and a one-row **shadow**
   closes the far edge, so the pane's own rows continuing past the block read as
   behind it.
@@ -514,13 +550,16 @@ What the framework actually provides (read at v2.5.14, not assumed):
 - **Capped at `ScreenChrome.MaxChoiceRows` (6)**, with the caption saying so
   (`suggestions  6 of 17`) and the window scrolling to keep the marked entry in it,
   or the eleventh colour would be unreachable to the eye.
-- **`newline key` and `dictionary` (F8) grew suggestion lists**, since `ScreenField.Text`
-  now takes an optional `known`. Both stay open: the chords a terminal can deliver
-  and the locales a speller has installed are not this screen's to close.
+- **`ScreenField.Text` takes an optional `known`** for an open suggestion list. F8's
+  `newline key` and `dictionary` were the two callers and are gone with their
+  controls; the capability stays because an open list is the right shape for any
+  value whose vocabulary this screen doesn't own.
 - **Snapshot states:** `triggers-edit` (open list, mark moved), `route-edit`
   (narrowed to one), `highlight-edit` (17 capped to 6), `logging-edit` (closed,
-  drawn upward), `textansi-edit` / `input-edit` (F7/F8; their scripts step the
-  cursor down to a value row first, because ⏎ on a checkbox row saves and closes).
+  drawn upward). **There is no `textansi-edit` / `input-edit` any more** — F7 and F8
+  are all checkboxes now, and ⏎ on a checkbox row saves and closes, so driving one
+  would snapshot a workspace with no screen on it. `EditSnapshotKeys` returns nothing
+  for those two views rather than a keystroke that closes the thing being framed.
 
 ### TelnetNegotiationCore
 

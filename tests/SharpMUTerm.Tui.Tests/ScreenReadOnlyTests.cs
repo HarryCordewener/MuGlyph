@@ -255,7 +255,7 @@ public class ScreenReadOnlyTests
         var screens = new[]
         {
             OptionsScreenRenderer.TextAnsiScreen(),
-            OptionsScreenRenderer.InputSpellcheckScreen(),
+            OptionsScreenRenderer.InputScreen(),
         };
 
         foreach (var screen in screens)
@@ -357,7 +357,7 @@ public class ScreenReadOnlyTests
             WorldsScreenRenderer.HeaderLine(80, WorldsScreenRenderer.Model(worlds, sets, 0, 0)),
             TimersScreenRenderer.HeaderLine(80, TimersScreenRenderer.Model(sets, 0)),
             Header(OptionsScreenRenderer.TextAnsiScreen()),
-            Header(OptionsScreenRenderer.InputSpellcheckScreen()),
+            Header(OptionsScreenRenderer.InputScreen()),
             WorldsScreenRenderer.HeaderLine(
                 80, WorldsScreenRenderer.Model(worlds, sets, 0, 0), null, WorldsScreenRenderer.LogFKey),
         };
@@ -380,7 +380,7 @@ public class ScreenReadOnlyTests
             ("F5 worlds", WorldsScreenRenderer.FooterLine(worlds, 0, 0, accent, 80)),
             ("F6 timers", TimersScreenRenderer.FooterLine(sets, 0, 80)),
             ("F7 text", OptionsScreenRenderer.FooterLine(OptionsScreenRenderer.TextAnsiScreen().Rows, 80)),
-            ("F8 input", OptionsScreenRenderer.FooterLine(OptionsScreenRenderer.InputSpellcheckScreen().Rows, 80)),
+            ("F8 input", OptionsScreenRenderer.FooterLine(OptionsScreenRenderer.InputScreen().Rows, 80)),
             ("F9 worlds (the character's log)", WorldsScreenRenderer.FooterLine(worlds, 0, 0, accent, 80)),
         };
     }

@@ -306,12 +306,19 @@ public class ScreenModelTests
         var screen = OptionsScreenRenderer.TextAnsiScreen();
         var model = OptionsScreenRenderer.Model(screen);
 
-        // 8 display rows: 2 section headers + 1 spacer + 5 options.
-        await Assert.That(screen.Rows.Count).IsEqualTo(8);
+        // 7 display rows: 2 section headers + 1 spacer + 4 options. It was 8/5 while F7 still carried
+        // "ambiguous width"; that row named a measurement policy the framework does not expose, so it
+        // went, and both the display count and the navigable count drop by exactly the one row.
+        await Assert.That(screen.Rows.Count).IsEqualTo(7);
         await Assert.That(model.PaneCount).IsEqualTo(1);
-        await Assert.That(model.Sizes[0]).IsEqualTo(5);
+        await Assert.That(model.Sizes[0]).IsEqualTo(4);
     }
 
+    /// <summary>
+    /// F7 is four checkboxes and nothing else now — every row is a toggle, so there is no value row
+    /// for ⏎ to open. Asserted here rather than only in the renderer test, because it is what makes
+    /// <c>HasEditableRow</c> false for this screen and so what removes <c>⏎ edit</c> from its header.
+    /// </summary>
     [Test]
     public async Task Options_TextAnsiRowsWriteBackToTheTextSettings()
     {
@@ -324,21 +331,29 @@ public class ScreenModelTests
         model.ToggleAt(0, 2)!.Value.Flip();
         await Assert.That(text.UnderlineHyperlinks).IsFalse();
 
-        // "ambiguous width" is a value row: reachable, but nothing to press yet.
-        await Assert.That(model.ToggleAt(0, 4)).IsNull();
+        model.ToggleAt(0, 3)!.Value.Flip();
+        await Assert.That(text.EmojiSubstitution).IsFalse();
+
+        await Assert.That(model.HasEditableRow).IsFalse();
     }
 
     [Test]
     public async Task Options_InputRowsWriteBackToTheInputSettings()
     {
         var input = new InputSettings();
-        var model = OptionsScreenRenderer.Model(OptionsScreenRenderer.InputSpellcheckScreen(input));
+        var model = OptionsScreenRenderer.Model(OptionsScreenRenderer.InputScreen(input));
+
+        // Two rows, both checkboxes: spellcheck and the newline key went with the features they
+        // described, and neither survivor has a value to type.
+        await Assert.That(model.Sizes[0]).IsEqualTo(2);
 
         model.ToggleAt(0, 0)!.Value.Flip();
         await Assert.That(input.LocalEcho).IsFalse();
 
-        model.ToggleAt(0, 3)!.Value.Flip();
-        await Assert.That(input.CheckSpelling).IsFalse();
+        model.ToggleAt(0, 1)!.Value.Flip();
+        await Assert.That(input.KeepDrafts).IsFalse();
+
+        await Assert.That(model.HasEditableRow).IsFalse();
     }
 
     /// <summary>

@@ -2,6 +2,7 @@ using SharpMUTerm.Core.Commands;
 using SharpMUTerm.Core.Automation;
 using SharpMUTerm.Core.Configuration;
 using SharpMUTerm.Core.Input;
+using SharpMUTerm.Core.Logging;
 using SharpMUTerm.Core.Session;
 using SharpMUTerm.Core.Text;
 using SharpMUTerm.Core.Theming;
@@ -42,7 +43,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private readonly MarkupFormatter _formatter;
     private readonly Workspace _workspace;
     private readonly Dictionary<string, MarkupControl> _panes = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string> _drafts = new(StringComparer.Ordinal);
+    private readonly DraftStore _drafts;
     private readonly InputHistory _history = new();
     private bool _suppressInputChanged;
 
@@ -132,7 +133,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _config = config;
         _capabilities = capabilities;
         _theme = ResolveTheme(config);
-        _formatter = new MarkupFormatter(_theme);
+        _formatter = new MarkupFormatter(_theme, config.Text);
+        _drafts = new DraftStore(() => config.Input.KeepDrafts);
 
         // Resume the last session's workspace (panes/windows/focus) when the config carries one;
         // otherwise start with a single main window. Real startup and the demo share this path.
@@ -550,7 +552,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return;
         }
 
-        var session = _sessions.Open(world, _config.ScrollbackLines);
+        var session = OpenSession(world);
         BindSession(session);
 
         session.PrintSystem($"*** SharpMUTerm — theme '{_theme.Name}', graphics: {_capabilities.Protocol}.");
@@ -563,6 +565,82 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         catch
         {
             // WorldSession already surfaced the failure as a system line.
+        }
+    }
+
+    /// <summary>
+    /// Builds the session for a world: as its <em>first configured character</em> when it has one, so
+    /// the character's trigger sets, auto-login, on-connect lines and log actually reach the runtime.
+    /// A world with no characters still connects, anonymously, which is what a host typed on the
+    /// command line is.
+    /// <para>
+    /// This is the seam the F2/F3/F5/F6 screens all hang off: the session holds the <em>same</em>
+    /// <see cref="Trigger"/>/<see cref="Alias"/>/<see cref="TimerDefinition"/> objects the screens
+    /// edit, so editing one is seen by the next line without a reload. Adding or removing a rule is
+    /// not — the engines were handed the list at construction — and neither is picking a different
+    /// character; both need a reconnect.
+    /// </para>
+    /// </summary>
+    private WorldSession OpenSession(WorldDefinition world)
+    {
+        var character = world.Characters.FirstOrDefault();
+        return character is null
+            ? _sessions.Open(world, _config.ScrollbackLines, _config.Text, _config.Input)
+            : _sessions.Open(
+                world,
+                character,
+                _config.ResolveTriggerSets(character),
+                _config.ScrollbackLines,
+                OpenLog(world, character),
+                _config.Text,
+                _config.Input);
+    }
+
+    /// <summary>
+    /// Opens the character's log sink for this session, per its <see cref="LoggingSettings"/> — the
+    /// two fields F5 draws on the character's own row. <see cref="LogFormat.None"/> (the default)
+    /// opens nothing, and a folder that can't be written is reported as a system line rather than
+    /// taken as a reason not to connect.
+    /// <para>
+    /// Resolved once, at connect: a log file is a handle, and re-pointing one mid-session would mean
+    /// closing a file the user is still tailing. The F5 fields therefore apply on the next connect,
+    /// which is what the screen says.
+    /// </para>
+    /// </summary>
+    private ILogSink? OpenLog(WorldDefinition world, CharacterDefinition character)
+    {
+        var format = character.Logging.Format;
+        if (format == LogFormat.None)
+        {
+            return null;
+        }
+
+        var folder = string.IsNullOrWhiteSpace(character.Logging.Directory)
+            ? Path.Combine(Path.GetDirectoryName(ConfigurationStore.DefaultPath)!, "logs")
+            : character.Logging.Directory!;
+        var stem = $"{world.Name}.{character.Name}-{DateTime.Now:yyyyMMdd-HHmmss}"
+            .Replace(Path.DirectorySeparatorChar, '_')
+            .Replace(Path.AltDirectorySeparatorChar, '_');
+
+        try
+        {
+            var sinks = new List<ILogSink>(2);
+            if (format is LogFormat.Plain or LogFormat.Both)
+            {
+                sinks.Add(PlainTextLogSink.CreateFile(Path.Combine(folder, stem + ".log")));
+            }
+
+            if (format is LogFormat.Html or LogFormat.Both)
+            {
+                sinks.Add(HtmlLogSink.CreateFile(Path.Combine(folder, stem + ".html"), stem));
+            }
+
+            return sinks.Count == 1 ? sinks[0] : new CompositeLogSink(sinks);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+        {
+            SetStatus($"[red]could not open the log:[/] {Escape(ex.Message)}");
+            return null;
         }
     }
 
@@ -677,7 +755,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // the draft-safe history so ↑/↓ can recall it without clobbering a future draft.
         _history.Add(command);
         var windowId = ActiveWindowId();
-        _drafts.Remove(windowId);
+        _drafts.Clear(windowId);
         _workspace.SetUnsentInput(windowId, false);
         _input.Input = string.Empty;
         RefreshTabTitles();
@@ -720,14 +798,9 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         var windowId = ActiveWindowId();
-        if (string.IsNullOrEmpty(text))
-        {
-            _drafts.Remove(windowId);
-        }
-        else
-        {
-            _drafts[windowId] = text;
-        }
+
+        // The store decides whether to keep it — that is where F8's "keep per-tab drafts" lives.
+        _drafts.Record(windowId, text);
 
         _workspace.SetUnsentInput(windowId, !string.IsNullOrEmpty(text));
         RefreshTabTitles();
@@ -866,7 +939,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         new(ConsoleKey.F5, new[] { "worlds", "settings" }, WorldsScreen),
         new(ConsoleKey.F6, new[] { "timers" }, TimersScreen),
         new(ConsoleKey.F7, new[] { "textansi" }, TextAnsiScreen),
-        new(ConsoleKey.F8, new[] { "input" }, InputSpellcheckScreen),
+        new(ConsoleKey.F8, new[] { "input" }, InputScreen),
         new(ConsoleKey.F9, new[] { "logging" }, CharacterLoggingScreen),
     };
 
@@ -1073,9 +1146,9 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private ScreenBinding TextAnsiScreen() =>
         OptionsScreen(() => OptionsScreenRenderer.TextAnsiScreen(_config.Text));
 
-    /// <summary>Opens the F8 Input &amp; spellcheck screen, bound to the app's input preferences.</summary>
-    private ScreenBinding InputSpellcheckScreen() =>
-        OptionsScreen(() => OptionsScreenRenderer.InputSpellcheckScreen(_config.Input));
+    /// <summary>Opens the F8 Input screen, bound to the app's input preferences.</summary>
+    private ScreenBinding InputScreen() =>
+        OptionsScreen(() => OptionsScreenRenderer.InputScreen(_config.Input));
 
     /// <summary>
     /// The shared open path for the single-list option screens (F7/F8). <paramref name="screen"/> is
@@ -1111,27 +1184,20 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// looked at rather than merely asserted.
     /// </para>
     /// <para>
-    /// F7/F8 open on a checkbox rather than a value, so their scripts step the cursor down to the row
-    /// that holds one before pressing ⏎ at all — otherwise <c>textansi-edit</c> would save the screen
-    /// and close it, which is what ⏎ means on a row with nothing to open.
+    /// <c>textansi</c> and <c>input</c> have no <c>-edit</c> state to script any more, and their
+    /// scripts are empty rather than "press ⏎": every row F7 and F8 still draw is a checkbox, since
+    /// the three value rows those screens carried (<c>ambiguous width</c>, <c>newline key</c>,
+    /// <c>dictionary</c>) named features that do not exist and went with them. ⏎ on a row with
+    /// nothing to open <em>saves and closes</em>, so driving one would snapshot the workspace with no
+    /// screen on it — a frame that silently isn't of the thing it is named after.
     /// </para>
     /// </summary>
     private static IEnumerable<ConsoleKeyInfo> EditSnapshotKeys(string view)
     {
-        // F7/F8 are single lists whose first row is a checkbox, so ⏎ there would save and close rather
-        // than open anything. The cursor walks down to the row that holds a value first — the listed
-        // fields on those screens (ambiguous width, newline key, dictionary) are the last of their
-        // section, which is also why they are the ones a snapshot has to reach deliberately.
-        var stepsDown = view.ToLowerInvariant() switch
+        if (string.Equals(view, "textansi", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(view, "input", StringComparison.OrdinalIgnoreCase))
         {
-            "textansi" => 4, // strip · blink · underline · emoji → ambiguous width
-            "input" => 4,    // local echo · drafts · newline key · check spelling → dictionary
-            _ => 0,
-        };
-
-        for (var i = 0; i < stepsDown; i++)
-        {
-            yield return Stroke('\0', ConsoleKey.DownArrow);
+            yield break;
         }
 
         yield return Stroke('\r', ConsoleKey.Enter);
@@ -1480,7 +1546,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _suppressInputChanged = true;
             try
             {
-                _input.Input = _drafts.GetValueOrDefault(id, string.Empty);
+                _input.Input = _drafts.Recall(id);
             }
             finally
             {
@@ -2438,7 +2504,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _suppressInputChanged = true;
         try
         {
-            _input.Input = _drafts.GetValueOrDefault(ActiveWindowId(), string.Empty);
+            _input.Input = _drafts.Recall(ActiveWindowId());
         }
         finally
         {
@@ -2459,7 +2525,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         _panes.Remove(id);
-        _drafts.Remove(id);
+        _drafts.Clear(id);
         _lines.Remove(id);         // don't resurrect old scrollback if a same-id spawn reopens
         _freezePoints.Remove(id);
         _workspace.CloseWindow(id);

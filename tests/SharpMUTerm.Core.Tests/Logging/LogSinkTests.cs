@@ -66,4 +66,60 @@ public class LogSinkTests
 
         await Assert.That(sb.ToString()).Contains("color:#123456;");
     }
+
+    /// <summary>
+    /// <see cref="LogFormat.Both"/> is why <see cref="CompositeLogSink"/> exists — a session holds one
+    /// sink, so "plain and HTML" has to be one sink that is two.
+    /// </summary>
+    [Test]
+    public async Task Composite_WritesThroughToEverySink()
+    {
+        var plain = new StringBuilder();
+        var html = new StringBuilder();
+        using (var sink = new CompositeLogSink(new ILogSink[]
+        {
+            new PlainTextLogSink(new StringWriter(plain), ownsWriter: false),
+            new HtmlLogSink(new StringWriter(html), ownsWriter: false),
+        }))
+        {
+            sink.WriteLine(Colored("hello", TerminalColor.FromIndex(1)));
+            sink.WriteSystem("*** system");
+        }
+
+        await Assert.That(plain.ToString()).Contains("hello");
+        await Assert.That(plain.ToString()).Contains("*** system");
+        await Assert.That(html.ToString()).Contains("hello");
+        await Assert.That(html.ToString()).Contains("</html>");
+    }
+
+    /// <summary>
+    /// A sink that throws must not stop the ones after it — a full disk on the plain log is no reason
+    /// to lose the HTML one — but the failure is still rethrown once the round is done.
+    /// </summary>
+    [Test]
+    public async Task Composite_KeepsWritingPastAThrowingSinkAndStillReportsIt()
+    {
+        var reached = new StringBuilder();
+        var sink = new CompositeLogSink(new ILogSink[]
+        {
+            new ThrowingLogSink(),
+            new PlainTextLogSink(new StringWriter(reached), ownsWriter: false),
+        });
+
+        await Assert.That(() => sink.WriteSystem("*** system")).Throws<IOException>();
+        await Assert.That(reached.ToString()).Contains("*** system");
+    }
+
+    private sealed class ThrowingLogSink : ILogSink
+    {
+        public void WriteLine(StyledLine line) => throw new IOException("no room");
+
+        public void WriteSystem(string text) => throw new IOException("no room");
+
+        public void Flush() => throw new IOException("no room");
+
+        public void Dispose()
+        {
+        }
+    }
 }

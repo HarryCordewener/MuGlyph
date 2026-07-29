@@ -1,4 +1,5 @@
 using System.Text;
+using SharpMUTerm.Core.Configuration;
 using SharpMUTerm.Core.Text;
 using SharpMUTerm.Core.Theming;
 using static SharpMUTerm.Tui.MarkupText;
@@ -10,14 +11,22 @@ namespace SharpMUTerm.Tui;
 /// markup: truecolor foreground/background, bold/italic/underline/etc., and clickable
 /// <see cref="SpanInteraction"/>s rendered as <c>[link=…]</c> spans. Colours are resolved through the
 /// active <see cref="Theme"/> so palette-indexed and default colours land on real RGB values.
+/// <para>
+/// <paramref name="text"/> is the app's live <see cref="TextSettings"/> — the two F7 options that are
+/// decisions about *markup* rather than about the model live here (<c>allow blink</c>,
+/// <c>underline hyperlinks</c>). It is held by reference and read per span, because the F7 screen
+/// edits that object in place: a copy would need a restart to mean anything. Null means the defaults,
+/// which is what the unit tests want.
+/// </para>
 /// </summary>
-internal sealed class MarkupFormatter(Theme theme)
+internal sealed class MarkupFormatter(Theme theme, TextSettings? text = null)
 {
     // Custom link schemes so LinkClicked can tell an MXP/Pueblo command from a web hyperlink.
     public const string SendScheme = "mux:send:";
     public const string PromptScheme = "mux:prompt:";
 
     private readonly Theme _theme = theme;
+    private readonly TextSettings _text = text ?? new TextSettings();
 
     /// <summary>Renders a whole line to a single markup string.</summary>
     public string ToMarkup(StyledLine line) => ToMarkup(line, null);
@@ -64,7 +73,16 @@ internal sealed class MarkupFormatter(Theme theme)
             sb.Append("[link=").Append(link).Append(']');
         }
 
-        var styleTag = StyleTag(span.Style);
+        // "underline hyperlinks": a clickable span reads as clickable even when the server sent it
+        // unstyled. Added to the span's own attributes rather than emitted separately, so a link that
+        // was already underlined doesn't get two tokens.
+        var style = span.Style;
+        if (link is not null && _text.UnderlineHyperlinks)
+        {
+            style = style.AddAttribute(TextAttributes.Underline);
+        }
+
+        var styleTag = StyleTag(style);
         if (styleTag is not null)
         {
             sb.Append(styleTag);
@@ -122,6 +140,13 @@ internal sealed class MarkupFormatter(Theme theme)
         if (style.HasAttribute(TextAttributes.Underline))
         {
             tokens.Add("underline");
+        }
+
+        // Blink is parsed out of SGR 5/6 but dropped unless F7's "allow blink" is on: a blinking line
+        // is the one rendition a server can impose that the reader cannot stop looking at.
+        if (_text.AllowBlink && style.HasAttribute(TextAttributes.Blink))
+        {
+            tokens.Add("blink");
         }
 
         if (style.HasAttribute(TextAttributes.Strikethrough))

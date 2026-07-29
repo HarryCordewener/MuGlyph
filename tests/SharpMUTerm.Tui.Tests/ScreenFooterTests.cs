@@ -48,7 +48,7 @@ public class ScreenFooterTests
         var sets = Sets();
         var worlds = Worlds();
         var macros = sets[0].Macros;
-        var options = OptionsScreenRenderer.InputSpellcheckScreen();
+        var options = OptionsScreenRenderer.InputScreen();
         var accent = WorldsScreenRenderer.AccentFor(worlds, 0);
 
         return new List<(string, string, string)>

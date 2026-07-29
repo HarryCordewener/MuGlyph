@@ -266,19 +266,18 @@ public class ConfigurationTests
         var config = new AppConfiguration();
         config.Text.StripIncomingColour = true;
         config.Text.UnderlineHyperlinks = false;
-        config.Text.AmbiguousWidth = "wide";
+        config.Text.EmojiSubstitution = false;
         config.Input.LocalEcho = false;
-        config.Input.Dictionary = "en_GB";
+        config.Input.KeepDrafts = false;
 
         var restored = ConfigurationStore.Deserialize(ConfigurationStore.Serialize(config));
 
         await Assert.That(restored.Text.StripIncomingColour).IsTrue();
         await Assert.That(restored.Text.AllowBlink).IsFalse();
         await Assert.That(restored.Text.UnderlineHyperlinks).IsFalse();
-        await Assert.That(restored.Text.AmbiguousWidth).IsEqualTo("wide");
+        await Assert.That(restored.Text.EmojiSubstitution).IsFalse();
         await Assert.That(restored.Input.LocalEcho).IsFalse();
-        await Assert.That(restored.Input.KeepDrafts).IsTrue();
-        await Assert.That(restored.Input.Dictionary).IsEqualTo("en_GB");
+        await Assert.That(restored.Input.KeepDrafts).IsFalse();
     }
 
     [Test]
@@ -288,9 +287,31 @@ public class ConfigurationTests
         var restored = ConfigurationStore.Deserialize("""{"version":2,"worlds":[],"triggerSets":[]}""");
 
         await Assert.That(restored.Text.UnderlineHyperlinks).IsTrue();
-        await Assert.That(restored.Text.AmbiguousWidth).IsEqualTo("narrow");
-        await Assert.That(restored.Input.NewlineKey).IsEqualTo("Shift+Enter");
-        await Assert.That(restored.Input.CheckSpelling).IsTrue();
+        await Assert.That(restored.Text.EmojiSubstitution).IsTrue();
+        await Assert.That(restored.Input.LocalEcho).IsTrue();
+        await Assert.That(restored.Input.KeepDrafts).IsTrue();
+    }
+
+    /// <summary>
+    /// A config written by a build that still had <c>ambiguousWidth</c>, <c>newlineKey</c>,
+    /// <c>checkSpelling</c> and <c>dictionary</c> loads fine, keeping everything around them. Those
+    /// four settings were removed along with their controls (nothing read them — there is no speller,
+    /// no multi-line input, and column widths are the framework's), and a saved file naming them must
+    /// not become a config the client refuses to start on.
+    /// </summary>
+    [Test]
+    public async Task RetiredPreferenceKeys_AreIgnoredRatherThanFatal()
+    {
+        var restored = ConfigurationStore.Deserialize(
+            """
+            {"version":2,"worlds":[],"triggerSets":[],
+             "text":{"stripIncomingColour":true,"ambiguousWidth":"wide"},
+             "input":{"localEcho":false,"newlineKey":"Ctrl+J","checkSpelling":true,"dictionary":"en_GB"}}
+            """);
+
+        await Assert.That(restored.Text.StripIncomingColour).IsTrue();
+        await Assert.That(restored.Input.LocalEcho).IsFalse();
+        await Assert.That(restored.Input.KeepDrafts).IsTrue();
     }
 
     [Test]

@@ -1,3 +1,4 @@
+using SharpMUTerm.Core.Configuration;
 using SharpMUTerm.Core.Text;
 using SharpMUTerm.Core.Theming;
 using SharpMUTerm.Tui;
@@ -136,5 +137,101 @@ public class MarkupFormatterTests
     public async Task EmptyLine_ProducesEmptyMarkup()
     {
         await Assert.That(Formatter.ToMarkup(StyledLine.Empty)).IsEqualTo(string.Empty);
+    }
+
+    // ---- F7 preferences that are decisions about markup ----
+
+    private static StyledLine Blinking() => new(new[]
+    {
+        new StyledSpan("alert", new TextStyle(TerminalColor.Default, TerminalColor.Default, TextAttributes.Blink)),
+    });
+
+    /// <summary>
+    /// SGR 5 is parsed but dropped by default: a blinking line is the one rendition a server can
+    /// impose that the reader cannot stop looking at. F7's <c>allow blink</c> is what lets it through.
+    /// </summary>
+    [Test]
+    public async Task AllowBlink_Off_DropsTheBlinkAttribute()
+    {
+        var formatter = new MarkupFormatter(ThemeLibrary.Dark(), new TextSettings { AllowBlink = false });
+
+        await Assert.That(formatter.ToMarkup(Blinking())).DoesNotContain("blink");
+    }
+
+    [Test]
+    public async Task AllowBlink_On_EmitsTheBlinkToken()
+    {
+        var formatter = new MarkupFormatter(ThemeLibrary.Dark(), new TextSettings { AllowBlink = true });
+
+        await Assert.That(formatter.ToMarkup(Blinking())).Contains("blink");
+    }
+
+    /// <summary>The setting is read per span, so flipping it changes the very next line rendered.</summary>
+    [Test]
+    public async Task AllowBlink_FlippingIt_ChangesTheNextLine()
+    {
+        var text = new TextSettings { AllowBlink = false };
+        var formatter = new MarkupFormatter(ThemeLibrary.Dark(), text);
+
+        var before = formatter.ToMarkup(Blinking());
+        text.AllowBlink = true;
+        var after = formatter.ToMarkup(Blinking());
+
+        await Assert.That(before).DoesNotContain("blink");
+        await Assert.That(after).Contains("blink");
+    }
+
+    private static StyledLine LinkLine() => new(new[]
+    {
+        new StyledSpan("site", TextStyle.Default, SpanInteraction.Link("https://example.org")),
+    });
+
+    [Test]
+    public async Task UnderlineHyperlinks_On_UnderlinesAClickableSpan()
+    {
+        var formatter = new MarkupFormatter(ThemeLibrary.Dark(), new TextSettings { UnderlineHyperlinks = true });
+
+        await Assert.That(formatter.ToMarkup(LinkLine())).Contains("underline");
+    }
+
+    [Test]
+    public async Task UnderlineHyperlinks_Off_LeavesAnUnstyledLinkUnstyled()
+    {
+        var formatter = new MarkupFormatter(ThemeLibrary.Dark(), new TextSettings { UnderlineHyperlinks = false });
+        var markup = formatter.ToMarkup(LinkLine());
+
+        await Assert.That(markup).DoesNotContain("underline");
+        await Assert.That(markup).Contains("[link=https://example.org]");
+    }
+
+    /// <summary>It underlines links, not everything — plain text is untouched either way.</summary>
+    [Test]
+    public async Task UnderlineHyperlinks_DoesNotTouchPlainText()
+    {
+        var formatter = new MarkupFormatter(ThemeLibrary.Dark(), new TextSettings { UnderlineHyperlinks = true });
+
+        await Assert.That(formatter.ToMarkup(StyledLine.FromText("hello", TextStyle.Default)))
+            .DoesNotContain("underline");
+    }
+
+    /// <summary>
+    /// A link the server already underlined gets one token, not two: the preference is folded into the
+    /// span's own attributes rather than emitted alongside them.
+    /// </summary>
+    [Test]
+    public async Task UnderlineHyperlinks_OnAnAlreadyUnderlinedLink_EmitsOneToken()
+    {
+        var formatter = new MarkupFormatter(ThemeLibrary.Dark(), new TextSettings { UnderlineHyperlinks = true });
+        var line = new StyledLine(new[]
+        {
+            new StyledSpan(
+                "site",
+                new TextStyle(TerminalColor.Default, TerminalColor.Default, TextAttributes.Underline),
+                SpanInteraction.Link("https://example.org")),
+        });
+
+        var markup = formatter.ToMarkup(line);
+
+        await Assert.That(markup.Split("underline").Length - 1).IsEqualTo(1);
     }
 }
