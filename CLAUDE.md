@@ -58,25 +58,112 @@ fallbacks) for inline images/maps.
   flush). The tab/pane set is driven by the tested `Core.Workspaces` model, with **splits** (thin
   single-line dividers) and the **connection rail** now rendered as well.
 
-### Notes for future agents (learned the hard way)
+## Building and testing
+
 - **.NET 10 SDK**: install via `apt-get install -y dotnet-sdk-10.0` (the Microsoft CDN is often
   blocked; Ubuntu's repo works). NuGet (`api.nuget.org`) is reachable.
-- **Tests use TUnit**, not xUnit — projects are `Exe` on Microsoft.Testing.Platform. Run them with
-  `dotnet run --project <testproj>`; `dotnet test` is **not** wired up (MTP opt-in doesn't work on
-  this SDK).
-- **TelnetNegotiationCore 2.5.3** has a fluent builder API (not the 1.0.0 the plan assumed) and now
-  provides MCCP/MSDP/MXP negotiation itself. `TelnetSession` sets the init-only
-  `CallbackOnByteAsync` reflectively to get raw data bytes (incl. unterminated prompts) — a
-  first-class `OnByte` builder hook is a good upstream PR.
-- **SharpConsoleUI** (package `SharpConsoleUI`, repo `nickprotop/ConsoleEx`): app is
-  `ConsoleWindowSystem(new NetConsoleDriver(RenderMode.Buffer), new ConsoleWindowSystemOptions())`;
-  build windows/controls with the fluent `WindowBuilder`/`Controls` factories; `AddControl` is
-  builder-time (keep control refs and mutate at runtime). Marshal background work with
-  `system.EnqueueOnUIThread`; global keys via `RegisterGlobalShortcut`; `system.Run()` blocks the
-  loop, `RequestExit(code)` ends it. Text is Spectre-style markup (`[bold #rrggbb on #rrggbb]…[/]`,
-  `[[`/`]]` escaping, `[link=url]…[/]` → `MarkupControl.LinkClicked`). A **headless** sandbox can't
-  run `NetConsoleDriver` (no console) — the Tui is build-verified + unit-tested (`MarkupFormatter`);
-  visual verification is on the maintainer's machine.
+- **Tests are TUnit on Microsoft.Testing.Platform** (`Exe` projects, not xUnit). `dotnet test` does
+  **not** work — .NET 10 dropped VSTest. Run each suite directly, and keep the `</dev/null`: it
+  detaches stdin so the test host doesn't hang waiting on it.
+  ```bash
+  dotnet run -c Release --project tests/SharpMUTerm.Core.Tests </dev/null
+  ```
+  There are five: Core, Graphics, Scripting, Web, Tui. Primary signal is
+  `dotnet build SharpMUTerm.slnx` plus all five green and warning-free.
+- **Building against the local SharpConsoleUI clone surfaces 2 NuGet advisory warnings** for
+  AngleSharp. They are the framework's, not ours; a build against the package has none.
+
+## Visual verification — the snapshot pipeline
+
+A headless environment can't run `NetConsoleDriver` or render Kitty graphics, but the TUI is *not*
+therefore unverifiable: it renders real frames headlessly.
+
+```bash
+dotnet run -c Release --project src/SharpMUTerm.Tui --no-build -- \
+  --snapshot --demo-config --view <name> --size 120x32 --out frame.ansi
+python3 tools/ansi_frame_to_image.py frame.ansi frame.html   # or .svg
+```
+
+- **`--demo-config` is not optional for verification work.** Without it the snapshot renders
+  whatever config is on the machine, and a saved `~/.config/SharpMUTerm/` quietly replaces the demo
+  worlds — you end up checking your own data and calling it the demo.
+- **Views:** `worlds`/`settings`, `triggers`, `route`, `highlight`, `aliases`, `timers`, `keypad`,
+  `set`, `textansi`, `input`, `logging`, `freeze`, `spawn`, `split`, `move`, `drag`, `history`,
+  `draft`, `draft2`, `menu`, `menu-split`, `messages`, `quit`, `web`, plus the default workspace
+  (no `--view`). Any settings screen also takes a `-edit` suffix, which opens it and drives real
+  keys in so the frame shows a field mid-edit. State toggles: `collapsed`, `prefix`, `timestamps`.
+- **Send the user the `.svg`.** For your *own* inspection render the `.html` — Chromium clips the
+  bottom of a bare `.svg` through aspect-ratio scaling, which will make you chase a layout bug that
+  isn't there.
+- **Decoding a frame precisely:** the `.ansi` is cursor-addressed SGR. To check exact column widths
+  or which background band covers which row, walk it into a `{row:{col:ch}}` grid tracking
+  `48;2;r;g;b` (background) — note `48`, not `38`, or you will read foreground and conclude wrongly.
+
+## SharpConsoleUI — the traps that cost the most time
+
+Package `SharpConsoleUI`, repo `nickprotop/ConsoleEx`, pinned at **2.5.14**. A sibling clone at
+`../SharpConsoleUI` is referenced by project when present, else the package
+(`-p:UseSharpConsoleUIPackage=true` forces the package). Read the source there rather than guessing.
+
+App shape: `ConsoleWindowSystem(new NetConsoleDriver(RenderMode.Buffer), new ConsoleWindowSystemOptions())`;
+fluent `WindowBuilder`/`Controls` factories; `AddControl` is builder-time, so keep refs and mutate at
+runtime. Marshal background work with `system.EnqueueOnUIThread`; global keys via
+`RegisterGlobalShortcut`; `system.Run()` blocks, `RequestExit(code)` ends it. Text is Spectre-style
+markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]` → `LinkClicked`).
+
+- **Controls default to `HorizontalAlignment.Left`, which self-sizes to content** instead of filling
+  the slot. This is the single biggest cause of "why doesn't this fill the width?" Use
+  `.WithAlignment(HorizontalAlignment.Stretch)`. A `.Flex(n)` column only fills if the grid is
+  arranged at full width *and* the child in it is Stretch.
+- **Nothing focuses a control for you, and nothing keeps it focused.** A click in the output pane, a
+  click on a tab strip, ⇥, and every overlay's `SetIsActive` all move focus. Typing is routed
+  explicitly from `PreviewKeyPressed` and so survives that; **paste is not — it follows
+  `FocusManager`**, which is why paste broke after any click while typing appeared fine.
+  `FocusChanged → PinFocusToArmedBar()` makes "which bar ⏎ sends from", "what the framework pastes
+  into" and "where the caret is drawn" one fact. Keep the pin; don't re-sync three places.
+- **Ask the driver for the terminal size, never a literal.** `_system.ConsoleDriver.ScreenSize` is
+  correct from the moment the window system exists — before any window does. Chrome built in the
+  app constructor against a literal wrapped the header on the first frame of any narrower terminal,
+  and snapshots never saw it because every render path rebuilds the header on the way past. Same
+  shape as gating chrome on `headless`: right in a snapshot, wrong in a terminal. Test the class of
+  bug by reading chrome width off a *freshly constructed* app.
+- **Vertical space at the window root is sticky-first, Fill-last** (`Layout/WindowContentLayout.cs`).
+  Sticky-top and sticky-bottom children are measured first and then trusted; Fill children divide
+  what remains. A flow control therefore *cannot* starve a sticky one — so "the workspace is greedy
+  and squeezed the input bars" is a diagnosis this layout cannot produce. But there is no
+  `MinHeight` concept and **nothing checks the two sticky bands fit each other**: at 80×6 they
+  over-commit and the status line is arranged off-screen. `SyncInputHeights`' veto counts chrome
+  rows to prevent it, and `PaintStatus` re-runs it because the status line's length changes at
+  runtime. Assert layout with **arranged bounds** (`ActualHeight` after a real frame), not arithmetic.
+- **The desktop panels are off unconditionally** (`ShowTopPanel: false, ShowBottomPanel: false`).
+  They restate our own header and trim window titles to fifteen cells — on this app, one row reading
+  `SharpMU...lient`. They were once hidden in headless only, so no snapshot showed them and the
+  truncated title survived to a real terminal.
+- **`WindowBuilder.Centered()` must come *after* `WithSize()`** — it reads `_bounds` and falls back
+  to 80×25, so centring first positions the window as if it were that size.
+- **`PromptControl` is not the command line** — `InputBarControl` is. The framework's prompt is
+  single-line by construction (`SetInput` replaces `\n` with a space) and unfocuses itself on ⏎
+  (`UnfocusOnEnter`, default true, not settable through the builder).
+- **Settings screens have no `IPasteTarget` and cannot easily have one.** They are markup rebuilt
+  wholesale every key, with the edited field a buffer in `SettingsSession`. `SettingsOverlay`
+  listens at `IConsoleDriver.Paste` instead. That can't double-fire *only* because no control on
+  those windows accepts paste — add a focusable `IPasteTarget` there and both paths will.
+- **The framework's own `ExitKey` defaults to Ctrl+Q** and calls `RequestExit` with nothing in
+  between. Ours won only because application shortcuts are tried first. It is set to `null`.
+
+## Other dependency notes
+
+- **TelnetNegotiationCore 2.6.0** (repo owner is its author — extend it by PR rather than working
+  around it). Fluent builder API; negotiates MCCP/MSDP/MXP itself; ships the keepalive interpreter
+  (`WithKeepAlive(TimeSpan?, …)`, default 30s, clamped to 1s–24h). `TelnetSession` sets the
+  init-only `CallbackOnByteAsync` reflectively to see raw bytes including unterminated prompts — a
+  first-class `OnByte` builder hook remains a good upstream PR. It handles the option handshake
+  (TELOPT, GA, TTYPE/MTTS, EOR, NAWS, CHARSET, MSSP, GMCP) — **Pueblo and all ANSI/MXP/Pueblo
+  payload _parsing_ stay our layer.**
+- **MoonSharp** — package id `MoonSharp`, pure-managed, no native deps.
+- **Serilog** behind `Microsoft.Extensions.Logging` (`ClientDiagnostics`) feeds a capped in-memory
+  `ClientMessageLog` (⌃P ▸ *Show client messages*) and a rolling file kept **separate from session
+  transcripts**. Never add a console sink — it would paint over the TUI.
 
 ## Architecture rule (non-negotiable)
 
@@ -99,36 +186,22 @@ Planned solution layout:
 Kept for context; **M1 is done** (see *Repository state* above). As originally scoped:
 
 1. Create `SharpMUTerm.slnx` with the projects above targeting `net10.0`, plus the TUnit test projects.
-2. Add NuGet references (see version notes below).
+2. Add NuGet references (see *Other dependency notes*).
 3. Runnable stub: connect over TCP (+ optional TLS via `SslStream`, IPv6-capable), pipe received
    bytes through a first-pass `AnsiParser` (SGR: 16 / 256 / 24-bit color), render colored output
    in a SharpConsoleUI window with an input line + history.
 4. Unit-test `AnsiParser` and the telnet-session wrapper in `SharpMUTerm.Core.Tests`.
 
-## Dependency notes / traps
-
-- **.NET 10 SDK** may need installing in the sandbox (currently RC, e.g. `10.0.100-rc.1`).
-- **SharpConsoleUI** — stable release, multi-targets net8/9/10; MIT. Provides split layouts, tabs,
-  resizable/mouse windows, and native Kitty graphics, so the multi-pane workspace and inline images
-  ride on the framework rather than being hand-drawn.
-- **TelnetNegotiationCore 2.5.3** (the version in use) has a fluent builder API and now negotiates
-  MCCP/MSDP/MXP itself, on top of the base negotiation (TELOPT, GA, TTYPE/MTTS, EOR, NAWS, CHARSET,
-  MSSP, GMCP). **Pueblo and the ANSI/MXP/Pueblo _parsing_ remain our layer** — the library does the
-  option handshake, not the payload parsing. `TelnetSession` sets the init-only `CallbackOnByteAsync`
-  reflectively to see raw bytes (incl. unterminated prompts); a first-class `OnByte` builder hook is a
-  good upstream PR. (Note: the repo owner authored this library, so extending it directly is on the
-  table — propose it via PR rather than assuming.)
-- **MoonSharp** — package id `MoonSharp`, pure-managed, no native deps.
-
 ## Verification
 
-- Primary signal: `dotnet build` + `dotnet run --project <testproj>` for each test project
-  (see the TUnit/MTP note above — `dotnet test` does **not** work here). Keep coverage in `SharpMUTerm.Core.Tests`
-  (ANSI/SGR parser, telnet round-trips, engines).
-- A headless sandbox **cannot** visually verify a TUI and **cannot** render Kitty graphics.
-  Treat the graphics layer as build-verified + capability-probed, never visually confirmed;
-  ensure it degrades cleanly when no graphics protocol is available (the sandbox is exactly
-  that case). Real terminal testing happens on the maintainer's machine.
+- Primary signal: `dotnet build SharpMUTerm.slnx` plus all five suites (see *Building and testing*).
+  Keep coverage in `SharpMUTerm.Core.Tests` — ANSI/SGR parser, telnet round-trips, engines.
+- **The TUI is verifiable headlessly** via the snapshot pipeline above; a claim about layout or
+  chrome should be backed by a rendered frame you actually looked at, not by reading the markup.
+- **Kitty graphics cannot be rendered here.** Treat that layer as build-verified and
+  capability-probed, never visually confirmed, and make sure it degrades cleanly when no protocol is
+  available — this environment is exactly that case. `SHARPMUTERM_GRAPHICS=halfblock` makes the
+  `web` view draw a real decoded picture as half-block cells, which is the closest available look.
 
 ## Working conventions
 
