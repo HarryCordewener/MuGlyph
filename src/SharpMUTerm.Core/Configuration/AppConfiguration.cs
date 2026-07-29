@@ -1,3 +1,4 @@
+using SharpMUTerm.Core.Text;
 using SharpMUTerm.Core.Theming;
 using SharpMUTerm.Core.Workspaces;
 
@@ -28,6 +29,14 @@ public sealed class AppConfiguration
     /// <see cref="Text"/> property, which shadows the namespace inside it.)
     /// </summary>
     public int ScrollbackLines { get; set; } = SharpMUTerm.Core.Text.ScrollbackBuffer.DefaultCapacity;
+
+    /// <summary>
+    /// How much history beyond <see cref="ScrollbackLines"/> is kept in a per-session disk cache so
+    /// the view can scroll further back than memory holds. An ephemeral cache, deleted when the
+    /// session closes — not a session transcript, which is the separate, opt-in
+    /// <c>PlainTextLogSink</c>/<c>HtmlLogSink</c> feature.
+    /// </summary>
+    public ScrollbackSpillOptions ScrollbackSpill { get; set; } = new();
 
     /// <summary>
     /// Forces a graphics protocol regardless of capability detection: one of

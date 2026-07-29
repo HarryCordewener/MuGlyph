@@ -33,6 +33,7 @@ public sealed class WorldSession : IAsyncDisposable
     private readonly TimerDefinition[] _timers;
     private readonly List<IDisposable> _timerHandles = new();
     private ITelnetSession? _telnet;
+    private ILogger _logger = NullLogger.Instance;
 
     /// <summary>
     /// Creates a session for a world and (optionally) the character being connected as. Automation
@@ -55,7 +56,8 @@ public sealed class WorldSession : IAsyncDisposable
         ILogSink? log = null,
         int scrollbackCapacity = ScrollbackBuffer.DefaultCapacity,
         TextSettings? text = null,
-        InputSettings? input = null)
+        InputSettings? input = null,
+        ScrollbackSpillOptions? spill = null)
     {
         World = world ?? throw new ArgumentNullException(nameof(world));
         Character = character;
@@ -67,7 +69,7 @@ public sealed class WorldSession : IAsyncDisposable
         _emoji = world.Emoji.Enabled
             ? new EmojiSubstitutor(world.Emoji.Emoticons, world.Emoji.Shortcodes)
             : null;
-        Scrollback = new ScrollbackBuffer(scrollbackCapacity);
+        Scrollback = new ScrollbackBuffer(scrollbackCapacity, CreateSpill(spill ?? new ScrollbackSpillOptions()));
 
         var sets = triggerSets ?? Array.Empty<TriggerSet>();
         Triggers = new TriggerEngine(sets.SelectMany(s => s.Triggers));
@@ -78,6 +80,16 @@ public sealed class WorldSession : IAsyncDisposable
             .Distinct(StringComparer.Ordinal)
             .ToArray();
     }
+
+    /// <summary>
+    /// The disk cache behind this session's scrollback, or null when it is memory-only. Created
+    /// lazily — the directory does not exist until a line is actually evicted from memory — and
+    /// deleted when the session is disposed. See <see cref="FileScrollbackSpill"/> for why this is a
+    /// cache and not a transcript: the session <em>log</em> is <see cref="AttachLog"/>'s business and
+    /// stays opt-in.
+    /// </summary>
+    private IScrollbackSpill? CreateSpill(ScrollbackSpillOptions options) =>
+        options.Enabled ? new FileScrollbackSpill(options, SessionKey) : null;
 
     private static ILineParser CreateParser(ContentFormat format) => format switch
     {
@@ -91,8 +103,21 @@ public sealed class WorldSession : IAsyncDisposable
     /// <see cref="DefaultSessionFactory"/> hands straight to <see cref="TelnetSession"/>. Defaults to
     /// <see cref="NullLogger.Instance"/>, so Core stays free of any logging implementation; the app sets
     /// it (via <see cref="SessionManager.Logger"/>) to its client diagnostics pipeline.
+    /// <para>
+    /// Assigning it also re-points the <see cref="Scrollback"/> buffer (and its spill cache), which is
+    /// constructed before the app gets a chance to set this — otherwise a disk fault in the scrollback
+    /// cache would report itself to <c>NullLogger</c>, i.e. nowhere.
+    /// </para>
     /// </summary>
-    public ILogger Logger { get; set; } = NullLogger.Instance;
+    public ILogger Logger
+    {
+        get => _logger;
+        set
+        {
+            _logger = value ?? NullLogger.Instance;
+            Scrollback.Logger = _logger;
+        }
+    }
 
     public WorldDefinition World { get; }
 
@@ -498,6 +523,7 @@ public sealed class WorldSession : IAsyncDisposable
         StopTimers();
         Scheduler.Dispose();
         DetachLog(); // flushes what the session logged before closing the file behind it
+        Scrollback.Dispose(); // deletes this session's scrollback spill cache; the log above is kept
         if (_telnet is not null)
         {
             await _telnet.DisposeAsync().ConfigureAwait(false);

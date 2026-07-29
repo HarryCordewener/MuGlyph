@@ -92,4 +92,65 @@ public class ScrollbackBufferTests
     {
         await Assert.That(() => new ScrollbackBuffer(0)).Throws<ArgumentOutOfRangeException>();
     }
+
+    [Test]
+    public async Task Indices_AreAbsoluteAndSurviveEviction()
+    {
+        var buffer = new ScrollbackBuffer(capacity: 4);
+        for (var i = 0; i < 10; i++)
+        {
+            buffer.Append(Line(i.ToString()));
+        }
+
+        await Assert.That(buffer.TotalLines).IsEqualTo(10L);
+        await Assert.That(buffer.OldestIndex).IsEqualTo(6L);
+        await Assert.That(buffer.AvailableLines).IsEqualTo(4L);
+
+        // Index 7 still means the eighth line ever seen, not "the second one still held".
+        await Assert.That(buffer.GetRange(7, 1)[0].Text).IsEqualTo("7");
+    }
+
+    [Test]
+    public async Task GetTail_ReturnsTheNewestLines()
+    {
+        var buffer = new ScrollbackBuffer(capacity: 100);
+        for (var i = 0; i < 10; i++)
+        {
+            buffer.Append(Line(i.ToString()));
+        }
+
+        await Assert.That(buffer.GetTail(3).Select(l => l.Text)).IsEquivalentTo(new[] { "7", "8", "9" });
+        await Assert.That(buffer.GetTail(100)).Count().IsEqualTo(10);
+        await Assert.That(new ScrollbackBuffer(capacity: 4).GetTail(3)).IsEmpty();
+    }
+
+    [Test]
+    public async Task RingGrowth_KeepsOrderAcrossReallocationAndWraparound()
+    {
+        // Capacity 100 with a ring that starts at 16 and doubles: appending 250 lines reallocates
+        // several times and then wraps, and the order has to survive both.
+        var buffer = new ScrollbackBuffer(capacity: 100);
+        for (var i = 0; i < 250; i++)
+        {
+            buffer.Append(Line(i.ToString()));
+        }
+
+        var snapshot = buffer.Snapshot();
+        await Assert.That(snapshot).Count().IsEqualTo(100);
+        for (var i = 0; i < 100; i++)
+        {
+            await Assert.That(snapshot[i].Text).IsEqualTo((150 + i).ToString());
+        }
+
+        await Assert.That(buffer.GetRange(150, 100).Select(l => l.Text)).IsEquivalentTo(snapshot.Select(l => l.Text));
+    }
+
+    [Test]
+    public async Task MemoryOnlyBuffer_IsNotSpilling()
+    {
+        var buffer = new ScrollbackBuffer(capacity: 2);
+        buffer.AppendRange(new[] { Line("a"), Line("b"), Line("c") });
+        await Assert.That(buffer.IsSpilling).IsFalse();
+        await Assert.That(buffer.SpilledLines).IsEqualTo(0L);
+    }
 }

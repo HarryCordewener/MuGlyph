@@ -50,7 +50,8 @@ public sealed class SessionManager : IAsyncDisposable
         int scrollbackCapacity = ScrollbackBuffer.DefaultCapacity,
         TextSettings? text = null,
         InputSettings? input = null,
-        Func<ConnectionOptions, ITelnetSession>? sessionFactory = null)
+        Func<ConnectionOptions, ITelnetSession>? sessionFactory = null,
+        ScrollbackSpillOptions? spill = null)
     {
         ArgumentNullException.ThrowIfNull(world);
         var session = new WorldSession(
@@ -58,7 +59,8 @@ public sealed class SessionManager : IAsyncDisposable
             sessionFactory: sessionFactory,
             scrollbackCapacity: scrollbackCapacity,
             text: text,
-            input: input);
+            input: input,
+            spill: spill);
         session.Logger = Logger;
         Add(session);
         return session;
@@ -85,7 +87,8 @@ public sealed class SessionManager : IAsyncDisposable
         ILogSink? log = null,
         TextSettings? text = null,
         InputSettings? input = null,
-        Func<ConnectionOptions, ITelnetSession>? sessionFactory = null)
+        Func<ConnectionOptions, ITelnetSession>? sessionFactory = null,
+        ScrollbackSpillOptions? spill = null)
     {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(character);
@@ -98,7 +101,8 @@ public sealed class SessionManager : IAsyncDisposable
             log: log,
             scrollbackCapacity: scrollbackCapacity,
             text: text,
-            input: input);
+            input: input,
+            spill: spill);
         session.Logger = Logger;
         Add(session);
         return session;

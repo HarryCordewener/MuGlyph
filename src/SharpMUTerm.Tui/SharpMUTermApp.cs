@@ -959,7 +959,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     {
         character ??= world.Characters.FirstOrDefault();
         return character is null
-            ? _sessions.Open(world, _config.ScrollbackLines, _config.Text, _config.Input, TelnetFactory)
+            ? _sessions.Open(
+                world,
+                _config.ScrollbackLines,
+                _config.Text,
+                _config.Input,
+                TelnetFactory,
+                _config.ScrollbackSpill)
             : _sessions.Open(
                 world,
                 character,
@@ -968,7 +974,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 OpenLog(world, character),
                 _config.Text,
                 _config.Input,
-                TelnetFactory);
+                TelnetFactory,
+                _config.ScrollbackSpill);
     }
 
     /// <summary>
