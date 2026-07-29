@@ -172,6 +172,7 @@ internal static class Program
         Console.WriteLine("With no host, the first configured world is used (if any).");
         Console.WriteLine();
         Console.WriteLine("In-app: Up/Down history · Ctrl+N next window · Ctrl+O next pane · Ctrl+W close · Ctrl+P palette · Ctrl+Q quit.");
+        Console.WriteLine("Scroll: PgUp/PgDn a page · Shift+Up/Down a line · Ctrl+Home top · Ctrl+End back to live output.");
         Console.WriteLine("Panes:  drag a pane's tab strip onto another pane — middle drops it as a tab, an edge splits there.");
     }
 }

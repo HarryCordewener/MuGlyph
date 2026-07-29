@@ -16,6 +16,7 @@ internal static class Glyphs
     public const string Menu = "\uf0c9"; // nf-fa-bars — header menu (was the box-drawing menu mark)
     public const string Connections = "\uf1e6"; // nf-fa-plug — rail header
     public const string Freeze = "\uf2dc"; // nf-fa-snowflake — freeze bar (was the up-triangle)
+    public const string Scrollback = "\uf102"; // nf-fa-angle_double_up — status row: output above the view
     public const string Draft = "\uf040"; // nf-fa-pencil — unsent-input marker (was the pen)
     public const string Close = "\uf00d"; // nf-fa-times (was the multiply sign). NOT drawn by us: a tab's
     // close button is SharpConsoleUI's own TabPage.IsClosable, which the framework renders as × and

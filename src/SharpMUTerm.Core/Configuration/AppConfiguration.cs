@@ -21,8 +21,13 @@ public sealed class AppConfiguration
     /// </summary>
     public Theme Theme { get; set; } = ThemeLibrary.Dark();
 
-    /// <summary>Maximum scrollback lines retained per session.</summary>
-    public int ScrollbackLines { get; set; } = 20_000;
+    /// <summary>
+    /// Maximum scrollback lines retained per session. See
+    /// <see cref="SharpMUTerm.Core.Text.ScrollbackBuffer.DefaultCapacity"/> for why the default is ten
+    /// thousand and not the twenty thousand it used to be. (Fully qualified: this class has its own
+    /// <see cref="Text"/> property, which shadows the namespace inside it.)
+    /// </summary>
+    public int ScrollbackLines { get; set; } = SharpMUTerm.Core.Text.ScrollbackBuffer.DefaultCapacity;
 
     /// <summary>
     /// Forces a graphics protocol regardless of capability detection: one of

@@ -122,4 +122,62 @@ public class WorkspaceTests
         await Assert.That(w.IsVisible(chat.Id)).IsTrue();
         await Assert.That(chat.Unread).IsEqualTo(0);
     }
+    /// <summary>
+    /// A window the shell has scrolled back off its live tail is not caught up, even though its tab is
+    /// the visible one — so output arriving into it badges, exactly as output into a hidden tab does. This
+    /// is the case a workspace that only asked <see cref="Workspace.IsVisible"/> badged nothing for: the
+    /// reader was sitting in their scrollback with new lines piling up below the viewport and no sign of it.
+    /// </summary>
+    [Test]
+    public async Task NoteActivity_OnAVisibleWindowScrolledBack_StillBadges()
+    {
+        var w = new Workspace();
+
+        await Assert.That(w.IsCaughtUp("main")).IsTrue();
+        w.NoteActivity("main");
+        await Assert.That(w.FindWindow("main")!.Unread).IsEqualTo(0); // visible and live: nothing unread
+
+        await Assert.That(w.SetScrolledBack("main", true)).IsTrue();
+        await Assert.That(w.IsVisible("main")).IsTrue();  // still the active tab
+        await Assert.That(w.IsCaughtUp("main")).IsFalse(); // but not showing where lines land
+
+        w.NoteActivity("main");
+        w.NoteActivity("main");
+        await Assert.That(w.FindWindow("main")!.Unread).IsEqualTo(2);
+    }
+
+    /// <summary>Returning a visible window to its live tail is catching up, and clears the badge.</summary>
+    [Test]
+    public async Task SetScrolledBack_False_OnAVisibleWindow_ClearsUnread()
+    {
+        var w = new Workspace();
+        w.SetScrolledBack("main", true);
+        w.NoteActivity("main");
+
+        await Assert.That(w.SetScrolledBack("main", false)).IsTrue();
+        await Assert.That(w.FindWindow("main")!.Unread).IsEqualTo(0);
+        await Assert.That(w.IsCaughtUp("main")).IsTrue();
+
+        // Idempotent, and it reports so — a caller can skip repainting badges that cannot have moved.
+        await Assert.That(w.SetScrolledBack("main", false)).IsFalse();
+        await Assert.That(w.SetScrolledBack("ghost", true)).IsFalse();
+    }
+
+    /// <summary>
+    /// Picking the tab of a window that is scrolled back does <em>not</em> clear its badge: the unread
+    /// lines are still below the viewport, so the badge is still true. Coming back to the bottom clears it.
+    /// </summary>
+    [Test]
+    public async Task ActivateWindow_DoesNotClearUnreadOfAScrolledBackWindow()
+    {
+        var w = new Workspace();
+        var chat = w.RouteSpawn("Chat"); // background, unread = 1
+        w.SetScrolledBack(chat.Id, true);
+
+        await Assert.That(w.ActivateWindow(chat.Id)).IsTrue();
+        await Assert.That(chat.Unread).IsEqualTo(1);
+
+        w.SetScrolledBack(chat.Id, false);
+        await Assert.That(chat.Unread).IsEqualTo(0);
+    }
 }

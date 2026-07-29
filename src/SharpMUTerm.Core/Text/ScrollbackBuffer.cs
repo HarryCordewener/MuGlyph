@@ -16,7 +16,24 @@ public sealed class ScrollbackBuffer
     private readonly LinkedList<StyledLine> _lines = new();
     private readonly object _gate = new();
 
-    public ScrollbackBuffer(int capacity = 20_000)
+    /// <summary>
+    /// Lines retained per window unless a caller (or <c>AppConfiguration.ScrollbackLines</c>) says
+    /// otherwise. The single definition, so the config default, the session default and this buffer's
+    /// own default cannot drift apart.
+    /// <para>
+    /// Ten thousand, not the twenty thousand it was. The number is not free: the TUI feeds a window's
+    /// whole buffer to one markup control whose parse cache is keyed on a content version, and
+    /// appending a line bumps that version — so <em>one</em> arriving line re-parses the entire buffer.
+    /// Measured against SharpConsoleUI 2.5.14 that is ~11 ms at 1,000 lines, ~50 ms at 5,000 and
+    /// 88–116 ms at 20,000: at twenty thousand a busy room drops the client below a frame a second.
+    /// Halving the cap is a mitigation, not the fix — a windowed feed (giving the control the visible
+    /// slice instead of everything) is what removes the coupling — but a default nobody can survive is
+    /// not one to keep in the meantime, and ten thousand lines is still hours of a room's traffic.
+    /// </para>
+    /// </summary>
+    public const int DefaultCapacity = 10_000;
+
+    public ScrollbackBuffer(int capacity = DefaultCapacity)
     {
         if (capacity < 1)
         {
