@@ -1133,7 +1133,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _system.DesktopDimensions.Width,
             session.Focus(),
             fkey,
-            session.Selection.SelectionIn(WorldsScreenRenderer.TriggerSetsPane)));
+            session.Selection.SelectionIn(WorldsScreenRenderer.TriggerSetsPane),
+            _system.DesktopDimensions.Height));
     }
 
     /// <summary>
@@ -1152,7 +1153,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             session.Selection.SelectionIn(0),
             SpawnTargets(),
             _system.DesktopDimensions.Width,
-            session.Focus()));
+            session.Focus(),
+            _system.DesktopDimensions.Height));
     }
 
     /// <summary>Opens the F3 Aliases screen: the alias list, then the alias's toggles.</summary>
@@ -1162,7 +1164,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             AliasesScreenRenderer.Model(_config.TriggerSets, selection.SelectionIn(0)));
 
         return new ScreenBinding(session, () => AliasesScreenView.Build(
-            _config.TriggerSets, session.Selection.SelectionIn(0), _system.DesktopDimensions.Width, session.Focus()));
+            _config.TriggerSets,
+            session.Selection.SelectionIn(0),
+            _system.DesktopDimensions.Width,
+            session.Focus(),
+            _system.DesktopDimensions.Height));
     }
 
     /// <summary>
@@ -1180,7 +1186,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _config.TriggerSets,
             session.Selection.SelectionIn(0),
             _system.DesktopDimensions.Width,
-            session.Focus()));
+            session.Focus(),
+            _system.DesktopDimensions.Height));
     }
 
     /// <summary>Opens the F6 Timers screen: the timer list, then the timer's toggles.</summary>
@@ -1190,7 +1197,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             TimersScreenRenderer.Model(_config.TriggerSets, selection.SelectionIn(0)));
 
         return new ScreenBinding(session, () => TimersScreenView.Build(
-            _config.TriggerSets, session.Selection.SelectionIn(0), _system.DesktopDimensions.Width, session.Focus()));
+            _config.TriggerSets,
+            session.Selection.SelectionIn(0),
+            _system.DesktopDimensions.Width,
+            session.Focus(),
+            _system.DesktopDimensions.Height));
     }
 
     /// <summary>Opens the F7 Text &amp; ANSI screen, bound to the app's text preferences.</summary>

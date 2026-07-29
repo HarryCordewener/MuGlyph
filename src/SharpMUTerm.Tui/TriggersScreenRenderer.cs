@@ -19,11 +19,26 @@ namespace SharpMUTerm.Tui;
 internal static class TriggersScreenRenderer
 {
     /// <summary>
-    /// Visible width of the left column. The view lays its column out at exactly this width, so
-    /// the two must agree -- a cursor bar padded narrower than its column leaves a gap before the
-    /// rule. Shared rather than duplicated so they cannot drift apart.
+    /// Visible width of the left column when the screen can afford it. The view lays its column out at
+    /// exactly the width it passes back in, so the two must agree -- a cursor bar padded narrower than
+    /// its column leaves a gap before the rule. Shared rather than duplicated so they cannot drift apart.
     /// </summary>
     internal const int ColumnWidth = 56;
+
+    /// <summary>
+    /// The fewest cells the rule list is still worth drawing in — a rule row is a tick, a name, a regex
+    /// and a route, and below this the route falls off every row at once.
+    /// </summary>
+    internal const int MinColumnWidth = 40;
+
+    /// <summary>
+    /// The fewest cells the editor pane can be read in: the width of the attribute legend's widest row,
+    /// which is the one line on this screen whose content is fixed and cannot be shortened. Under it the
+    /// vocabulary the <c>attrs</c> field accepts is drawn with its last word cut off, which is worse
+    /// than the list column being narrow — the list's own rows are names the reader chose and can
+    /// recognise from a prefix.
+    /// </summary>
+    internal const int MinEditorWidth = 48;
 
     /// <summary>
     /// What the route list calls "no spawn window" — a rule with a null <c>SpawnTarget</c> goes to the
@@ -386,14 +401,20 @@ internal static class TriggersScreenRenderer
     }
 
     /// <summary>The rule list — every trigger of every set, each over a set/flags sub-row.</summary>
+    /// <param name="width">
+    /// How wide the column actually runs, which the cursor bars are padded to. It is a parameter rather
+    /// than <see cref="ColumnWidth"/> because the view now gives the column back cells on a narrow
+    /// screen (see <see cref="ScreenChrome.SplitWidth"/>), and a bar padded to a width the column no
+    /// longer has would run under the hairline.
+    /// </param>
     internal static List<string> RulesColumn(
-        IReadOnlyList<TriggerSet> sets, int selectedTrigger, ScreenFocus? focus = null)
+        IReadOnlyList<TriggerSet> sets, int selectedTrigger, ScreenFocus? focus = null, int width = ColumnWidth)
     {
         ArgumentNullException.ThrowIfNull(sets);
 
         var cursor = focus ?? ScreenFocus.None;
         var flattened = Flatten(sets);
-        var left = new List<string> { "[dim]on  name / pattern → window[/]" };
+        var left = new List<string> { $"[dim]{ListHeading}[/]" };
 
         if (flattened.Count == 0)
         {
@@ -415,7 +436,7 @@ internal static class TriggersScreenRenderer
             foreach (var trigger in set.Triggers)
             {
                 left.Add(ScreenChrome.Cursor(
-                    RuleRow(row, selectedTrigger, trigger), cursor.IsOn(0, row), ColumnWidth));
+                    RuleRow(row, selectedTrigger, trigger), cursor.IsOn(0, row), width));
                 left.Add(RuleSub(set.Name, trigger.Actions));
                 row++;
             }
@@ -423,19 +444,85 @@ internal static class TriggersScreenRenderer
 
         left.Add(string.Empty);
         left.AddRange(ScreenChrome.Buttons(
-            Buttons(sets, selectedTrigger), cursor, 0, flattened.Count, ColumnWidth));
+            Buttons(sets, selectedTrigger), cursor, 0, flattened.Count, width));
+        left.Add(string.Empty);
+        left.AddRange(FlagLegend(Selected(flattened, selectedTrigger), width));
         return left;
     }
+
+    /// <summary>The rule the cursor has anchored, or null when the list is empty or nothing is picked.</summary>
+    private static Trigger? Selected(IReadOnlyList<(Trigger Trigger, string SetName)> flattened, int selected) =>
+        selected >= 0 && selected < flattened.Count ? flattened[selected].Trigger : null;
+
+    /// <summary>
+    /// Every mark a rule's two rows are written in, and what it means. The action letters were the one
+    /// vocabulary on these screens written down nowhere at all: a rule reading <c>▪ Comms · H ✎ ⇥ ƒ</c>
+    /// is four facts in five cells, and the cells are unguessable — <c>H</c> could as easily be "hidden"
+    /// as "highlight", and <c>⇥</c> as easily "indent" as "routed". The tick is in the list too, because
+    /// <c>on</c> as a column header is not much better a gloss than the tick it heads.
+    /// <para>
+    /// The order is the order the marks appear on a row: the tick and the set on the first two cells,
+    /// then the flags in the order <see cref="Flags"/> emits them.
+    /// </para>
+    /// </summary>
+    private static readonly (string Glyph, string Meaning)[] RuleMarks =
+    {
+        ("✓", "enabled"),
+        ("▪", "set"),
+        ("H", "highlight"),
+        ("G", "gag"),
+        ("✎", "rewrite"),
+        ("R", "respond"),
+        (Glyphs.Capture, "routed"),
+        ("ƒ", "script"),
+    };
+
+    /// <summary>
+    /// The rule list's key, drawn in the slack under its buttons. The marks the <em>selected</em> rule
+    /// carries are lit and the rest muted, so the block is simultaneously a key to the column and a
+    /// reading of the row the cursor is on — the same trick the editor pane's attribute legend plays on
+    /// the open buffer. The tick and the set marker are always lit, because every drawn row has a set
+    /// and the tick tracks the rule's own enabled state.
+    /// </summary>
+    private static IEnumerable<string> FlagLegend(Trigger? trigger, int width)
+    {
+        var flags = trigger is null ? string.Empty : Flags(trigger.Actions);
+        var cells = RuleMarks.Select(mark => ScreenChrome.LegendEntry(
+            mark.Glyph,
+            mark.Meaning,
+            mark.Glyph switch
+            {
+                "✓" => trigger?.Enabled ?? false,
+                "▪" => trigger is not null,
+                _ => flags.Contains(mark.Glyph, StringComparison.Ordinal),
+            }));
+
+        return ScreenChrome.Legend(LegendLabel, cells, width);
+    }
+
+    /// <summary>What the rule list's key is called.</summary>
+    private const string LegendLabel = "key";
+
+    /// <summary>The rule list's column header. Its marks are glossed by <see cref="FlagLegend"/>.</summary>
+    private const string ListHeading = "on  name / pattern → window";
 
     /// <summary>
     /// The editor for the selected rule — pattern, route-to list, highlight swatches and attributes,
     /// the rewrite/respond/script templates, and the toggles. Empty when nothing is selected.
     /// </summary>
+    /// <param name="width">How wide the pane runs, which its cursor bars and dropdowns are sized to.</param>
+    /// <param name="height">
+    /// How many rows the pane has, or 0 when the caller has none. This pane runs to two dozen rows and
+    /// the last three of them are cursor stops, so on a short screen it has to give something up rather
+    /// than let the checkboxes fall off the bottom — see <see cref="ScreenChrome.Compact"/>.
+    /// </param>
     internal static List<string> EditorColumn(
         IReadOnlyList<TriggerSet> sets,
         int selectedTrigger,
         IReadOnlyList<string> spawnTargets,
-        ScreenFocus? focus = null)
+        ScreenFocus? focus = null,
+        int width = ColumnWidth,
+        int height = 0)
     {
         ArgumentNullException.ThrowIfNull(sets);
         ArgumentNullException.ThrowIfNull(spawnTargets);
@@ -448,7 +535,9 @@ internal static class TriggersScreenRenderer
                 flattened[selectedTrigger].SetName,
                 spawnTargets,
                 cursor,
-                selectedTrigger)
+                selectedTrigger,
+                width,
+                height)
             : new List<string>();
     }
 
@@ -520,7 +609,13 @@ internal static class TriggersScreenRenderer
     }
 
     private static List<string> BuildEditor(
-        Trigger trigger, string setName, IReadOnlyList<string> spawnTargets, ScreenFocus cursor, int index)
+        Trigger trigger,
+        string setName,
+        IReadOnlyList<string> spawnTargets,
+        ScreenFocus cursor,
+        int index,
+        int width = ColumnWidth,
+        int height = 0)
     {
         var name = cursor.EditOn(0, index, NameField);
         var set = cursor.EditOn(0, index, SetField);
@@ -600,15 +695,19 @@ internal static class TriggersScreenRenderer
 
         // The three rows below are real booleans on the trigger, and are the editor pane's navigable
         // rows in this order.
-        lines.Add(ScreenChrome.Cursor(Checkbox("gag line", trigger.Actions.Gag), cursor.IsOn(1, 0), ColumnWidth));
+        lines.Add(ScreenChrome.Cursor(Checkbox("gag line", trigger.Actions.Gag), cursor.IsOn(1, 0), width));
         lines.Add(ScreenChrome.Cursor(
-            Checkbox("stop processing", trigger.StopProcessing), cursor.IsOn(1, 1), ColumnWidth));
+            Checkbox("stop processing", trigger.StopProcessing), cursor.IsOn(1, 1), width));
         lines.Add(ScreenChrome.Cursor(
-            Checkbox("case sensitive", trigger.CaseSensitive), cursor.IsOn(1, 2), ColumnWidth));
+            Checkbox("case sensitive", trigger.CaseSensitive), cursor.IsOn(1, 2), width));
+
+        // Compacted before the dropdown is laid over it, not after: the overlay replaces rows by index,
+        // so dropping a blank underneath it afterwards would slide the list off the field it belongs to.
+        ScreenChrome.Compact(lines, height);
 
         // Four of this pane's nine fields know values worth listing — the route, both highlight colours
         // and the script callback — and all four get the same drawn list, over the rows beside them.
-        return ScreenChrome.Choices(lines, cursor.Edit, ColumnWidth);
+        return ScreenChrome.Choices(lines, cursor.Edit, width);
     }
 
     /// <summary>A checkbox row in the editor pane, checked in the accent and unchecked dim.</summary>

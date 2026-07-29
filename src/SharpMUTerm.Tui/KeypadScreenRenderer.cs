@@ -34,6 +34,27 @@ internal static class KeypadScreenRenderer
     /// </summary>
     private const int HotkeysColumnWidth = 64;
 
+    /// <summary>
+    /// The fewest cells the binding list can be read in: four wells (tick, key, name, set) and then the
+    /// command, which is the one value on the row with no width worth guessing. Below this the command
+    /// is cut off — which is the exact failure the numpad grid beside it was already committing, and
+    /// committing it in <em>both</em> columns at once is not a fix.
+    /// </summary>
+    internal const int MinHotkeysWidth = 57;
+
+    /// <summary>
+    /// What an armed key capture adds to the widest binding row: the prompt
+    /// (<see cref="ScreenChrome.CapturePrompt"/>, in its accent block) less the key well it replaces.
+    /// The row's other four values are still drawn beside it, so while a capture is up the list needs
+    /// this much more than its resting minimum — and gets it from the numpad diagram, which is the one
+    /// thing on the screen that has nothing to do with the keystroke being waited for.
+    /// </summary>
+    internal static int CaptureWidth =>
+        MinHotkeysWidth + ScreenChrome.CapturePrompt.Length + 2 - KeyColumnWidth - 1;
+
+    /// <summary>The fewest cells the numpad diagram is still a diagram in.</summary>
+    internal const int MinNumpadWidth = 34;
+
     /// <summary>Visible width the binding list's name column is padded to, so the arrows line up.</summary>
     private const int NameColumnWidth = 12;
 
@@ -81,11 +102,27 @@ internal static class KeypadScreenRenderer
 
     private const string NewBindingCommand = "look";
 
-    /// <summary>Longest command shown inside a numpad cell before it is ellipsised.</summary>
+    /// <summary>
+    /// Longest command a numpad cell shows when the column has no width to reason from — the merged
+    /// <see cref="Render"/>, which pads to <see cref="ColumnWidth"/> and has no screen behind it.
+    /// </summary>
     private const int NumpadCommandWidth = 10;
 
-    /// <summary>Visible width of one numpad cell: "[N] " (4) plus <see cref="NumpadCommandWidth"/>.</summary>
-    private const int NumpadCellWidth = 4 + NumpadCommandWidth;
+    /// <summary>
+    /// The most cells a numpad cell will ever spend on a command. The grid is a <em>diagram</em> of nine
+    /// keys, not a command line: past this it stops being a picture of the keypad and starts being a
+    /// third list, and every cell it takes comes out of the binding rows beside it.
+    /// </summary>
+    private const int MaxNumpadCommandWidth = 14;
+
+    /// <summary>The fewest cells a numpad cell is worth drawing a command in at all.</summary>
+    private const int MinNumpadCommandWidth = 6;
+
+    /// <summary>What a numpad row spends on chrome: three "[N] " prefixes and the two gaps between.</summary>
+    private const int NumpadRowChrome = (3 * 4) + (2 * 3);
+
+    /// <summary>Visible width of one numpad cell: "[N] " (4) plus the command width in force.</summary>
+    private static int CellWidth(int command) => 4 + command;
 
     private const string NumpadCellGap = "   ";
 
@@ -95,6 +132,39 @@ internal static class KeypadScreenRenderer
         new[] { 4, 5, 6 },
         new[] { 1, 2, 3 },
     };
+
+    /// <summary>
+    /// How wide the numpad grid <em>wants</em> to be: enough for the longest command actually bound to a
+    /// digit, so the diagram stops ellipsising a command the binding list draws in full two columns
+    /// over. That asymmetry was the complaint — <c>[[1]] look at a…</c> beside <c>→ look at altar</c>,
+    /// the same value truncated on one side of a hairline and not the other — and it came of a
+    /// <em>constant</em> cell width beside a variable one, not of a shortage of screen: at 120 and 160
+    /// columns there were cells going spare all along.
+    /// <para>
+    /// It is what the grid asks for, not what it gets. <see cref="ScreenChrome.SplitWidth"/> takes cells
+    /// back when the binding list would otherwise lose its commands off the right-hand edge, which is
+    /// what happens at 100 columns — and there both columns truncate, which is at least the same answer
+    /// twice.
+    /// </para>
+    /// </summary>
+    internal static int NumpadWidth(IReadOnlyList<Macro> macros)
+    {
+        ArgumentNullException.ThrowIfNull(macros);
+
+        var longest = MinNumpadCommandWidth;
+        foreach (var row in NumpadRows)
+        {
+            foreach (var digit in row)
+            {
+                if (FindByKey(macros, $"Num{digit}") is { } macro)
+                {
+                    longest = Math.Max(longest, macro.Command.Length);
+                }
+            }
+        }
+
+        return (3 * Math.Min(longest, MaxNumpadCommandWidth)) + NumpadRowChrome;
+    }
 
     /// <summary>
     /// Merges every sub-block into one line list (header, numpad | hotkeys, footer). Used by the
@@ -345,25 +415,36 @@ internal static class KeypadScreenRenderer
     /// could one day deliver the numpad would drop the disclaimer without anyone remembering to.
     /// </para>
     /// </summary>
-    internal static List<string> NumpadColumn(IReadOnlyList<Macro> macros)
+    /// <param name="width">
+    /// How wide the column actually runs. The cells divide it between them, so a wide screen draws the
+    /// whole command and a narrow one ellipsises it — rather than every screen ellipsising at ten
+    /// characters because that was the width the grid was first drawn at.
+    /// </param>
+    internal static List<string> NumpadColumn(IReadOnlyList<Macro> macros, int width = 0)
     {
         ArgumentNullException.ThrowIfNull(macros);
+
+        var command = width <= 0
+            ? NumpadCommandWidth
+            : Math.Clamp((width - NumpadRowChrome) / 3, MinNumpadCommandWidth, MaxNumpadCommandWidth);
 
         var lines = new List<string> { $"[dim]NUMPAD[/]{Caveat(MacroKeys.Verdict("Num5"))}" };
         foreach (var row in NumpadRows)
         {
-            lines.Add(NumpadRow(row, macros));
+            lines.Add(NumpadRow(row, macros, command));
         }
 
         return lines;
     }
 
     /// <summary>The binding list — every macro with its enabled state, key, name, and command.</summary>
+    /// <param name="width">How wide the column runs, which its cursor bars and dropdown are sized to.</param>
     internal static List<string> HotkeysColumn(
         IReadOnlyList<Macro> macros,
         ScreenFocus? focus = null,
         IReadOnlyList<TriggerSet>? sets = null,
-        int selected = -1)
+        int selected = -1,
+        int width = HotkeysColumnWidth)
     {
         ArgumentNullException.ThrowIfNull(macros);
 
@@ -385,7 +466,7 @@ internal static class KeypadScreenRenderer
                     cursor.EditOn(0, i, KeyField),
                     cursor.EditOn(0, i, SetField)),
                 cursor.IsOn(0, i),
-                HotkeysColumnWidth));
+                width));
         }
 
         // A set holding no bindings owns none of the rows above and would otherwise be drawn nowhere at
@@ -401,21 +482,21 @@ internal static class KeypadScreenRenderer
 
         lines.Add(string.Empty);
         lines.AddRange(ScreenChrome.Buttons(
-            Buttons(sets, selected), cursor, 0, macros.Count, HotkeysColumnWidth));
-        return ScreenChrome.Choices(lines, cursor.Edit, HotkeysColumnWidth);
+            Buttons(sets, selected), cursor, 0, macros.Count, width));
+        return ScreenChrome.Choices(lines, cursor.Edit, width);
     }
 
-    private static string NumpadRow(int[] digits, IReadOnlyList<Macro> macros)
+    private static string NumpadRow(int[] digits, IReadOnlyList<Macro> macros, int command)
     {
         var cells = new string[digits.Length];
         for (var i = 0; i < digits.Length; i++)
         {
-            var cell = NumpadCell(digits[i], macros);
+            var cell = NumpadCell(digits[i], macros, command);
 
             // Every cell is padded to the same visible width so the three columns line up whatever
             // is bound: a cell is as wide as "[N] " plus the longest command it can hold. The last
             // cell in a row is left unpadded to avoid trailing whitespace.
-            cells[i] = i == digits.Length - 1 ? cell : PadVisible(cell, NumpadCellWidth);
+            cells[i] = i == digits.Length - 1 ? cell : PadVisible(cell, CellWidth(command));
         }
 
         return string.Join(NumpadCellGap, cells);
@@ -426,12 +507,12 @@ internal static class KeypadScreenRenderer
     /// the binding list beside it and has no cursor of its own, so a cell is somewhere a command is
     /// *shown*, never somewhere one is typed. See <see cref="ScreenChrome.ReadOnly"/>.
     /// </summary>
-    private static string NumpadCell(int digit, IReadOnlyList<Macro> macros)
+    private static string NumpadCell(int digit, IReadOnlyList<Macro> macros, int width)
     {
         var macro = FindByKey(macros, $"Num{digit}");
         var command = macro is null
             ? "[dim]—[/]"
-            : ScreenChrome.ReadOnly(Truncate(macro.Command, NumpadCommandWidth));
+            : ScreenChrome.ReadOnly(Truncate(macro.Command, width));
         return $"[bold {Accent}][[{digit}]][/] {command}";
     }
 

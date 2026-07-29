@@ -155,4 +155,85 @@ public class TriggersScreenRendererTests
         await Assert.That(lines.Any(l => l.Contains("x[[1]]"))).IsTrue();
         await Assert.That(lines.Any(l => l.Contains("Weird[[Set]]"))).IsTrue();
     }
+
+    /// <summary>
+    /// The rule list's key, at the foot of the column. The sub-row compresses a rule to single cells —
+    /// <c>▪ Comms · H ✎ ⇥ ƒ</c> is four facts in five glyphs — and until this block existed nothing on
+    /// the screen said what any of them meant. Every mark a row can carry has to be named, for the same
+    /// reason the attribute legend names every attribute: a key with gaps in it is a key you cannot
+    /// trust to be complete.
+    /// </summary>
+    [Test]
+    public async Task TheRuleListKeyNamesEveryMarkARowCanCarry()
+    {
+        var column = TriggersScreenRenderer.RulesColumn(Scene(), selectedTrigger: 0);
+        var key = string.Join("\n", column.SkipWhile(l => !l.Contains("key")));
+
+        foreach (var meaning in new[]
+                 {
+                     "enabled", "set", "highlight", "gag", "rewrite", "respond", "routed", "script",
+                 })
+        {
+            await Assert.That(key).Contains(meaning);
+        }
+
+        foreach (var glyph in new[] { "✓", "▪", "H", "G", "✎", "R", "ƒ" })
+        {
+            await Assert.That(key).Contains(glyph);
+        }
+    }
+
+    /// <summary>
+    /// It also reads the row the cursor is on: the marks that rule carries are lit and the rest muted,
+    /// which is what turns a key into an answer. The same trick the editor pane's attribute legend
+    /// plays on the open buffer.
+    /// </summary>
+    [Test]
+    public async Task TheRuleListKeyLightsTheMarksTheSelectedRuleCarries()
+    {
+        var sets = new[]
+        {
+            new TriggerSet
+            {
+                Name = "Comms",
+                Triggers = new List<Trigger>
+                {
+                    new()
+                    {
+                        Name = "gagged",
+                        Pattern = "^x$",
+                        Enabled = true,
+                        Actions = new TriggerActions { Gag = true },
+                    },
+                    new()
+                    {
+                        Name = "plain",
+                        Pattern = "^y$",
+                        Enabled = false,
+                        Actions = new TriggerActions(),
+                    },
+                },
+            },
+        };
+
+        var gagged = Key(TriggersScreenRenderer.RulesColumn(sets, selectedTrigger: 0));
+        var plain = Key(TriggersScreenRenderer.RulesColumn(sets, selectedTrigger: 1));
+
+        await Assert.That(Lit(gagged, "gag")).IsTrue();
+        await Assert.That(Lit(gagged, "enabled")).IsTrue();
+
+        // The second rule is disabled and does nothing at all, so nothing in its reading is lit but the
+        // set every drawn row has.
+        await Assert.That(Lit(plain, "gag")).IsFalse();
+        await Assert.That(Lit(plain, "enabled")).IsFalse();
+        await Assert.That(Lit(plain, "set")).IsTrue();
+    }
+
+    /// <summary>The key block, as one string — everything from the row that names it onward.</summary>
+    private static string Key(IEnumerable<string> column) =>
+        string.Join("\n", column.SkipWhile(l => !l.Contains("key")));
+
+    /// <summary>Whether a key entry is drawn lit (accent glyph, primary ink) rather than muted.</summary>
+    private static bool Lit(string key, string meaning) =>
+        key.Contains($"[{ScreenPalette.Value}]{meaning}[/]", StringComparison.Ordinal);
 }

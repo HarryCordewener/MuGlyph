@@ -18,11 +18,29 @@ namespace SharpMUTerm.Tui;
 internal static class TimersScreenRenderer
 {
     /// <summary>
-    /// Visible width of the left column. The view lays its column out at exactly this width, so
-    /// the two must agree -- a cursor bar padded narrower than its column leaves a gap before the
-    /// rule. Shared rather than duplicated so they cannot drift apart.
+    /// Visible width of the left column when the screen can afford it. The view lays its column out at
+    /// exactly the width it passes back in, so the two must agree -- a cursor bar padded narrower than
+    /// its column leaves a gap before the rule. Shared rather than duplicated so they cannot drift apart.
     /// </summary>
     internal const int ColumnWidth = 56;
+
+    /// <summary>The fewest cells the timer list is still worth drawing in.</summary>
+    internal const int MinColumnWidth = 40;
+
+    /// <summary>The fewest cells the editor pane can be read in — its widest heading and then some.</summary>
+    internal const int MinEditorWidth = 32;
+
+    /// <summary>
+    /// What the timer list's key is called, and the two marks it glosses. A row reads
+    /// <c>✓ ▸ keepalive every 60s ▪ Comms → @@idle</c>: the tick is the enabled state <c>on</c> heads
+    /// without really explaining, and the square is the owning set. Named constants because the row
+    /// draws the same glyphs and the key would otherwise be a second, drifting copy of them.
+    /// </summary>
+    private const string LegendLabel = "key";
+
+    private const string EnabledGlyph = "✓";
+
+    private const string SetGlyph = "▪";
 
     /// <summary>
     /// The timer row's field ordinals, in the order ⇥ steps through them. The name leads, as it does on
@@ -208,8 +226,12 @@ internal static class TimersScreenRenderer
     }
 
     /// <summary>The timer list — every timer of every set, with its enabled state and schedule.</summary>
+    /// <param name="width">
+    /// How wide the column actually runs, which the cursor bars are padded to — the view gives cells
+    /// back to the editor on a narrow screen (see <see cref="ScreenChrome.SplitWidth"/>).
+    /// </param>
     internal static List<string> ListColumn(
-        IReadOnlyList<TriggerSet> sets, int selected, ScreenFocus? focus = null)
+        IReadOnlyList<TriggerSet> sets, int selected, ScreenFocus? focus = null, int width = ColumnWidth)
     {
         ArgumentNullException.ThrowIfNull(sets);
 
@@ -237,13 +259,23 @@ internal static class TimersScreenRenderer
             foreach (var timer in set.Timers)
             {
                 lines.Add(ScreenChrome.Cursor(
-                    Row(timer, set.Name, index == selected), cursor.IsOn(0, index), ColumnWidth));
+                    Row(timer, set.Name, index == selected), cursor.IsOn(0, index), width));
                 index++;
             }
         }
 
         lines.Add(string.Empty);
-        lines.AddRange(ScreenChrome.Buttons(Buttons(sets, selected), cursor, 0, entries.Count, ColumnWidth));
+        lines.AddRange(ScreenChrome.Buttons(Buttons(sets, selected), cursor, 0, entries.Count, width));
+        lines.Add(string.Empty);
+        var picked = selected >= 0 && selected < entries.Count ? entries[selected].Timer : null;
+        lines.AddRange(ScreenChrome.Legend(
+            LegendLabel,
+            new[]
+            {
+                ScreenChrome.LegendEntry(EnabledGlyph, "enabled", picked?.Enabled ?? false),
+                ScreenChrome.LegendEntry(SetGlyph, "set", picked is not null),
+            },
+            width));
         return lines;
     }
 
@@ -251,19 +283,29 @@ internal static class TimersScreenRenderer
     /// The editor for the selected timer — interval, command, and the one-shot/enabled toggles.
     /// Empty when nothing is selected.
     /// </summary>
+    /// <param name="width">How wide the pane runs, which its cursor bars and dropdowns are sized to.</param>
+    /// <param name="height">How many rows the pane has, or 0 when the caller has none.</param>
     internal static List<string> EditorColumn(
-        IReadOnlyList<TriggerSet> sets, int selected, ScreenFocus? focus = null)
+        IReadOnlyList<TriggerSet> sets,
+        int selected,
+        ScreenFocus? focus = null,
+        int width = ColumnWidth,
+        int height = 0)
     {
         ArgumentNullException.ThrowIfNull(sets);
 
         var cursor = focus ?? ScreenFocus.None;
         var entries = Flatten(sets);
-        return selected >= 0 && selected < entries.Count
-            ? ScreenChrome.Choices(
-                BuildEditor(entries[selected].Timer, entries[selected].SetName, cursor, selected),
-                cursor.Edit,
-                ColumnWidth)
-            : new List<string>();
+        if (selected < 0 || selected >= entries.Count)
+        {
+            return new List<string>();
+        }
+
+        // Compacted before the dropdown is laid over it: the overlay replaces rows by index, so dropping
+        // a blank underneath it afterwards would slide the list off the field it belongs to.
+        var lines = ScreenChrome.Compact(
+            BuildEditor(entries[selected].Timer, entries[selected].SetName, cursor, selected, width), height);
+        return ScreenChrome.Choices(lines, cursor.Edit, width);
     }
 
     /// <summary>Flattens every set's timers into one list, each paired with its owning set's name.</summary>
@@ -298,7 +340,11 @@ internal static class TimersScreenRenderer
     /// identify the timer; committing it <em>moves</em> the timer (<see cref="ScreenLists.Owner{T}"/>).
     /// </summary>
     private static List<string> BuildEditor(
-        TimerDefinition timer, string setName, ScreenFocus cursor, int selected) => new()
+        TimerDefinition timer,
+        string setName,
+        ScreenFocus cursor,
+        int selected,
+        int width = ColumnWidth) => new()
     {
         "[dim]name[/]",
         $"  {ScreenChrome.Field(Escape(timer.Name), cursor.EditOn(0, selected, NameField))}",
@@ -312,8 +358,8 @@ internal static class TimersScreenRenderer
         "[dim]command[/]",
         $"  {ScreenChrome.Field(Escape(timer.Command), cursor.EditOn(0, selected, CommandField))}",
         string.Empty,
-        ScreenChrome.Cursor(Checkbox("one-shot", timer.OneShot), cursor.IsOn(1, 0), ColumnWidth),
-        ScreenChrome.Cursor(Checkbox("enabled", timer.Enabled), cursor.IsOn(1, 1), ColumnWidth),
+        ScreenChrome.Cursor(Checkbox("one-shot", timer.OneShot), cursor.IsOn(1, 0), width),
+        ScreenChrome.Cursor(Checkbox("enabled", timer.Enabled), cursor.IsOn(1, 1), width),
     };
 
     /// <summary>A checkbox row in the editor pane, checked in the accent and unchecked dim.</summary>

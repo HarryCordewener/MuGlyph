@@ -4,8 +4,8 @@ Context for whoever (human or agent) picks up this work next.
 
 - **Repository:** `SharpMUSH/SharpMUTerm`
 - **Start from:** a fresh branch off `main`
-- **Tests:** 1101 across the solution (404 Core / 83 Graphics / 42 Scripting /
-  28 Web / 544 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
+- **Tests:** 1119 across the solution (404 Core / 83 Graphics / 42 Scripting /
+  28 Web / 562 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
   from this repo; building against a local SharpConsoleUI clone surfaces 2 upstream
   NuGet advisory warnings for AngleSharp, which are the framework's, not ours)
 
@@ -349,6 +349,65 @@ What the framework actually provides (read at v2.5.14, not assumed):
 
 - **Wiring is one table**, `SharpMUTermApp.SettingsScreens()`, read by both the
   global F-key shortcuts and the `--view` snapshot lookup. Add a screen there.
+- **Panes are sized from the space available, not from constants.** Three pure
+  rules in `ScreenChrome`, pinned in `ScreenLayoutTests`:
+  - **`SplitWidth(width, desired, minimum, companion)`** — a two-column screen's
+    list column keeps its designed width when the screen can afford it and gives
+    cells back when it can't. It used to be a flat 56 (48 on F4), which was right
+    at 120 columns and wrong at 100: the editor lost its attribute legend off the
+    right, F4's binding rows lost their commands, and the list beside them was
+    two-thirds empty. Every view passes `width`; a caller with none (the merged
+    `Render` the renderer tests go through) gets the desired width unchanged, so
+    the width-agnostic form is exactly what it always was.
+  - **`Compact(block, height)`** — drops a block's blank separator rows, top-down,
+    until it fits. They are the first thing a short pane can spare.
+  - **`Window(block, height)`** — slices what is left down to the rows around the
+    **cursor band** `ScreenChrome.Cursor` paints (found the same way `Choices`
+    finds the caret), and labels the edges `⌃ n more` / `⌄ n more`. Centred, not
+    scrolled-into-view: these blocks are rebuilt from scratch on every keystroke,
+    so a stateless rule has to be a function of the cursor alone.
+  - **Order matters: compact → window → `Choices`.** The dropdown overlays rows
+    *by index*, so anything that moves a row has to happen before it is drawn.
+- **`ScreenChrome.Split`** is the frame all four two-column screens now share
+  (F2/F3/F4/F6), and it sizes the body **to its content** with a `Star` spacer
+  under it rather than stretching it. That is what stops F3/F6/F4 drawing a
+  thirty-row empty pane under four rows of rules: the hairline ends where the
+  columns end, exactly as F7/F8's options card ends where its options do.
+- **A list column ends in a key to its own glyphs** (`ScreenChrome.Legend` /
+  `LegendEntry`). F2's sub-row said `▪ Comms · H ✎ ⇥ ƒ` — four facts in five
+  cells — and nothing anywhere said what any of them meant; `on` as a column
+  header was barely a gloss on the tick it headed. The marks the *selected* row
+  carries are lit and the rest muted, so the block is a key and a reading of the
+  cursor's row at once (the same trick F2's attribute legend plays on the open
+  buffer). It goes at the foot of the list because the header names the row's
+  *columns* and these are the marks inside them — and because a list column's
+  slack is at the bottom.
+- **F5's detail column no longer restates the world or the character.** The title
+  strip (`Aetherfall  aetherfall.mux:4201  TLS on · UTF-8`) is gone: every token
+  of it was repeated in the five editable rows directly beneath, and the address
+  a third time in the WORLDS list. The CHARACTERS table is a **selector** — names
+  and the selection marker — because its `state`, `login` and `trigger sets`
+  columns were the CHARACTER form's `session` and `auto-login` rows and the
+  trigger-set pane beside them, drawn again. Two pinned assertions moved for
+  this; see below.
+- **F4's numpad column is sized from its content** (`KeypadScreenRenderer.NumpadWidth`,
+  capped at `MaxNumpadCommandWidth`). The cell used to ellipsise at a constant ten
+  characters while the binding list two columns over drew the same command in
+  full — `[+1] look at a…` beside `→ look at altar` — with cells going spare at
+  120 and 160 all along. **While a key capture is armed the diagram gives its
+  width up** (`KeypadScreenRenderer.CaptureWidth`): the prompt is twice as wide as
+  the key well it replaces, and the numpad is the one thing on that screen with
+  nothing to do with the keystroke being waited for.
+- **F2's attribute legend is still drawn at rest — deliberately.** A dropdown
+  whose buffer matches nothing is two rows (caption + shadow), and opened from
+  `bg` it covers `attrs` and the legend's first row, leaving the second stranded
+  under the shadow. Drawing the legend only while `attrs` is open would trade a
+  transient, self-healing cosmetic fault for a permanent one: the legend is the
+  **only** place the vocabulary that field accepts is written down, which is what
+  `TriggersScreenActionsTests.TheAttributeLegendNamesEveryAttributeAndFollowsThe
+  Buffer` pins. Reordering the section so no dropdown can bisect it means putting
+  `attrs` above the two colours, which means moving the field ordinals — the one
+  thing these screens don't do.
 - Each screen is a pure **`*ScreenRenderer`** exposing its regions as markup blocks
   (`HeaderLine`, `FooterLine`, body columns) plus a **`*ScreenView`** that composes
   them into controls. The renderer's `Render(...)` merges the same blocks back

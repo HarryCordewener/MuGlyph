@@ -15,14 +15,13 @@ namespace SharpMUTerm.Tui;
 /// </summary>
 internal static class TriggersScreenView
 {
-    private const int RulesColumnWidth = TriggersScreenRenderer.ColumnWidth;
-
     public static IWindowControl Build(
         IReadOnlyList<TriggerSet> sets,
         int selectedTrigger,
         IReadOnlyList<string> spawnTargets,
         int width,
-        ScreenFocus? focus = null)
+        ScreenFocus? focus = null,
+        int height = 0)
     {
         var header = ScreenChrome.Band(
             TriggersScreenRenderer.HeaderLine(
@@ -31,31 +30,22 @@ internal static class TriggersScreenView
         var footer = ScreenChrome.Band(
             TriggersScreenRenderer.FooterLine(sets, selectedTrigger, width, focus), ScreenPalette.FooterBg);
 
-        // Body: rule list │ editor, as two real columns.
-        var rulesCol = ScreenChrome.Stretch(
-            new MarkupControl(TriggersScreenRenderer.RulesColumn(sets, selectedTrigger, focus)));
+        // Body: rule list │ editor, as two real columns. The split is a function of the screen's width:
+        // at 120 the rule list keeps the share it was designed with, and at 100 it gives cells back to
+        // the editor rather than letting the attribute legend run off the right-hand edge.
+        var rules = ScreenChrome.SplitWidth(
+            width,
+            TriggersScreenRenderer.ColumnWidth,
+            TriggersScreenRenderer.MinColumnWidth,
+            TriggersScreenRenderer.MinEditorWidth);
+        var body = ScreenChrome.Rows(height);
+        var left = TriggersScreenRenderer.RulesColumn(sets, selectedTrigger, focus, rules);
+        var right = TriggersScreenRenderer.EditorColumn(
+            sets, selectedTrigger, spawnTargets, focus, width <= 0 ? rules : width - rules - ScreenChrome.ColumnDivider, body);
+
+        var rulesCol = ScreenChrome.Stretch(new MarkupControl(ScreenChrome.Window(left, body)));
         var editorCol = ScreenChrome.Stretch(new MarkupControl(
-            ScreenChrome.Indent(
-                TriggersScreenRenderer.EditorColumn(sets, selectedTrigger, spawnTargets, focus))));
-        var body = Controls.HorizontalGrid()
-            .WithAlignment(HorizontalAlignment.Stretch)
-            .WithVerticalAlignment(VerticalAlignment.Fill)
-            .Column(c => c.Width(RulesColumnWidth).Add(rulesCol))
-            .Column(c => c.Width(1).Add(ScreenChrome.VerticalRule()))
-            .Column(c => c.Width(1).Add(ScreenChrome.Filler()))
-            .Column(c => c.Flex(1).Add(editorCol))
-            .Build();
-
-        // Header on the first row, footer on the last, body taking everything between — so the action
-        // bar sits at the bottom of the screen instead of trailing the content.
-        var root = Controls.Grid()
-            .WithAlignment(HorizontalAlignment.Stretch)
-            .WithVerticalAlignment(VerticalAlignment.Fill);
-        root.Rows(GridLength.Cells(1), GridLength.Star(1), GridLength.Cells(1)).Columns(GridLength.Star(1));
-        root.Place(header, 0, 0, 1, 1);
-        root.Place(body, 1, 0, 1, 1);
-        root.Place(footer, 2, 0, 1, 1);
-
-        return root.Build();
+            ScreenChrome.Indent(ScreenChrome.Window(right, body))));
+        return ScreenChrome.Split(header, footer, rulesCol, editorCol, rules, Math.Max(left.Count, right.Count), body);
     }
 }

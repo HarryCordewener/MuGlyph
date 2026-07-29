@@ -580,13 +580,22 @@ internal static class WorldsScreenRenderer
         return left;
     }
 
+    /// <param name="height">
+    /// How many rows the column has, or 0 when the caller has none. This is the one pane on these
+    /// screens that draws rows belonging to three of its four cursor panes, so on a short terminal it
+    /// has to give its blanks up and then scroll — see <see cref="ScreenChrome.Compact"/> and
+    /// <see cref="ScreenChrome.Window"/>. At 100×24 it ran to nineteen rows in twelve, and the twelve
+    /// it drew stopped just above the CHARACTERS list, so every character row and every button under
+    /// them was a cursor stop that had never been drawn.
+    /// </param>
     internal static List<string> DetailColumn(
         IReadOnlyList<WorldDefinition> worlds,
         IReadOnlyList<TriggerSet> triggerSets,
         int selectedWorld,
         int selectedCharacter,
         string accent,
-        ScreenFocus? focus = null)
+        ScreenFocus? focus = null,
+        int height = 0)
     {
         var cursor = focus ?? ScreenFocus.None;
         (selectedWorld, selectedCharacter) = Resolve(worlds, selectedWorld, selectedCharacter);
@@ -599,11 +608,15 @@ internal static class WorldsScreenRenderer
 
         // The world's own fields are the WORLDS-list row's fields, in this order — the detail column is
         // where they are displayed, so it is where an open edit draws its caret.
+        //
+        // There is no title strip above them any more. It read
+        // `Aetherfall  aetherfall.mux:4201  TLS on · UTF-8` — and every token of it was repeated in the
+        // five rows immediately underneath, twice over for the address, which the WORLDS list beside it
+        // also carries. A summary directly above the thing it summarises is not a summary; it is the
+        // same row drawn again in a shape you cannot edit, and the two cells it cost were the two rows
+        // the CHARACTERS list needed at 100×24.
         var right = new List<string>
         {
-            $"[bold {Value}]{Escape(world.Name)}[/]  [{Label}]{Escape(world.Host)}:{world.Port.ToString(CultureInfo.InvariantCulture)}[/]"
-            + $"  [{accent}]TLS {OnOff(world.UseTls)}[/][{Label}] · {Escape(world.Encoding)}[/]",
-            string.Empty,
             $"[{accent}]├ WORLD[/]",
             WorldField("name", Field(
                 $"[{Value}]{Escape(world.Name)}[/]", cursor, selectedWorld, WorldNameField)),
@@ -630,7 +643,6 @@ internal static class WorldsScreenRenderer
                 KeepaliveField)),
             string.Empty,
             $"[{accent}]├ CHARACTERS[/]   [{Label}]a character is a connection[/]",
-            $"[{Label}]  name          state       login        trigger sets[/]",
         });
 
         if (world.Characters.Count == 0)
@@ -655,15 +667,20 @@ internal static class WorldsScreenRenderer
             CharactersPane,
             world.Characters.Count,
             DetailRowWidth));
-        return ScreenChrome.Choices(right, cursor.Edit, DetailRowWidth);
+
+        // Compacted, then windowed, then overlaid: the dropdown replaces rows by index, so anything that
+        // moves a row has to happen before it is drawn or the list slides off the field it belongs to.
+        return ScreenChrome.Choices(
+            ScreenChrome.Window(ScreenChrome.Compact(right, height), height), cursor.Edit, DetailRowWidth);
     }
 
     /// <summary>
     /// The world's security block: two checkbox rows where a read-only <c>security  TLS on · certs
     /// strict</c> summary used to sit. The summary said everything and offered nothing — the two flags
     /// behind it had no UI at all — so it is replaced by the rows themselves rather than kept above
-    /// them; the world's title strip at the top of this column still reads <c>TLS on</c>, which is where
-    /// a one-glance answer belongs.
+    /// them. The column's title strip used to repeat the answer a third time (<c>TLS on</c>) and has
+    /// since gone with the rest of its duplications; the checkbox <em>is</em> the one-glance answer, and
+    /// it is the only one that can also be pressed.
     /// <para>
     /// They keep the <c>security</c> label column so the block still reads as one setting with two
     /// switches, and so the checkboxes line up under the field wells above them rather than starting at
@@ -875,13 +892,24 @@ internal static class WorldsScreenRenderer
     private static int Width(IReadOnlyList<TriggerSet> sets, Func<TriggerSet, string> part) =>
         sets.Count == 0 ? 0 : sets.Max(s => VisibleLength(part(s)));
 
+    /// <summary>
+    /// One row of the CHARACTERS list: which character, and nothing else. It is a <em>selector</em> —
+    /// the row you move the cursor onto to bring a character up in the CHARACTER form below — and it
+    /// used to be a four-column table (<c>name  state  login  trigger sets</c>) whose other three
+    /// columns were all drawn again, on the same screen, at the same time: <c>session</c> and
+    /// <c>auto-login</c> are rows of the form directly underneath, and the sets are the pane beside it,
+    /// with checkboxes, descriptions and counts. A list that restates the detail pane is a list you have
+    /// to read to discover it says nothing new — and its column header cost a row that the list itself
+    /// needed on a short screen.
+    /// <para>
+    /// So: the list says which characters there are and which one is selected, and the form owns
+    /// everything about the one that is.
+    /// </para>
+    /// </summary>
     private static string CharacterRow(CharacterDefinition character, bool selected)
     {
         var marker = selected ? $"[bold {Accent}]▸[/]" : " ";
-        var name = PadVisible($"[{(selected ? "bold " : string.Empty)}{Value}]{Escape(character.Name)}[/]", 13);
-        var login = PadVisible(character.AutoLogin ? "auto-login" : "manual", 12);
-        var sets = Escape(string.Join(", ", character.TriggerSets));
-        return $"{marker} {name} [{Label}]○ offline[/]  [{Label}]{login}[/] [{Label}]{sets}[/]";
+        return $"{marker} [{(selected ? "bold " : string.Empty)}{Value}]{Escape(character.Name)}[/]";
     }
 
     private static string WorldField(string label, string value) =>

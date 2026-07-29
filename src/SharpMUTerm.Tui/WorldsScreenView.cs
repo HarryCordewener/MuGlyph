@@ -24,7 +24,8 @@ internal static class WorldsScreenView
         int width,
         ScreenFocus? focus = null,
         string fkey = WorldsScreenRenderer.FKey,
-        int selectedSet = 0)
+        int selectedSet = 0,
+        int height = 0)
     {
         // Both panes end in button rows, so a raw cursor can point past its list; resolving once here
         // keeps every block of the screen agreeing on which world and character are selected.
@@ -40,12 +41,29 @@ internal static class WorldsScreenView
             WorldsScreenRenderer.FooterLine(worlds, selectedWorld, selectedCharacter, accent, width, focus),
             ScreenPalette.FooterBg);
 
+        // How many rows the WORLDS/detail body has once the header, the character band, the gap under
+        // it and the action bar have taken theirs. The detail column is built against that number, so a
+        // pane taller than its slot compacts and then scrolls rather than losing its tail silently.
+        var band = WorldsScreenRenderer.HasCharacter(worlds, selectedWorld, selectedCharacter)
+            ? Math.Max(
+                WorldsScreenRenderer.FormColumn(
+                    worlds[selectedWorld].Characters[selectedCharacter], accent, focus, selectedCharacter).Count,
+                WorldsScreenRenderer.TriggersColumn(
+                    worlds[selectedWorld].Characters[selectedCharacter],
+                    triggerSets,
+                    accent,
+                    focus,
+                    selectedSet,
+                    worlds).Count) + 2
+            : 1;
+        var rows = height <= 0 ? 0 : Math.Max(1, height - 1 - band);
+
         // Body: WORLDS list │ detail, as two real columns.
         var worldsCol = ScreenChrome.Stretch(
             new MarkupControl(WorldsScreenRenderer.WorldsColumn(worlds, selectedWorld, focus).ToList()));
         var detailCol = ScreenChrome.Stretch(new MarkupControl(
             WorldsScreenRenderer
-                .DetailColumn(worlds, triggerSets, selectedWorld, selectedCharacter, accent, focus)
+                .DetailColumn(worlds, triggerSets, selectedWorld, selectedCharacter, accent, focus, rows)
                 .ToList()));
         var body = Controls.HorizontalGrid()
             .WithAlignment(HorizontalAlignment.Stretch)

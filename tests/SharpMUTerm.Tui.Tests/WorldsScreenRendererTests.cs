@@ -93,13 +93,37 @@ public class WorldsScreenRendererTests
         await Assert.That(text).Contains("4000");
         await Assert.That(text).Contains("UTF-8");
         await Assert.That(text).Contains("30s");
-        await Assert.That(text).Contains("TLS on");
+
+        // TLS is stated by the checkbox that sets it, and only there. This used to read
+        // Contains("TLS on"), which the detail column's title strip satisfied — a strip that also
+        // repeated the world's name, its host:port and its encoding, each of them directly above the
+        // editable row carrying the same value. The claim is now the stronger one: the flag is on
+        // screen, in the one place it can be changed.
+        await Assert.That(lines.Count(l => l.Contains("TLS"))).IsEqualTo(1);
+        await Assert.That(lines.Single(l => l.Contains("TLS"))).Contains("encrypt this connection");
+        await Assert.That(text).DoesNotContain("TLS on");
+    }
+
+    /// <summary>
+    /// The detail column opens on the world's editable rows, with no summary of them above. Every token
+    /// of the strip that used to sit there — <c>Aetherfall  aether.example.org:4000  TLS on · UTF-8</c>
+    /// — was repeated in the five rows immediately underneath, and the address a third time in the
+    /// WORLDS list beside it.
+    /// </summary>
+    [Test]
+    public async Task Render_TheDetailColumnDoesNotRestateTheWorldAboveItsFields()
+    {
+        var column = WorldsScreenRenderer.DetailColumn(
+            Worlds(), TriggerSets(), selectedWorld: 0, selectedCharacter: 0, ScreenPalette.Accent);
+
+        await Assert.That(column[0]).Contains("WORLD");
+        await Assert.That(column.Count(l => l.Contains("aether.example.org"))).IsEqualTo(1);
+        await Assert.That(column.Count(l => l.Contains("UTF-8"))).IsEqualTo(1);
     }
 
     /// <summary>
     /// The world's two security flags, as the two checkboxes that replaced the read-only line
-    /// summarising them. The world summary at the top of the column still reads <c>TLS on</c>, which is
-    /// where a one-glance answer belongs — the rows are where it is changed.
+    /// summarising them — which is now the only place on the screen the flags are stated at all.
     /// </summary>
     [Test]
     public async Task Render_SecurityIsTwoCheckboxesUnderTheSecurityLabel()
@@ -171,16 +195,33 @@ public class WorldsScreenRendererTests
             && l.Contains(WorldsScreenRenderer.DefaultDirectory))).IsTrue();
     }
 
+    /// <summary>
+    /// The CHARACTERS list is a selector: it names the characters and marks the selected one, and says
+    /// nothing else. It used to be a four-column table — <c>name  state  login  trigger sets</c> — whose
+    /// other three columns were all drawn again on the same screen at the same time: the session state
+    /// and the login mode are rows of the CHARACTER form directly underneath, and the sets are the pane
+    /// beside it with checkboxes, descriptions and counts.
+    /// </summary>
     [Test]
-    public async Task Render_CharactersTableShowsOfflineAndLoginMode()
+    public async Task Render_TheCharacterListSelectsAndTheFormHoldsTheDetail()
     {
-        var lines = WorldsScreenRenderer.Render(Worlds(), TriggerSets(), selectedWorld: 0, selectedCharacter: 0);
+        var column = WorldsScreenRenderer.DetailColumn(
+            Worlds(), TriggerSets(), selectedWorld: 0, selectedCharacter: 0, ScreenPalette.Accent);
 
-        var corvid = lines.Single(l => l.Contains("Corvid") && l.Contains("○ offline"));
-        await Assert.That(corvid).Contains("auto-login");
+        var corvid = column.Single(l => l.Contains("Corvid") && !l.Contains("[["));
+        await Assert.That(corvid).Contains("▸");
+        await Assert.That(column.Any(l => l.Contains("Rookery"))).IsTrue();
 
-        var rookery = lines.Single(l => l.Contains("Rookery") && l.Contains("○ offline"));
-        await Assert.That(rookery).Contains("manual");
+        // None of the three restated columns survives in the list, nor the header that named them.
+        foreach (var gone in new[] { "○ offline", "auto-login", "manual", "trigger sets", "state" })
+        {
+            await Assert.That(column.Any(l => l.Contains(gone))).IsFalse().Because(gone + " is the form's");
+        }
+
+        // And each of them is still on the screen, in the form that owns it.
+        var form = WorldsScreenRenderer.FormColumn(Worlds()[0].Characters[0], ScreenPalette.Accent);
+        await Assert.That(form.Any(l => l.Contains("auto-login"))).IsTrue();
+        await Assert.That(form.Any(l => l.Contains("session"))).IsTrue();
     }
 
     [Test]

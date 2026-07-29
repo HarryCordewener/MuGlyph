@@ -148,6 +148,124 @@ internal static class ScreenChrome
         focused ? $"[on {ScreenPalette.CursorBg}]{MarkupText.PadVisible(row, width)}[/]" : row;
 
     /// <summary>
+    /// The cursor band <see cref="Cursor"/> paints, which is what <see cref="Window"/> scrolls to. It is
+    /// found the same way <see cref="Choices"/> finds the block caret, and for the same reason: exactly
+    /// one row of one pane carries it, so a column can locate its own focused row without every renderer
+    /// having to hand back the line number it drew it on.
+    /// </summary>
+    private static readonly string CursorMark = $"[on {ScreenPalette.CursorBg}]";
+
+    /// <summary>The two cells a body column spends on the hairline and the gap beside it.</summary>
+    internal const int ColumnDivider = 2;
+
+    /// <summary>
+    /// How wide a two-column screen's list column actually runs, given the width the screen was handed.
+    /// The split used to be a constant on every one of them, which was right at the width they were
+    /// designed at and wrong at every other: at 100 columns the list kept its full share while the
+    /// column beside it — the one carrying the editor, or the binding rows — lost its tail off the
+    /// right-hand edge.
+    /// <para>
+    /// The rule is "<paramref name="desired"/> unless that would starve the other column": the list gets
+    /// what it wants when there is room, gives cells back when there isn't, and never drops below
+    /// <paramref name="minimum"/>, because past that point both columns are unreadable rather than one.
+    /// A caller with no width to spend (the merged <c>Render</c> the unit tests go through) gets the
+    /// desired width unchanged, so the width-agnostic form is exactly what it always was.
+    /// </para>
+    /// </summary>
+    /// <param name="width">The whole screen's width, or 0 when the caller has none.</param>
+    /// <param name="desired">What the list column takes when the screen can afford it.</param>
+    /// <param name="minimum">The fewest cells the list column is still worth drawing in.</param>
+    /// <param name="companion">The fewest cells the column beside it can be read in.</param>
+    internal static int SplitWidth(int width, int desired, int minimum, int companion) =>
+        width <= 0 ? desired : Math.Clamp(width - ColumnDivider - companion, minimum, desired);
+
+    /// <summary>
+    /// Drops a block's blank separator rows until it fits in <paramref name="height"/> rows, and hands
+    /// it back. The separators are the first thing a short pane can spare: they carry no content at all,
+    /// and every row they cost at the top is a row the pane loses off the bottom — where the checkboxes,
+    /// the buttons and the rest of the cursor's stops live.
+    /// <para>
+    /// They go from the top down, so the section that compacts is the one already on screen rather than
+    /// the one about to fall off it. A block that already fits, or a caller with no height to fit it
+    /// into, comes back untouched — which is what keeps the wide case looking exactly as it did.
+    /// </para>
+    /// </summary>
+    internal static List<string> Compact(List<string> block, int height)
+    {
+        ArgumentNullException.ThrowIfNull(block);
+
+        if (height <= 0)
+        {
+            return block;
+        }
+
+        for (var i = 0; i < block.Count && block.Count > height; i++)
+        {
+            if (block[i].Length == 0)
+            {
+                block.RemoveAt(i--);
+            }
+        }
+
+        return block;
+    }
+
+    /// <summary>What a windowed block says stands above it, and below it, in place of a drawn row.</summary>
+    private const string MoreAbove = "⌃";
+
+    private const string MoreBelow = "⌄";
+
+    /// <summary>
+    /// Slices a block down to <paramref name="height"/> rows around the row carrying the cursor band, so
+    /// a pane taller than the screen still shows the row the keyboard is on. Without it a cursor can be
+    /// moved onto a row that was never drawn — F5 at 100×24 put its whole CHARACTERS list, and the
+    /// add/duplicate/remove buttons under it, below the fold while ↑↓ walked happily through them.
+    /// <para>
+    /// The window is centred on the focused row rather than scrolled minimally into view, because these
+    /// blocks are rebuilt from scratch on every keystroke and there is no previous offset to scroll from
+    /// — a stateless rule has to be a function of the cursor alone. A block with no cursor in it (the
+    /// keyboard is in another pane) shows its top, which is where its own heading is.
+    /// </para>
+    /// <para>
+    /// The edges say what they are hiding. A row silently missing from a pane is the same failure as a
+    /// cursor stop that was never drawn, one level up: the screen would be showing part of a list and
+    /// claiming it was the list.
+    /// </para>
+    /// </summary>
+    internal static List<string> Window(List<string> block, int height)
+    {
+        ArgumentNullException.ThrowIfNull(block);
+
+        if (height <= 0 || block.Count <= height)
+        {
+            return block;
+        }
+
+        var focused = block.FindIndex(l => l.Contains(CursorMark, StringComparison.Ordinal));
+        var start = focused < 0
+            ? 0
+            : Math.Clamp(focused - (height / 2), 0, block.Count - height);
+
+        var window = block.GetRange(start, height);
+        if (start > 0)
+        {
+            window[0] = More(MoreAbove, start);
+        }
+
+        var below = block.Count - start - height;
+        if (below > 0)
+        {
+            window[^1] = More(MoreBelow, below);
+        }
+
+        return window;
+    }
+
+    /// <summary>How a windowed block names the rows it is not drawing, on the edge they are past.</summary>
+    private static string More(string arrow, int count) =>
+        $"  [{ScreenPalette.Muted}]{arrow} {count.ToString(CultureInfo.InvariantCulture)} more[/]";
+
+    /// <summary>
     /// Draws a row's editable value: its committed text in a field well when nothing is being typed,
     /// or — when <paramref name="edit"/> is the open edit for that field — the buffer in that same
     /// well, a block caret sitting inside it, and the reason the last commit was refused. Every screen
@@ -406,6 +524,61 @@ internal static class ScreenChrome
     /// </summary>
     internal static string ReadOnly(string text) => $"[{ScreenPalette.Muted}]{MarkupText.Escape(text)}[/]";
 
+    /// <summary>How far a legend's continuation rows are indented, to clear its label.</summary>
+    internal const int LegendLabel = 7;
+
+    /// <summary>
+    /// Spells out the glyphs a list's rows are written in, at the foot of the column that draws them.
+    /// The list screens compress a rule down to single cells — a tick, a set marker, and on F2 a strip
+    /// of action letters — and a compressed value is the one thing that cannot say what its own words
+    /// mean. Nothing on these screens said, anywhere: <c>H</c> could as easily have been "hidden" as
+    /// "highlight".
+    /// <para>
+    /// It goes at the foot of the list, not beside the header: the header names the row's columns
+    /// (<c>on  name / pattern → window</c>) and these are the marks <em>inside</em> them, and the slack
+    /// in a list column is at the bottom — which is exactly the dead space a key is worth spending.
+    /// Entries wrap to <paramref name="width"/> rather than to a fixed count, because the column is a
+    /// function of the screen's width now (see <see cref="SplitWidth"/>).
+    /// </para>
+    /// </summary>
+    /// <param name="label">What the block is called, drawn on its first row only.</param>
+    /// <param name="cells">The entries, already coloured — lit when they describe the selected row.</param>
+    /// <param name="width">The column's width, which the block wraps to.</param>
+    internal static IEnumerable<string> Legend(string label, IEnumerable<string> cells, int width)
+    {
+        ArgumentNullException.ThrowIfNull(label);
+        ArgumentNullException.ThrowIfNull(cells);
+
+        var line = $"[{ScreenPalette.Label}]{MarkupText.Escape(label)}[/]"
+            + new string(' ', Math.Max(1, LegendLabel - label.Length));
+        var used = LegendLabel;
+
+        foreach (var cell in cells)
+        {
+            var cellWidth = MarkupText.VisibleLength(cell) + 2;
+            if (used > LegendLabel && width > 0 && used + cellWidth > width)
+            {
+                yield return line.TrimEnd();
+                line = new string(' ', LegendLabel);
+                used = LegendLabel;
+            }
+
+            line += cell + "  ";
+            used += cellWidth;
+        }
+
+        yield return line.TrimEnd();
+    }
+
+    /// <summary>
+    /// One entry of a <see cref="Legend"/>: its glyph and what the glyph means, lit when the selected
+    /// row carries it and muted when it doesn't. Lighting them is what turns a key into a reading of the
+    /// row the cursor is on, which is the same trick F2's attribute legend plays on the open buffer.
+    /// </summary>
+    internal static string LegendEntry(string glyph, string meaning, bool lit) => lit
+        ? $"[{ScreenPalette.Accent}]{glyph}[/] [{ScreenPalette.Value}]{MarkupText.Escape(meaning)}[/]"
+        : $"[{ScreenPalette.Label}]{glyph} {MarkupText.Escape(meaning)}[/]";
+
     /// <summary>
     /// The one row an <em>empty</em> trigger set gets in a flattened pane. F2, F3, F4 and F6 each draw
     /// one column of every set's rules, so a set holding none of that kind is drawn nowhere at all — and
@@ -498,6 +671,73 @@ internal static class ScreenChrome
         BackgroundColor = new Color(bg),
         HorizontalAlignment = HorizontalAlignment.Stretch,
     };
+
+    /// <summary>
+    /// How many rows a two-column screen's body has: everything but the header band and the action bar.
+    /// Zero when the caller has no height, which is how every block below reads "draw it all".
+    /// </summary>
+    internal static int Rows(int height) => height <= 0 ? 0 : Math.Max(1, height - 2);
+
+    /// <summary>
+    /// The frame every two-column settings screen shares: a header band on the first row, an action bar
+    /// on the last, and between them a body of two columns divided by a hairline.
+    /// <para>
+    /// The body is <em>sized to its content</em> rather than stretched to fill, which is the single
+    /// change that stops F3, F6 and F4 drawing a thirty-row empty pane under four rows of rules. The
+    /// hairline stops where the columns stop, exactly as F7/F8's options card ends where its options do,
+    /// and the slack below it belongs to the backdrop instead of pretending to be part of a list. A
+    /// caller with no height falls back to the old fill, since there is nothing to size against.
+    /// </para>
+    /// </summary>
+    /// <param name="header">The header band.</param>
+    /// <param name="footer">The action bar.</param>
+    /// <param name="left">The list column.</param>
+    /// <param name="right">The column beside it.</param>
+    /// <param name="leftWidth">How wide the list column runs (see <see cref="SplitWidth"/>).</param>
+    /// <param name="content">How many rows the taller of the two columns holds.</param>
+    /// <param name="rows">How many rows the body has to spend, or 0 when the caller has no height.</param>
+    internal static IWindowControl Split(
+        MarkupControl header,
+        MarkupControl footer,
+        MarkupControl left,
+        MarkupControl right,
+        int leftWidth,
+        int content,
+        int rows)
+    {
+        var body = Controls.HorizontalGrid()
+            .WithAlignment(HorizontalAlignment.Stretch)
+            .WithVerticalAlignment(VerticalAlignment.Fill)
+            .Column(c => c.Width(leftWidth).Add(left))
+            .Column(c => c.Width(1).Add(VerticalRule()))
+            .Column(c => c.Width(1).Add(Filler()))
+            .Column(c => c.Flex(1).Add(right))
+            .Build();
+
+        var root = Controls.Grid()
+            .WithAlignment(HorizontalAlignment.Stretch)
+            .WithVerticalAlignment(VerticalAlignment.Fill);
+
+        if (rows <= 0)
+        {
+            root.Rows(GridLength.Cells(1), GridLength.Star(1), GridLength.Cells(1)).Columns(GridLength.Star(1));
+            root.Place(header, 0, 0, 1, 1);
+            root.Place(body, 1, 0, 1, 1);
+            root.Place(footer, 2, 0, 1, 1);
+            return root.Build();
+        }
+
+        root.Rows(
+                GridLength.Cells(1),
+                GridLength.Cells(Math.Clamp(content, 1, rows)),
+                GridLength.Star(1),
+                GridLength.Cells(1))
+            .Columns(GridLength.Star(1));
+        root.Place(header, 0, 0, 1, 1);
+        root.Place(body, 1, 0, 1, 1);
+        root.Place(footer, 3, 0, 1, 1);
+        return root.Build();
+    }
 
     /// <summary>Widens a column panel to its arranged width so its content isn't hugged.</summary>
     internal static MarkupControl Stretch(MarkupControl control)
