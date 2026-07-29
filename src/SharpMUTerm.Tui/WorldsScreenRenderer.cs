@@ -62,16 +62,28 @@ internal static class WorldsScreenRenderer
     internal const int KeepaliveField = 4;
 
     /// <summary>
-    /// The character row's field ordinals. The name leads, as it does on every list screen; the two log
-    /// fields are appended after the on-connect line, and are drawn in the character form below.
+    /// The character row's field ordinals, in the order ⇥ steps through them — which is the order the
+    /// CHARACTER form draws them in, top to bottom. The name leads, as it does on every list screen.
+    /// <para>
+    /// The password and the connect line are <em>inserted</em> after the name rather than appended past
+    /// the log fields, and the ordinals below them moved to make room. Appending would have left the
+    /// numbering untouched at the cost of ⇥ walking name → on connect → log → log folder and then back
+    /// <em>up</em> the form to the password — the same "three hops forward and one backwards" that
+    /// <see cref="PaneLayout"/> exists to have fixed one level up. Every renderer and every test
+    /// addresses these by name, so the shift is a rename and not a silent renumbering.
+    /// </para>
     /// </summary>
     internal const int CharacterNameField = 0;
 
-    internal const int OnConnectField = 1;
+    internal const int PasswordField = 1;
 
-    internal const int LogFormatField = 2;
+    internal const int ConnectStringField = 2;
 
-    internal const int LogDirectoryField = 3;
+    internal const int OnConnectField = 3;
+
+    internal const int LogFormatField = 4;
+
+    internal const int LogDirectoryField = 5;
 
     /// <summary>
     /// The trigger-set row's field ordinals. A set's name leads, as every list row's does — and here it
@@ -295,6 +307,9 @@ internal static class WorldsScreenRenderer
             : ScreenModel.Rows(world.Characters, c => ScreenRow.Of(
                 ScreenToggle.Bind(() => c.AutoLogin, v => c.AutoLogin = v),
                 ScreenField.Name("name", () => c.Name, v => c.Name = v),
+                ScreenField.Password("password", () => c.Password, v => c.Password = v),
+                ScreenField.Defaulted(
+                    "connect", () => c.ConnectString, v => c.ConnectString = v, ConnectStringTemplate.Default),
                 ScreenField.Optional("on connect", () => c.OnConnect, v => c.OnConnect = v),
                 ScreenField.Enumeration("log", () => c.Logging.Format, v => c.Logging.Format = v),
                 ScreenField.Optional("log folder", () => c.Logging.Directory, v => c.Logging.Directory = v)))
@@ -764,11 +779,25 @@ internal static class WorldsScreenRenderer
 
     /// <summary>
     /// The character form — labels left-aligned with their values, one field per row. The editable ones
-    /// are the character row's own fields (name, on-connect, then the two log values) and are the only
-    /// four drawn in a field well. The other three deliberately are not: the password is
-    /// <see cref="System.Text.Json.Serialization.JsonIgnoreAttribute"/>d and belongs in a credential
-    /// store, auto-login is a readout of the character row's own checkbox, and the session line is a
-    /// report of what the connection is doing rather than a setting at all.
+    /// are the character row's own fields (name, password, connect line, on-connect, then the two log
+    /// values) and are the only six drawn in a field well. The other two deliberately are not:
+    /// auto-login is a readout of the character row's own checkbox, and the session line is a report of
+    /// what the connection is doing rather than a setting at all.
+    /// <para>
+    /// The <b>password</b> was a seventh readout until it had somewhere to go. It was drawn without a
+    /// well and labelled <c>keychain</c> — an affordance-free row advertising a credential store that
+    /// does not exist anywhere in this codebase. It is now a real field, masked
+    /// (<see cref="ScreenChrome.RestingMask"/>), and it says what is actually true: the value is kept for
+    /// this session and never written to config. When a credential store lands, that note changes with
+    /// it; until then the row does not promise one.
+    /// </para>
+    /// <para>
+    /// The <b>connect line</b> is drawn here for the first time, because it is only now a thing worth
+    /// looking at: it is a template (<see cref="ConnectStringTemplate"/>), it holds the two tokens by
+    /// default, and a user who can see it can move their password out of it. While it was an
+    /// interpolated string built in C#, the screen had nothing to show and no way to let anyone edit it,
+    /// which is exactly why the plaintext-in-the-connect-string workaround was the only option on offer.
+    /// </para>
     /// <para>
     /// The log rows are here, under a heading that names the character, because logging <em>is</em> per
     /// character: <c>LoggingSettings</c> hangs off <see cref="CharacterDefinition"/>. On its own screen
@@ -791,7 +820,21 @@ internal static class WorldsScreenRenderer
                 selectedCharacter,
                 CharacterNameField,
                 pane: CharactersPane)),
-            CharField("password", $"{ScreenChrome.ReadOnly("••••••••")} [{Label}]keychain[/]"),
+            CharField("password", Field(
+                character.Password is { Length: > 0 }
+                    ? ScreenChrome.RestingMask()
+                    : $"[{Label}]{NoPassword}[/]",
+                cursor,
+                selectedCharacter,
+                PasswordField,
+                pane: CharactersPane)),
+            CharField(string.Empty, $"[{Label}]{SessionOnlyNote}[/]"),
+            CharField("connect", Field(
+                $"[{Value}]{Escape(character.ConnectString ?? ConnectStringTemplate.Default)}[/]",
+                cursor,
+                selectedCharacter,
+                ConnectStringField,
+                pane: CharactersPane)),
             CharField("on connect", Field(
                 $"[{Value}]{Escape(character.OnConnect ?? "—")}[/]",
                 cursor,
@@ -827,6 +870,37 @@ internal static class WorldsScreenRenderer
     /// an empty well that would look like a value someone had blanked.
     /// </summary>
     internal const string DefaultDirectory = "(default)";
+
+    /// <summary>
+    /// What an unset password reads as, so the well is a visible box one goes to rather than a one-cell
+    /// tint. It follows <see cref="DefaultDirectory"/>'s precedent, and says "nothing here" rather than
+    /// drawing a mask over nothing — dots standing for no password would claim one.
+    /// </summary>
+    internal const string NoPassword = "(not set)";
+
+    /// <summary>
+    /// What the password row says about where the value goes, which is: nowhere.
+    /// <see cref="CharacterDefinition.Password"/> is <c>[JsonIgnore]</c>, so it survives exactly as long
+    /// as the process does, and this row is the only place a user could learn that.
+    /// <para>
+    /// It replaces the word <c>keychain</c>, which was the only occurrence of the term anywhere in this
+    /// codebase: there is no keychain, no DPAPI and no libsecret behind this field — only a doc comment
+    /// naming them as a follow-up. A row advertising a credential store that does not exist is the exact
+    /// class of claim the rest of these screens' tests are written to prevent, and it is worse than the
+    /// others because a user who believes it will type a password expecting it to be stored safely and
+    /// then wonder where it went.
+    /// </para>
+    /// <para>
+    /// It takes a row of its own, with a blank label, the way the certificate checkbox hangs off the
+    /// <c>security</c> row above it. Beside the value it would have had to share a 48-cell panel
+    /// (<see cref="WorldsScreenView"/>) with a field whose drawn width is the buffer's own — so it wrapped
+    /// the moment a password was set, and a wrapped row costs the form a line it was not measured for and
+    /// pushed <c>log folder</c> out of the band. On its own row it cannot collide with a value of any
+    /// length, and it is drawn while the field is open as well as at rest, which is when it is most worth
+    /// reading.
+    /// </para>
+    /// </summary>
+    internal const string SessionOnlyNote = "this session only — never saved";
 
     /// <summary>What the CHARACTER form says while the cursor is somewhere else on the screen.</summary>
     internal const string FormClosed = "⏎ on the character in the list above";

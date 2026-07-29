@@ -37,6 +37,13 @@ namespace SharpMUTerm.Tui;
 /// and what the hints promise (no ⏎, no ⇥: every key but Esc is a candidate), so it is carried on the
 /// edit rather than re-derived, the way <paramref name="ClosedChoices"/> is.
 /// </param>
+/// <param name="Masked">
+/// Whether the buffer is a secret, and so must be drawn as dots rather than as itself — a character's
+/// password is the only one (<see cref="ScreenField.Password"/>). <see cref="Text"/> still carries the
+/// real value, because that is what ⏎ commits and what Backspace has to edit; the masking is the
+/// chrome's, applied at the last moment before markup (see <c>ScreenChrome.Field</c>), so the plaintext
+/// never exists in a rendered frame that a snapshot, a screenshot or a shoulder could read.
+/// </param>
 internal readonly record struct ScreenFieldEdit(
     int Field,
     string Text,
@@ -45,7 +52,8 @@ internal readonly record struct ScreenFieldEdit(
     int RowFields = 1,
     IReadOnlyList<string>? Choices = null,
     bool ClosedChoices = false,
-    bool Capture = false)
+    bool Capture = false,
+    bool Masked = false)
 {
     /// <summary>Whether the open field knows any values at all, whatever the buffer currently is.</summary>
     internal bool HasChoices => Choices is { Count: > 0 };
@@ -90,6 +98,12 @@ internal readonly record struct ScreenFieldEdit(
 /// one field on these screens whose vocabulary is the keyboard itself, so a text buffer could only ever
 /// be a place to mis-spell a key name.
 /// </param>
+/// <param name="Masked">
+/// Whether the value is a secret. It changes nothing about how the field behaves — it is typed,
+/// validated and committed like any other — and everything about how it is <em>drawn</em>: the chrome
+/// renders one dot per character instead of the text. It is carried on the field so the renderer cannot
+/// forget, the same way <paramref name="Capture"/> is. See <see cref="Password"/>.
+/// </param>
 /// <param name="Follow">
 /// Where the row this field belongs to has ended up, asked <em>after</em> a commit, or null for the
 /// fields that leave their row where it was — which is nearly all of them. It exists for
@@ -112,6 +126,7 @@ internal readonly record struct ScreenField(
     IReadOnlyList<string>? Choices = null,
     bool ClosedChoices = false,
     bool Capture = false,
+    bool Masked = false,
     Func<int>? Follow = null)
 {
     /// <summary>Longest rejection message kept; regex parser errors run to several lines otherwise.</summary>
@@ -298,6 +313,84 @@ internal readonly record struct ScreenField(
             _ => null,
             value => set(string.IsNullOrWhiteSpace(value) ? null : value.Trim()),
             Restore(get, set));
+    }
+
+    /// <summary>
+    /// A secret: typed like any other value, drawn as dots (see <see cref="Masked"/>). A character's
+    /// login password is the only one, and it is why the field kind exists — the alternative on offer
+    /// before this was for the user to write the password into the connect string in plaintext, where it
+    /// was serialized to <c>config.json</c>.
+    /// <para>
+    /// The buffer opens on the <em>real</em> value rather than on a blank, so an existing password can be
+    /// corrected a character at a time instead of retyped from scratch; nothing is revealed by that,
+    /// because the value's only route to a frame is through the mask.
+    /// </para>
+    /// <para>
+    /// Blank is stored as null — that is "no password", not "a password of length zero" — but the value
+    /// is otherwise committed <b>untrimmed</b>, which is the one place this field departs from every
+    /// other text field on these screens. A trimmed name is a tidier name; a trimmed secret is a
+    /// different secret, and it would fail at the server with the field on screen showing the value the
+    /// user typed.
+    /// </para>
+    /// <para>
+    /// Control characters are refused, for the reason <see cref="Template"/> refuses them and one more:
+    /// the value goes out on a single login line, so an embedded newline would split it into two
+    /// commands — the second of which would be the rest of the password, sent to a server that is no
+    /// longer reading a password.
+    /// </para>
+    /// </summary>
+    internal static ScreenField Password(string label, Func<string?> get, Action<string?> set)
+    {
+        ArgumentNullException.ThrowIfNull(get);
+        ArgumentNullException.ThrowIfNull(set);
+
+        return new ScreenField(
+            label,
+            () => get() ?? string.Empty,
+            value => value.Any(char.IsControl) ? $"{label} cannot contain control characters" : null,
+            value => set(value.Length == 0 ? null : value),
+            Restore(get, set),
+            Masked: true);
+    }
+
+    /// <summary>
+    /// A value with a <em>default</em> behind it: held as null when it is unset, but read, drawn and
+    /// opened as <paramref name="fallback"/> — a character's connect string, whose default is the
+    /// literal template <c>connect %CHARACTER% %PASSWORD%</c>.
+    /// <para>
+    /// It is not <see cref="Optional"/>, whose null shows as an empty well: a login line the user has
+    /// never touched still <em>has</em> a value, and an empty box would say the opposite of the truth
+    /// about what auto-login is about to send. Opening the field on the effective line is also what
+    /// makes it editable in practice — the syntax is discoverable by looking at the thing that already
+    /// works rather than by being told about it.
+    /// </para>
+    /// <para>
+    /// Committing the fallback back verbatim stores null again, so "unset" has exactly one spelling in
+    /// config and a later change to the default still reaches everyone who never overrode it. Blanking
+    /// the field is the deliberate way back to it, and <paramref name="fallback"/> is offered as the
+    /// single ↑↓ suggestion so there is a key that restores it without retyping.
+    /// </para>
+    /// </summary>
+    internal static ScreenField Defaulted(
+        string label, Func<string?> get, Action<string?> set, string fallback)
+    {
+        ArgumentNullException.ThrowIfNull(get);
+        ArgumentNullException.ThrowIfNull(set);
+        ArgumentNullException.ThrowIfNull(fallback);
+
+        return new ScreenField(
+            label,
+            () => get() ?? fallback,
+            value => value.Any(char.IsControl) ? $"{label} cannot contain control characters" : null,
+            value =>
+            {
+                var trimmed = value.Trim();
+                set(trimmed.Length == 0 || string.Equals(trimmed, fallback, StringComparison.Ordinal)
+                    ? null
+                    : trimmed);
+            },
+            Restore(get, set),
+            new[] { fallback });
     }
 
     /// <summary>

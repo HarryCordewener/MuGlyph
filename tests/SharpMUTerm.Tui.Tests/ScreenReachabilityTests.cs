@@ -112,7 +112,7 @@ public class ScreenReachabilityTests
         var editing = new ScreenFocus(
             WorldsScreenRenderer.CharactersPane,
             0,
-            new ScreenFieldEdit(WorldsScreenRenderer.CharacterNameField, "Corvid", 6, null, RowFields: 4));
+            new ScreenFieldEdit(WorldsScreenRenderer.CharacterNameField, "Corvid", 6, null, RowFields: 6));
 
         var form = WorldsScreenRenderer.FormColumn(character, "#00f5b7", editing, 0);
 

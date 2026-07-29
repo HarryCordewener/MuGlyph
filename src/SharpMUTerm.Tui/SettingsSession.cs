@@ -120,7 +120,8 @@ internal sealed class SettingsSession
                 model.RowAt(open.Pane, open.Index).FieldCount,
                 field?.Choices,
                 field?.ClosedChoices ?? false,
-                field?.Capture ?? false)
+                field?.Capture ?? false,
+                field?.Masked ?? false)
             : (ScreenFieldEdit?)null;
 
         return new ScreenFocus(Selection.Pane, Selection.Index, edit);

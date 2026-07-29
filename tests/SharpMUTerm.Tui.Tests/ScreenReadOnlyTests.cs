@@ -153,21 +153,29 @@ public class ScreenReadOnlyTests
     }
 
     /// <summary>
-    /// The character form, where three of seven rows are readouts: a password that lives in a credential
-    /// store, a mirror of the character row's own checkbox, and the state of a connection. The other
-    /// four — the name, the on-connect line and the two log values — are the character row's own fields.
+    /// The character form, where two of eight rows are readouts: a mirror of the character row's own
+    /// checkbox, and the state of a connection. The other six — the name, the password, the connect
+    /// line, the on-connect line and the two log values — are the character row's own fields.
+    /// <para>
+    /// The <c>password</c> row moved sides. It used to be asserted here as a readout, drawn muted and
+    /// unwelled, and that was the honest answer while there was nowhere to put a password: the value was
+    /// <c>[JsonIgnore]</c> with no field to type it into. It is a real field now, so it takes the well —
+    /// which is not a weakening of the rule but the rule applied to a row that changed. Both halves are
+    /// still pinned in both directions, and the mask and the label the row carries instead of
+    /// <c>keychain</c> are pinned in <see cref="ScreenPasswordFieldTests"/>.
+    /// </para>
     /// </summary>
     [Test]
     public async Task Worlds_TheCharacterFormWellsOnlyTheRowsThatCanBeTyped()
     {
         var lines = WorldsScreenRenderer.FormColumn(Worlds()[0].Characters[0], ScreenPalette.Accent);
 
-        foreach (var label in new[] { "name", "on connect", "log", "log folder" })
+        foreach (var label in new[] { "name", "password", "connect", "on connect", "log", "log folder" })
         {
             await Assert.That(InAWell(Row(lines, label))).IsTrue().Because(label + " is editable");
         }
 
-        foreach (var label in new[] { "password", "auto-login", "session" })
+        foreach (var label in new[] { "auto-login", "session" })
         {
             await Assert.That(InAWell(Row(lines, label))).IsFalse().Because(label + " is a readout");
             await Assert.That(Row(lines, label)).Contains(ScreenPalette.Muted).Because(label);
