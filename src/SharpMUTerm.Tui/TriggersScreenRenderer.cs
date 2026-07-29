@@ -41,10 +41,14 @@ internal static class TriggersScreenRenderer
     private static string Route(Trigger trigger) => trigger.Actions.SpawnTarget ?? MainWindow;
 
     /// <summary>
-    /// The windows a rule may be routed to: the main output, every spawn window the workspace knows
-    /// about, and — always — the one this rule already points at, so a rule routed somewhere the
-    /// current workspace has no window for still shows (and can commit) its own value rather than
-    /// being refused by its own field.
+    /// The windows offered as ↑↓ suggestions on the route field: the main output, every spawn window
+    /// the workspace knows about, and — always — the one this rule already points at, so a rule
+    /// routed somewhere the current workspace has no window for still shows its own value.
+    /// <para>
+    /// These are suggestions, not the permitted set. Typing a name that isn't here is how a new spawn
+    /// window comes into existence: the workspace's spawn windows are defined by what triggers route
+    /// to, so a closed list could only ever re-use one that already exists.
+    /// </para>
     /// </summary>
     internal static IReadOnlyList<string> Routes(Trigger trigger, IReadOnlyList<string>? spawnTargets)
     {
@@ -137,10 +141,10 @@ internal static class TriggersScreenRenderer
             ScreenToggle.Bind(() => entry.Trigger.Enabled, v => entry.Trigger.Enabled = v),
             ScreenField.Pattern(
                 "match pattern", () => entry.Trigger.Pattern, v => entry.Trigger.Pattern = v),
-            ScreenField.Choice(
+            ScreenField.WindowName(
                 "route",
                 () => Route(entry.Trigger),
-                v => entry.Trigger.Actions.SpawnTarget = v == MainWindow ? null : v,
+                v => entry.Trigger.Actions.SpawnTarget = v == MainWindow ? null : v.Trim(),
                 Routes(entry.Trigger, spawnTargets)),
             ScreenField.Colour(
                 "highlight fg",
@@ -306,9 +310,20 @@ internal static class TriggersScreenRenderer
             Heading("route to", route),
         };
 
-        foreach (var target in Routes(trigger, spawnTargets))
+        var known = Routes(trigger, spawnTargets);
+        foreach (var target in known)
         {
             lines.Add(RouteRow(target, currentRoute, route is not null));
+        }
+
+        // A route may name a window that doesn't exist yet — that is how a spawn window is created.
+        // The rows above are the windows already in use, so a name being typed for the first time
+        // matches none of them and would otherwise be invisible: the group would sit with no dot lit
+        // while the keyboard was plainly doing something. Give the new name its own row, carrying the
+        // caret, so what is being typed is on screen where the committed value will be.
+        if (route is { } typing && !known.Contains(currentRoute, StringComparer.Ordinal))
+        {
+            lines.Add($"  [{Accent}]●[/] {ScreenChrome.Field(Escape(currentRoute), typing)}");
         }
 
         var fg = trigger.Actions.HighlightForeground;

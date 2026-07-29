@@ -113,6 +113,34 @@ internal readonly record struct ScreenField(
     }
 
     /// <summary>
+    /// The name of a window to route output to. Free text, with the windows already in use offered
+    /// as ↑↓ suggestions — deliberately not a <see cref="Choice"/>, because the set of spawn windows
+    /// is defined by what triggers route to, so a closed list could only ever re-use a window that
+    /// already exists and there would be no way to create one.
+    /// <para>
+    /// A window name is a tab title, so it is rejected when blank or when it carries control
+    /// characters that would corrupt the tab strip; it is otherwise whatever the user calls it.
+    /// </para>
+    /// </summary>
+    internal static ScreenField WindowName(
+        string label, Func<string> get, Action<string> set, IReadOnlyList<string> known)
+    {
+        ArgumentNullException.ThrowIfNull(get);
+        ArgumentNullException.ThrowIfNull(set);
+        ArgumentNullException.ThrowIfNull(known);
+
+        return new ScreenField(
+            label,
+            get,
+            value => string.IsNullOrWhiteSpace(value)
+                ? $"{label} cannot be empty"
+                : value.Any(char.IsControl) ? $"{label} cannot contain control characters" : null,
+            value => set(value.Trim()),
+            Restore(get, set),
+            known);
+    }
+
+    /// <summary>
     /// A .NET regular expression, rejected unless it actually compiles — a trigger or alias whose
     /// pattern doesn't parse would throw on the next line the engine matched, not here.
     /// </summary>

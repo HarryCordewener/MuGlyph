@@ -91,14 +91,68 @@ public class TriggersScreenEditingTests
         await Assert.That(trigger.Actions.SpawnTarget).IsEqualTo("Chat");
     }
 
+    /// <summary>
+    /// Typing a window nothing routes to yet is how a spawn window is created — the suggestions are
+    /// the windows already in use, so refusing anything outside them could only ever re-use a window
+    /// that already existed.
+    /// </summary>
     [Test]
-    public async Task ARouteThatNamesNoWindowIsRefused()
+    public async Task ARouteMayNameAWindowThatDoesNotExistYet()
+    {
+        var sets = Sets();
+        var trigger = sets[0].Triggers[0];
+        var field = TriggersScreenRenderer.Model(sets, 0, Targets).FieldAt(0, 0, 1)!.Value;
+
+        await Assert.That(field.Validate("nowhere")).IsNull();
+        await Assert.That(new ScreenEdits().Apply(field, "nowhere")).IsNull();
+        await Assert.That(trigger.Actions.SpawnTarget).IsEqualTo("nowhere");
+    }
+
+    /// <summary>A window name is a tab title, so the two things that would corrupt one are refused.</summary>
+    [Test]
+    public async Task ARouteIsRefusedWhenBlankOrCarryingControlCharacters()
     {
         var field = TriggersScreenRenderer.Model(Sets(), 0, Targets).FieldAt(0, 0, 1)!.Value;
 
-        await Assert.That(field.Validate("nowhere")).IsNotNull();
-        await Assert.That(new ScreenEdits().Apply(field, "nowhere")).IsNotNull();
+        await Assert.That(field.Validate("   ")).IsNotNull();
+        await Assert.That(field.Validate("chat\tspam")).IsNotNull();
+        await Assert.That(new ScreenEdits().Apply(field, string.Empty)).IsNotNull();
         await Assert.That(Sets()[0].Triggers[0].Actions.SpawnTarget).IsEqualTo("Chat");
+    }
+
+    /// <summary>
+    /// Typing a window that doesn't exist yet must be visible. The radio rows are the windows already
+    /// in use, so a new name matches none of them — without a row of its own the group would sit with
+    /// no dot lit while the keyboard was plainly doing something, and the user would type blind.
+    /// </summary>
+    [Test]
+    public async Task TypingARouteThatMatchesNoKnownWindowStillShowsWhatIsBeingTyped()
+    {
+        var sets = Sets();
+        var session = new SettingsSession(
+            selection => TriggersScreenRenderer.Model(sets, selection.CursorIn(0), Targets));
+
+        session.Handle(Key(ConsoleKey.Enter)); // opens the pattern
+        session.Handle(Key(ConsoleKey.Tab));   // commits it, steps to the route
+
+        // Clear the opened value ("Chat") before typing, as anyone renaming the route would.
+        for (var i = 0; i < "Chat".Length; i++)
+        {
+            session.Handle(Key(ConsoleKey.Backspace));
+        }
+
+        foreach (var ch in "combat")
+        {
+            session.Handle(Char(ch));
+        }
+
+        await Assert.That(session.Focus().Edit!.Value.Text).IsEqualTo("combat");
+
+        var editor = TriggersScreenRenderer.EditorColumn(sets, 0, Targets, session.Focus());
+        await Assert.That(editor.Any(l => l.Contains("combat"))).IsTrue();
+
+        // No known window is lit while the buffer names one that doesn't exist yet.
+        await Assert.That(editor.Any(l => l.Contains('●') && l.Contains("Chat"))).IsFalse();
     }
 
     /// <summary>
