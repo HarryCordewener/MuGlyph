@@ -4,8 +4,8 @@ Context for whoever (human or agent) picks up this work next.
 
 - **Repository:** `SharpMUSH/SharpMUTerm`
 - **Start from:** a fresh branch off `main`
-- **Tests:** 1129 across the solution (414 Core / 83 Graphics / 42 Scripting /
-  28 Web / 562 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
+- **Tests:** 1256 across the solution (416 Core / 83 Graphics / 42 Scripting /
+  30 Web / 685 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
   from this repo; building against a local SharpConsoleUI clone surfaces 2 upstream
   NuGet advisory warnings for AngleSharp, which are the framework's, not ours)
 
@@ -384,6 +384,63 @@ What the framework actually provides (read at v2.5.14, not assumed):
   (an explicit target column/row count), in the same family as the missing Sixel back-end
   above. `/graphics` now prints the cell box next to the pixel buffer for every image in
   the web view, so the gap is visible without a graphics terminal.
+
+### NAWS is per pane, and it rides the frame
+
+- **A world is told its own pane, not the window.** `SharpMUTermApp.ReportPaneSizes` walks every
+  session, resolves the pane hosting the window that session prints into, and reports that pane's
+  **output** rectangle — `PaneOutputRects()`, which is the pane less its tab strip (read off the
+  live control's `TabHeaderHeight`, 1 for the classic header and 2 for the separator styles) and
+  less the tab control's margins. On a 120×32 terminal with one vertical split that is **46×26 per
+  world**; the old code told both servers 120×32, so they wrapped to a width that existed nowhere
+  on screen.
+- **The session ↔ window link is `_sessionWindows`**, written by `AttachSession` from
+  `BindSession` — the same place that decides where a session's `LinePrinted` lines go, so the
+  rectangle we report and the window we print into cannot drift apart. (`WorkspaceWindow.SessionKey`
+  looks like the link and is not: the main window is created before any session exists and carries a
+  null key.)
+- **It is reported from `PostBufferPaint`, not from `RebuildPaneArea`.** Pane rectangles only exist
+  while an arranged layout does, and every layout change tears the pane area down — so *inside* the
+  rebuild there is nothing to measure, and `PaneSnapshot()`/`PaneOutputRects()` come back empty. The
+  post-paint hook is the first moment the new layout can be read, and every resize, split, close,
+  zoom and move repaints, so one hook covers all of them. For the same reason `OnResize` deliberately
+  does **not** report: at that moment the panes still hold the old window's rectangles.
+- **A session is told only when the answer changed**, rate limit or no. A size that comes back to
+  what the server already has cancels anything waiting, so a drag that ends where it started sends
+  nothing at all.
+- **And at most once per `SharpMUTermApp.WindowSizeReportInterval` (250 ms) per session.** A NAWS
+  frame is nine bytes and nothing on screen depends on it — it is the width *future* lines wrap at —
+  but the report rides the frame, so dragging a terminal edge would otherwise write to every
+  connected world ~60×/s for as long as the drag lasts. 250 ms caps that at four writes a second per
+  world while staying inside the ~300 ms a person reads as instant. It is a **constant, not an F8
+  option**: protocol hygiene rather than a preference, and a row honest enough to say what it does
+  would be a knob whose only wrong settings are the ones a user might pick.
+  - **The leading edge is never delayed.** A session that has been told nothing, or nothing within
+    the interval, is told on the frame that produced the change — so a split, a zoom, a closed tab or
+    a connect costs no added latency. The limit only engages while sizes arrive faster than that.
+  - **Held-back sizes are coalesced, not queued** (`SizeReport.Pending` is replaced): a server is
+    told where a drag ended, never the widths it swept through.
+  - **The trailing flush is mandatory, and it is a timer.** Frames stop the instant a drag-resize
+    ends, so a limiter that only dropped would lose the one size that matters. `ArmSizeFlush` arms a
+    one-shot `ITimer` for the earliest moment a held-back size may go; its callback does nothing but
+    `OnUiThread(FlushPendingSizes)`, which is safe because `ConsoleWindowSystem`'s main loop drains
+    queued UI actions **every iteration**, dirty or not (`DrainUIActionQueue`, before the render
+    gate). The render loop is exactly the wrong thing to hang it on: it is what stops.
+  - **A disconnect drops what the session was told *and when*,** so a reconnect announces at once
+    instead of serving out an interval belonging to the previous connection.
+- **The clock is injectable** — `new SharpMUTermApp(config, caps, driver, TimeProvider)`, defaulting
+  to `TimeProvider.System`. `ManualTimeProvider` in the Tui tests advances the clock and fires due
+  timers on the calling thread, so `TheSettledSizeArrivesAfterTheFramesStop` asserts the trailing
+  flush instead of sleeping for it. Two probes worth repeating if you touch this: setting the
+  interval to zero fails exactly the four throttle tests, and stubbing out `ArmSizeFlush` fails
+  exactly the three that need the trailing flush.
+- **A hidden tab is still reported**, at its pane's size: that is the size it will be shown at, and
+  the alternative is the stale size that was the bug.
+- **`ForceRender()` on a clean window paints nothing** — `RenderCoordinator.RenderWindows` skips any
+  window whose `PendingWork` is `None`. A headless test that renders a second frame to see a change
+  therefore has to dirty the window first, which is what `SharpMUTermApp.RenderNextFrame()` is for
+  (`ForceFullRepaint()` then render). Without it the second frame arranges nothing and every
+  assertion reads the first frame's geometry.
 
 ### SharpConsoleUI tabs
 

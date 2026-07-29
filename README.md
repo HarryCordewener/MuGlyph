@@ -83,8 +83,9 @@ HTML logging · GMCP / MSDP / MSSP / MCCP · MXP + Pueblo · Unicode/emoji.
   split/close/zoom), a **command surface** (`Ctrl+P`) with ranked GO TO / WORLD / TERMINAL / LAYOUT
   actions, per-world **accent colours**, a GMCP-driven **status bar** with HP/EN meters, and a
   character-bound input prompt + destination/draft gutter. Output is truecolor markup with clickable
-  MXP/Pueblo/web spans; NAWS is re-advertised on resize. `Ctrl+N` next window · `Ctrl+O` next pane ·
-  `Ctrl+W` close · `Ctrl+Q` quit.
+  MXP/Pueblo/web spans; every connected world is told its **own pane's** size over NAWS, on every
+  resize and every layout change (rate-limited, with the settled size always delivered).
+  `Ctrl+N` next window · `Ctrl+O` next pane · `Ctrl+W` close · `Ctrl+Q` quit.
 - **Web view** — an in-TUI text-mode browser (`SharpMUTerm.Web`, AngleSharp): fetch a URL or
   follow an MXP/Pueblo/HTML link and read the page as styled, word-wrapped text with clickable
   links you can navigate in-pane. `<img>` shows as a labelled link (graphics-terminal image
