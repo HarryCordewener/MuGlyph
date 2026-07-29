@@ -23,7 +23,7 @@ internal static class AliasesScreenView
         var header = ScreenChrome.Band(
             AliasesScreenRenderer.HeaderLine(width, AliasesScreenRenderer.Model(sets, selected), focus),
             ScreenPalette.HeaderBg);
-        var footer = ScreenChrome.Band(AliasesScreenRenderer.FooterLine(sets, selected, width), ScreenPalette.FooterBg);
+        var footer = ScreenChrome.Band(AliasesScreenRenderer.FooterLine(sets, selected, width, focus), ScreenPalette.FooterBg);
 
         // Body: alias list │ editor, as two real columns.
         var listCol = ScreenChrome.Stretch(

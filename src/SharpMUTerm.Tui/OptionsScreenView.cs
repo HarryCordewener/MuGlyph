@@ -30,7 +30,7 @@ internal static class OptionsScreenView
                 screen.Title, screen.FKey, width, OptionsScreenRenderer.Model(screen), focus),
             ScreenPalette.HeaderBg);
         var footer = ScreenChrome.Band(
-            OptionsScreenRenderer.FooterLine(screen.Rows, width), ScreenPalette.FooterBg);
+            OptionsScreenRenderer.FooterLine(screen.Rows, width, focus), ScreenPalette.FooterBg);
 
         var rows = OptionsScreenRenderer.BodyColumn(screen.Rows, focus, Math.Max(0, width - CardInset));
         var card = Card(rows);

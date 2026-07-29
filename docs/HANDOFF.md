@@ -4,8 +4,9 @@ Context for whoever (human or agent) picks up this work next.
 
 - **Repository:** `SharpMUSH/SharpMUTerm`
 - **Start from:** a fresh branch off `main`
-- **Tests:** 811 across the solution (327 Core / 83 Graphics / 42 Scripting /
-  28 Web / 331 Tui), all green; `dotnet build SharpMUTerm.slnx` clean (0 warnings
+- **Tests:** 844 across the solution (330 Core / 83 Graphics / 42 Scripting /
+  28 Web / 361 Tui). **Two fail on purpose** — see backlog item 1; they are the
+  pinned row counts the F5 button rows change, left for a human to renumber; `dotnet build SharpMUTerm.slnx` clean (0 warnings
   from this repo; building against a local SharpConsoleUI clone surfaces 2 upstream
   NuGet advisory warnings for AngleSharp, which are the framework's, not ours)
 
@@ -18,28 +19,37 @@ polish/feature backlog.
 
 ### 1. Field editing on the config screens
 
-**Text/number/enum editing is done** — see *Settings screens* under Critical
-Gotchas for how it works. What is left of this item:
+**Done**, apart from one decision that needs a human — see *Settings screens*
+under Critical Gotchas for how the whole thing works.
 
-- **Add/remove rows.** `[+ world]` / `[- del]` (`WorldsScreenRenderer.cs`) and
-  `[+ add character]` / `[⧉ duplicate]` / `[- remove]` are painted but inert.
-  ⏎ is already the "activate the focused row" key, so a button row is a
-  `ScreenRow` with an action rather than a field — that is the natural shape.
-- **F2's route-to radio list and highlight-colour picker**
-  (`TriggersScreenRenderer.cs`). Both are read-only indicators today; the
-  highlight row deliberately never takes the cursor, because there is nothing to
-  turn a colour on with yet.
-- **Rows still not editable** (deliberately, this pass): a macro's *key*
-  (rebinding needs a key-capture mode, not a text buffer), a character's
-  password (it is `[JsonIgnore]` and belongs in a credential store), a world's
-  TLS/certificate "security" line (two booleans, so checkboxes, not a field),
-  and everything derived (the numpad grid, the session/state readouts).
+- **Add/remove rows** are live. `[+ world]` / `[- del]` and `[+ add character]` /
+  `[⧉ duplicate]` / `[- remove]` are `ScreenRow`s carrying a `ScreenButton`; ⏎
+  runs one. **BLOCKED ON A DECISION:** giving the two F5 list panes button rows
+  necessarily changes two pinned row-count assertions in `ScreenModelTests` —
+  `Worlds_HasWorldsThenCharactersThenTriggerSets` (`{2,2,1}` → `{4,5,1}`) and
+  `Worlds_CharacterAndTriggerSetPanesAreEmptyForAWorldWithNoCharacters`
+  (`{2,0,0}` → `{4,1,0}`). Those two assertions are **deliberately left failing**
+  rather than quietly renumbered; update them (or reject the shape) and the item
+  closes.
+- **F2's route-to radios and highlight-colour picker** are live, as `Choice` and
+  `Colour` fields on the *rule's own list row* (ordinals: pattern, route,
+  highlight fg, highlight bg). ↑↓ cycle them, which is exactly radio and palette
+  semantics, and the editor pane keeps the two checkbox rows it always had.
+- **Rows still not editable** (deliberately): a macro's *key* (rebinding needs a
+  key-capture mode, not a text buffer), a character's password (it is
+  `[JsonIgnore]` and belongs in a credential store), a world's TLS/certificate
+  "security" line (two booleans, so checkboxes, not a field), and everything
+  derived (the numpad grid, the session/state readouts).
 
 ### 2. Real-terminal verification still owed
 
 All three are covered by headless snapshots only. Nobody has looked at them in a
 real terminal.
 
+- **The F5 button rows** — `End` is what reaches a pane's buttons without
+  dragging the selection to the end of its list, and nothing on screen says so.
+  Watch someone try to delete a world and see whether they find it; if not, the
+  fix is a hint or a `Delete`-on-the-row binding, not a bigger button.
 - **Full-width input band** — confirm it holds across resizes. The width is
   pinned imperatively (`SyncInputWidth`), so a resize is the risky case.
 - **Mouse drag-to-split** — nobody has done it with an actual mouse. What is
@@ -269,8 +279,26 @@ What the framework actually provides (read at v2.5.14, not assumed):
   piece: on `Redraw` it does `ClearControls()` + `AddControl(factory())` +
   `Invalidate(true)`).
 - **A row is a `ScreenRow`**: an optional `ScreenToggle` (Space) plus an ordered
-  list of `ScreenField`s (⏎ opens the first, ⇥ steps to the next). A row can be
-  both — a keypad binding is Space-enables + ⏎-edits-the-command.
+  list of `ScreenField`s (⏎ opens the first, ⇥ steps to the next), *or* a
+  `ScreenButton` (⏎ runs it). A row can be both a toggle and fields — a keypad
+  binding is Space-enables + ⏎-edits-the-command.
+- **A `ScreenButton` returns its own undo**, rather than being snapshotted before
+  it runs the way a toggle or a field is: the undo for an insertion is "remove
+  the thing that was added", which cannot be described until it exists. A removal
+  captures the item *and its index*, so Esc puts a deleted world back where it
+  was — the list's order is what the screen navigates by, and restoring it onto
+  the end would be a second, invisible edit. Deletion is undo-only, with no
+  confirmation prompt: nothing reaches disk until Save, and a second modal state
+  inside a screen that already has one (an open field edit) would double the
+  key-routing rules for a change that is already reversible.
+- **Buttons come after a pane's list, so the cursor can point past it.**
+  `ScreenModel.ListSizes` says how many rows of each pane are list rows;
+  `ScreenSelection` anchors the *selection* on those, so moving onto `[+ world]`
+  leaves the detail column (and `[- del]`) pointed where it was. Screens must
+  read `SelectionIn(pane)`, **not** `CursorIn(pane)`, for "what is selected".
+  **End** jumps to a pane's last row without re-anchoring, which is the only way
+  to reach a button without walking the selection down the whole list; the
+  targeted buttons also name their victim (`[- del] Grapevine`).
 - **Fields hang off existing rows, never off new ones.** A world's name/host/port/
   encoding/keepalive are the *WORLDS-list row's* fields, drawn in the detail
   column; a timer's interval/command are the *timer row's*, drawn in the editor
@@ -289,7 +317,19 @@ What the framework actually provides (read at v2.5.14, not assumed):
 - **Header hints are derived, not written.** `HeaderLine(width, model, focus)`
   reads `model.HasEditableRow`, so a screen physically cannot advertise `⏎ edit`
   without offering one; `ScreenCursorTests` asserts the *if and only if* both ways.
+  A button row deliberately doesn't count as editable — ⏎ activates it, but it
+  edits nothing. `↑↓ choose` appears only for a field that has `Choices`.
+- **Footer actions are derived too.** `ScreenChrome.Actions(accent, focus)` swaps
+  `[Esc] Cancel` / `[⏎] Save` for `[Esc] Revert` / `[⏎] Commit` while a field is
+  open, because neither key closes the screen at that moment. Every `FooterLine`
+  takes the focus for this; `ScreenFooterTests` pins it for all six screens in
+  both directions, and asserts the header and the footer can't disagree.
   While an edit is open the hints swap wholesale, because Esc no longer closes.
+- **The F2 colour picker is a palette, not an RGB picker.** `ScreenColours` holds
+  the names ↑↓ steps through, but `ScreenField.Colour` also accepts `#rrggbb`,
+  `idx:N` and `none` typed in full — a `TerminalColor` already in config may be a
+  colour no short palette names, and a picker that refused the value it was
+  showing would make an existing highlight uneditable.
 - **Making a Core property settable? Check for cached derived state.**
   `Trigger.Pattern` and `Alias.Pattern` drop their compiled `Regex` on write, like
   `Alias.CaseSensitive` already did — otherwise the rule goes on matching the

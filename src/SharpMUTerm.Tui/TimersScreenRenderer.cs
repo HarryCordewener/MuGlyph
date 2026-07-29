@@ -112,7 +112,8 @@ internal static class TimersScreenRenderer
     private const double MaxIntervalSeconds = 86400;
 
     /// <summary>The action bar: which timer is selected on the left, cancel/save on the right.</summary>
-    internal static string FooterLine(IReadOnlyList<TriggerSet> sets, int selected, int width)
+    internal static string FooterLine(
+        IReadOnlyList<TriggerSet> sets, int selected, int width, ScreenFocus? focus = null)
     {
         var entries = Flatten(sets);
         var context = string.Empty;
@@ -123,7 +124,7 @@ internal static class TimersScreenRenderer
                 + $"[{Label}]  ·  set {Escape(entries[selected].SetName)}[/]";
         }
 
-        var actions = ScreenChrome.Actions();
+        var actions = ScreenChrome.Actions(focus: focus);
         return SpreadLR(" " + context, actions, width);
     }
 

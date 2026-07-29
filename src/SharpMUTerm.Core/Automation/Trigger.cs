@@ -10,11 +10,15 @@ public sealed class TriggerActions
     /// <summary>Suppress the line from output entirely. Settable so the F2 screen can flip it live.</summary>
     public bool Gag { get; set; }
 
-    /// <summary>Recolour the matched region's foreground.</summary>
-    public TerminalColor? HighlightForeground { get; init; }
+    /// <summary>
+    /// Recolour the matched region's foreground. Settable so the F2 screen's colour picker can change
+    /// it live; nothing is derived from it, so there is no cache to drop the way
+    /// <see cref="Trigger.Pattern"/> has.
+    /// </summary>
+    public TerminalColor? HighlightForeground { get; set; }
 
-    /// <summary>Recolour the matched region's background.</summary>
-    public TerminalColor? HighlightBackground { get; init; }
+    /// <summary>Recolour the matched region's background. Settable for the same reason as its foreground.</summary>
+    public TerminalColor? HighlightBackground { get; set; }
 
     /// <summary>Add these attributes to the matched region (e.g. bold).</summary>
     public TextAttributes AddAttributes { get; init; } = TextAttributes.None;
@@ -28,8 +32,13 @@ public sealed class TriggerActions
     /// <summary>Send this command back to the server (capture references supported).</summary>
     public string? SendResponse { get; init; }
 
-    /// <summary>Route the line to a named spawn window instead of the main output.</summary>
-    public string? SpawnTarget { get; init; }
+    /// <summary>
+    /// Route the line to a named spawn window instead of the main output; null routes to the main
+    /// window. Settable so the F2 screen's route-to list can re-point a rule live — the engine reads
+    /// it per match and <see cref="TriggerEngine"/> keeps no routing table of its own, so a change
+    /// applies to the next line.
+    /// </summary>
+    public string? SpawnTarget { get; set; }
 
     /// <summary>Invoke this named script callback (resolved by the scripting layer).</summary>
     public string? ScriptCallback { get; init; }

@@ -139,7 +139,11 @@ public class ScreenModelTests
         var model = WorldsScreenRenderer.Model(worlds, sets, selectedWorld: 0, selectedCharacter: 0);
 
         await Assert.That(model.PaneCount).IsEqualTo(3);
-        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 2, 2, 1 });
+
+        // Two worlds then [+ world] / [- del]; two characters then [+ add] / [⧉ duplicate] /
+        // [- remove]. Buttons are appended after each list, so every index below still addresses
+        // the same item it always did.
+        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 4, 5, 1 });
 
         // Worlds are selection only — there is no checkbox on a world row.
         await Assert.That(model.ToggleAt(0, 0)).IsNull();
@@ -190,7 +194,9 @@ public class ScreenModelTests
     {
         var model = WorldsScreenRenderer.Model(Worlds(), Sets(), selectedWorld: 1, selectedCharacter: 0);
 
-        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 2, 0, 0 });
+        // The character pane holds one row — [+ add character]. Duplicate and remove would act on
+        // nothing, so they aren't drawn and ⏎ can't land on a silent no-op.
+        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 4, 1, 0 });
     }
 
     [Test]

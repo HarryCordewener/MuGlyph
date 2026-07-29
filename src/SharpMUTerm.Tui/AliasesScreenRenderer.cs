@@ -96,7 +96,8 @@ internal static class AliasesScreenRenderer
     }
 
     /// <summary>The action bar: which alias is selected on the left, cancel/save on the right.</summary>
-    internal static string FooterLine(IReadOnlyList<TriggerSet> sets, int selected, int width)
+    internal static string FooterLine(
+        IReadOnlyList<TriggerSet> sets, int selected, int width, ScreenFocus? focus = null)
     {
         var entries = Flatten(sets);
         var context = string.Empty;
@@ -107,7 +108,7 @@ internal static class AliasesScreenRenderer
                 + $"[{Label}]  ·  set {Escape(entries[selected].SetName)}[/]";
         }
 
-        var actions = ScreenChrome.Actions();
+        var actions = ScreenChrome.Actions(focus: focus);
         return SpreadLR(" " + context, actions, width);
     }
 

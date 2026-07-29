@@ -46,6 +46,24 @@ internal sealed class ScreenEdits
         return null;
     }
 
+    /// <summary>
+    /// Runs a button, recording the undo it hands back — the same entry a toggle or a committed field
+    /// pushes, so Esc unmakes a deleted world exactly as it unmakes a typed host. Returns where the
+    /// button wants the cursor left, or null when it doesn't care.
+    /// <para>
+    /// A structural change is recorded *after* the fact rather than snapshotted before it, because
+    /// only the button knows what it did — see <see cref="ScreenButton"/>. Adding and removing rows
+    /// is why the undo log replays newest-first: an index captured by a removal is only meaningful
+    /// against the list as it stood at that moment.
+    /// </para>
+    /// </summary>
+    internal int? Apply(ScreenButton button)
+    {
+        var press = button.Run();
+        _undo.Add(press.Undo);
+        return press.Select;
+    }
+
     /// <summary>Undoes every pending change, newest first, so overlapping edits unwind correctly.</summary>
     internal void Revert()
     {

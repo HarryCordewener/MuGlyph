@@ -10,12 +10,14 @@ namespace SharpMUTerm.Tui;
 internal sealed class ScreenSelection
 {
     private readonly int[] _cursors;
+    private readonly int[] _anchors;
 
     /// <summary>Creates a selection over <paramref name="paneCount"/> panes, focused on the first.</summary>
     internal ScreenSelection(int paneCount)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(paneCount, 1);
         _cursors = new int[paneCount];
+        _anchors = new int[paneCount];
     }
 
     /// <summary>How many panes the screen has.</summary>
@@ -32,6 +34,37 @@ internal sealed class ScreenSelection
         pane >= 0 && pane < _cursors.Length ? _cursors[pane] : -1;
 
     /// <summary>
+    /// Which of a pane's *list* rows is selected — the same thing as the cursor while the cursor is on
+    /// one, and the last such row once it has moved on to the pane's buttons. That is what keeps
+    /// <c>[[- del]]</c> pointed at the world the screen is showing instead of at whichever one happens
+    /// to be last: the cursor has to leave the list to reach the button, and the selection must not
+    /// leave with it.
+    /// </summary>
+    internal int SelectionIn(int pane) =>
+        pane >= 0 && pane < _anchors.Length ? _anchors[pane] : -1;
+
+    /// <summary>
+    /// Re-reads the selection from the cursors, given how many rows of each pane are list rows rather
+    /// than buttons. A cursor on a list row *is* the selection; a cursor on a button leaves it where it
+    /// was, clamped in case the button it just ran shortened the list underneath it.
+    /// </summary>
+    internal void Anchor(IReadOnlyList<int> listSizes)
+    {
+        ArgumentNullException.ThrowIfNull(listSizes);
+
+        for (var pane = 0; pane < _anchors.Length; pane++)
+        {
+            var size = SizeOf(pane, listSizes);
+            if (_cursors[pane] < size)
+            {
+                _anchors[pane] = _cursors[pane];
+            }
+
+            _anchors[pane] = size == 0 ? 0 : Math.Clamp(_anchors[pane], 0, size - 1);
+        }
+    }
+
+    /// <summary>
     /// Seeds a pane's cursor without moving focus — used when a screen opens on state the app already
     /// tracks (F5 opens on the connected world and character). Negative indices are ignored.
     /// </summary>
@@ -40,6 +73,7 @@ internal sealed class ScreenSelection
         if (pane >= 0 && pane < _cursors.Length && index >= 0)
         {
             _cursors[pane] = index;
+            _anchors[pane] = index;
         }
     }
 
@@ -60,6 +94,35 @@ internal sealed class ScreenSelection
         }
 
         var next = Math.Clamp(_cursors[Pane] + delta, 0, size - 1);
+        if (next == _cursors[Pane])
+        {
+            return false;
+        }
+
+        _cursors[Pane] = next;
+        return true;
+    }
+
+    /// <summary>
+    /// Jumps the focused pane's cursor to a row, clamped to the pane's current size —
+    /// <see cref="int.MaxValue"/> is End, 0 is Home. It exists for the button rows a list pane ends in:
+    /// they can only be reached by ↑↓ after walking past every row of the list, which would drag the
+    /// selection to the last one and leave <c>[[- del]]</c> pointed at something the user never chose.
+    /// End steps over the list without touching the selection, because a cursor on a button doesn't
+    /// re-anchor. Returns whether the cursor actually moved.
+    /// </summary>
+    internal bool MoveTo(int index, IReadOnlyList<int> paneSizes)
+    {
+        ArgumentNullException.ThrowIfNull(paneSizes);
+
+        Clamp(paneSizes);
+        var size = SizeOf(Pane, paneSizes);
+        if (size == 0)
+        {
+            return false;
+        }
+
+        var next = Math.Clamp(index, 0, size - 1);
         if (next == _cursors[Pane])
         {
             return false;

@@ -968,16 +968,19 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private ScreenBinding WorldsScreen()
     {
+        // SelectionIn, not CursorIn: both panes end in their own buttons, and the cursor has to leave
+        // the list to press one. The *selection* is what the detail column and the delete buttons are
+        // about, and it stays on the row the user was looking at.
         var session = new SettingsSession(selection => WorldsScreenRenderer.Model(
-            _config.Worlds, _config.TriggerSets, selection.CursorIn(0), selection.CursorIn(1)));
+            _config.Worlds, _config.TriggerSets, selection.SelectionIn(0), selection.SelectionIn(1)));
         session.Selection.Seed(0, ActiveWorldIndex());
         session.Selection.Seed(1, ActiveCharacterIndex());
 
         return new ScreenBinding(session, () => WorldsScreenView.Build(
             _config.Worlds,
             _config.TriggerSets,
-            session.Selection.CursorIn(0),
-            session.Selection.CursorIn(1),
+            session.Selection.SelectionIn(0),
+            session.Selection.SelectionIn(1),
             _system.DesktopDimensions.Width,
             session.Focus()));
     }
@@ -986,7 +989,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private ScreenBinding TriggersScreen()
     {
         var session = new SettingsSession(selection =>
-            TriggersScreenRenderer.Model(_config.TriggerSets, selection.CursorIn(0)));
+            TriggersScreenRenderer.Model(_config.TriggerSets, selection.CursorIn(0), SpawnTargets()));
 
         return new ScreenBinding(session, () => TriggersScreenView.Build(
             _config.TriggerSets,
@@ -1060,13 +1063,22 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
     /// <summary>
     /// The keys a <c>&lt;name&gt;-edit</c> snapshot drives into a freshly opened screen. ⏎ opens the
-    /// focused row's first field; ⇥ commits it and steps to the next; the rest is typing. F5 walks on
-    /// to the host and rewrites its suffix, because "no way to change a host" is the gap this whole
-    /// mode closes and a frame should show exactly that.
+    /// focused row's first field; ⇥ commits it and steps to the next; the rest is typing. Two screens
+    /// walk further than the first field, because a still frame should land on the thing that screen's
+    /// editing actually added: F5 rewrites a host's suffix ("no way to change a host" is the gap the
+    /// whole mode closes), and F2 steps on to its route group and moves the dot, which is the only way
+    /// to see that a radio list is live rather than a report.
     /// </summary>
     private static IEnumerable<ConsoleKeyInfo> EditSnapshotKeys(string view)
     {
         yield return Stroke('\r', ConsoleKey.Enter);
+
+        if (string.Equals(view, "triggers", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return Stroke('\t', ConsoleKey.Tab);
+            yield return Stroke('\0', ConsoleKey.DownArrow);
+            yield break;
+        }
 
         if (!string.Equals(view, "worlds", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(view, "settings", StringComparison.OrdinalIgnoreCase))

@@ -73,7 +73,7 @@ internal static class OptionsScreenRenderer
     }
 
     /// <summary>The action bar: how much the screen holds on the left, cancel/save on the right.</summary>
-    internal static string FooterLine(IReadOnlyList<OptionRow> rows, int width)
+    internal static string FooterLine(IReadOnlyList<OptionRow> rows, int width, ScreenFocus? focus = null)
     {
         ArgumentNullException.ThrowIfNull(rows);
 
@@ -85,7 +85,7 @@ internal static class OptionsScreenRenderer
             context += $"[{Label}]  ·  {Plural(sections, "section")}[/]";
         }
 
-        return SpreadLR(" " + context, ScreenChrome.Actions(), width);
+        return SpreadLR(" " + context, ScreenChrome.Actions(focus: focus), width);
     }
 
     /// <summary>

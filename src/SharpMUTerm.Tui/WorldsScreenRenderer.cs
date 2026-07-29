@@ -24,9 +24,38 @@ internal static class WorldsScreenRenderer
     private const int CharacterRowWidth = 62;
     private const string DividerGlyph = " │ ";
 
+    /// <summary>
+    /// Which item of a list a pane's cursor has selected. The cursor also visits the pane's button
+    /// rows, which sit past the end of the list, and a cursor parked on <c>[[+ world]]</c> must not
+    /// read as "no world selected" — that would blank the detail column, empty the character pane, and
+    /// take the <c>[[- del]]</c> row out from under the very cursor trying to reach it. A cursor past
+    /// the end therefore keeps the last item selected. A negative cursor still means nothing is
+    /// selected, which is how a caller says so deliberately.
+    /// </summary>
+    private static int Selected(int count, int cursor) => cursor >= count ? count - 1 : cursor;
+
+    /// <summary>
+    /// A raw pane-cursor pair resolved to the world and character they actually select, so every block
+    /// of this screen — and the view that composes them — reads the same pair. Both panes end in button
+    /// rows, so both cursors can point past their list.
+    /// </summary>
+    internal static (int World, int Character) Resolve(
+        IReadOnlyList<WorldDefinition> worlds, int selectedWorld, int selectedCharacter)
+    {
+        ArgumentNullException.ThrowIfNull(worlds);
+
+        var world = Selected(worlds.Count, selectedWorld);
+        return (world, world >= 0 ? Selected(worlds[world].Characters.Count, selectedCharacter) : -1);
+    }
+
     /// <summary>The accent hex for the selected world (its own, or the default teal).</summary>
-    internal static string AccentFor(IReadOnlyList<WorldDefinition> worlds, int selectedWorld) =>
-        selectedWorld >= 0 && selectedWorld < worlds.Count ? Hex(worlds[selectedWorld].Accent) : Accent;
+    internal static string AccentFor(IReadOnlyList<WorldDefinition> worlds, int selectedWorld)
+    {
+        ArgumentNullException.ThrowIfNull(worlds);
+
+        var world = Selected(worlds.Count, selectedWorld);
+        return world >= 0 ? Hex(worlds[world].Accent) : Accent;
+    }
 
     /// <summary>
     /// Merges every sub-block into one line list (header, worlds list | detail, character form |
@@ -45,6 +74,7 @@ internal static class WorldsScreenRenderer
         ArgumentNullException.ThrowIfNull(worlds);
         ArgumentNullException.ThrowIfNull(triggerSets);
 
+        (selectedWorld, selectedCharacter) = Resolve(worlds, selectedWorld, selectedCharacter);
         var accent = AccentFor(worlds, selectedWorld);
         var model = Model(worlds, triggerSets, selectedWorld, selectedCharacter);
         var lines = new List<string> { Band(HeaderLine(width, model), HeaderBg, width) };
@@ -75,9 +105,13 @@ internal static class WorldsScreenRenderer
         return lines;
     }
 
-    internal static bool HasCharacter(IReadOnlyList<WorldDefinition> worlds, int selectedWorld, int selectedCharacter) =>
-        selectedWorld >= 0 && selectedWorld < worlds.Count &&
-        selectedCharacter >= 0 && selectedCharacter < worlds[selectedWorld].Characters.Count;
+    internal static bool HasCharacter(IReadOnlyList<WorldDefinition> worlds, int selectedWorld, int selectedCharacter)
+    {
+        ArgumentNullException.ThrowIfNull(worlds);
+
+        var world = Selected(worlds.Count, selectedWorld);
+        return world >= 0 && Selected(worlds[world].Characters.Count, selectedCharacter) >= 0;
+    }
 
     /// <summary>
     /// The screen title on the left, the keyboard hints right-aligned to <paramref name="width"/>. The
@@ -95,6 +129,19 @@ internal static class WorldsScreenRenderer
     /// <summary>The wire encodings a world may be set to; the detail column cycles them with ↑↓.</summary>
     private static readonly string[] Encodings = { "UTF-8", "ISO-8859-1", "ASCII", "CP437", "CP1252" };
 
+    /// <summary>The label the WORLDS list's add button carries, and the row the renderer draws for it.</summary>
+    internal const string AddWorldLabel = "+ world";
+
+    /// <summary>The label the WORLDS list's delete button carries.</summary>
+    internal const string RemoveWorldLabel = "- del";
+
+    /// <summary>The labels the character list's buttons carry, in the order they are drawn.</summary>
+    internal const string AddCharacterLabel = "+ add character";
+
+    internal const string DuplicateCharacterLabel = "⧉ duplicate";
+
+    internal const string RemoveCharacterLabel = "- remove";
+
     /// <summary>
     /// The screen's three navigable panes, in ⇥ order: the WORLDS list (no checkbox on a world's row,
     /// but ⏎ opens the world's own fields — the ones the detail column lists), the selected world's
@@ -107,6 +154,12 @@ internal static class WorldsScreenRenderer
     /// column is a projection of whatever the WORLDS list has selected, so its values already belong
     /// to that row, and a fourth pane would put ⇥ somewhere the eye doesn't go.
     /// </para>
+    /// <para>
+    /// Each list pane ends in its own buttons, because a button acts on the list it is drawn under and
+    /// the cursor is already there. A button that would act on nothing is left out rather than drawn
+    /// dead: a world with no characters offers <c>+ add character</c> and nothing else, so ⏎ never
+    /// lands on a row that silently does nothing.
+    /// </para>
     /// </summary>
     internal static ScreenModel Model(
         IReadOnlyList<WorldDefinition> worlds,
@@ -117,12 +170,16 @@ internal static class WorldsScreenRenderer
         ArgumentNullException.ThrowIfNull(worlds);
         ArgumentNullException.ThrowIfNull(triggerSets);
 
+        (selectedWorld, selectedCharacter) = Resolve(worlds, selectedWorld, selectedCharacter);
+
         var worldRows = ScreenModel.Rows(worlds, w => ScreenRow.Of(
             ScreenField.Text("name", () => w.Name, v => w.Name = v),
             ScreenField.Text("host", () => w.Host, v => w.Host = v),
             ScreenField.Integer("port", () => w.Port, v => w.Port = v, 1, 65535),
             ScreenField.Choice("encoding", () => w.Encoding, v => w.Encoding = v, Encodings),
-            ScreenField.Integer("keepalive", () => w.KeepaliveSeconds, v => w.KeepaliveSeconds = v, 0, 86400)));
+            ScreenField.Integer("keepalive", () => w.KeepaliveSeconds, v => w.KeepaliveSeconds = v, 0, 86400)))
+            .Concat(WorldButtons(worlds, selectedWorld))
+            .ToArray();
 
         var world = selectedWorld >= 0 && selectedWorld < worlds.Count ? worlds[selectedWorld] : null;
         var characterRows = world is null
@@ -130,7 +187,9 @@ internal static class WorldsScreenRenderer
             : ScreenModel.Rows(world.Characters, c => ScreenRow.Of(
                 ScreenToggle.Bind(() => c.AutoLogin, v => c.AutoLogin = v),
                 ScreenField.Text("name", () => c.Name, v => c.Name = v),
-                ScreenField.Optional("on connect", () => c.OnConnect, v => c.OnConnect = v)));
+                ScreenField.Optional("on connect", () => c.OnConnect, v => c.OnConnect = v)))
+                .Concat(CharacterButtons(world, selectedCharacter))
+                .ToArray();
 
         if (!HasCharacter(worlds, selectedWorld, selectedCharacter))
         {
@@ -169,9 +228,101 @@ internal static class WorldsScreenRenderer
         return new ScreenModel(worldRows, characterRows, setRows);
     }
 
-    internal static string FooterLine(
-        IReadOnlyList<WorldDefinition> worlds, int selectedWorld, int selectedCharacter, string accent, int width)
+    /// <summary>
+    /// The WORLDS list's buttons. Deleting is offered only when there is a world under the cursor to
+    /// delete; a brand-new world is a blank template, because a world's whole identity is its host and
+    /// a "helpfully" prefilled one would be a guess the user then has to notice and undo.
+    /// </summary>
+    private static List<ScreenRow> WorldButtons(IReadOnlyList<WorldDefinition> worlds, int selectedWorld)
     {
+        var rows = new List<ScreenRow>();
+        // Arrays report IsReadOnly through IList<T>, and a renderer handed one (the unit tests, any
+        // caller with a fixed projection) must not offer a button whose only effect would be to throw.
+        if (worlds is not IList<WorldDefinition> { IsReadOnly: false } list)
+        {
+            return rows;
+        }
+
+        rows.Add(ScreenRow.Of(ScreenButton.Add(AddWorldLabel, list, () => new WorldDefinition())));
+        if (selectedWorld >= 0 && selectedWorld < list.Count)
+        {
+            rows.Add(ScreenRow.Of(ScreenButton.Remove(RemoveWorldLabel, list, selectedWorld)));
+        }
+
+        return rows;
+    }
+
+    /// <summary>
+    /// The character list's buttons. Duplicating deep-copies through
+    /// <see cref="CharacterDefinition.Clone"/> — an aliased copy would share its trigger-set list and
+    /// its logging settings with the original, so editing one would silently edit both — and the copy
+    /// is renamed rather than left as a second identical name, because a session is keyed
+    /// <c>world.character</c> and two of those would collide.
+    /// </summary>
+    private static List<ScreenRow> CharacterButtons(WorldDefinition world, int selectedCharacter)
+    {
+        var characters = world.Characters;
+        var rows = new List<ScreenRow>
+        {
+            ScreenRow.Of(ScreenButton.Add(AddCharacterLabel, characters, () => new CharacterDefinition())),
+        };
+
+        if (selectedCharacter >= 0 && selectedCharacter < characters.Count)
+        {
+            var source = characters[selectedCharacter];
+            rows.Add(ScreenRow.Of(ScreenButton.Add(
+                DuplicateCharacterLabel,
+                characters,
+                () =>
+                {
+                    var copy = source.Clone();
+                    copy.Name = UniqueName(characters, source.Name);
+                    return copy;
+                })));
+            rows.Add(ScreenRow.Of(ScreenButton.Remove(RemoveCharacterLabel, characters, selectedCharacter)));
+        }
+
+        return rows;
+    }
+
+    /// <summary>
+    /// A name no character in <paramref name="characters"/> already holds: <c>Kaz copy</c>, then
+    /// <c>Kaz copy 2</c>. Matching is case-insensitive because the session key is, so two names that
+    /// differ only in case would still collide.
+    /// </summary>
+    private static string UniqueName(IReadOnlyList<CharacterDefinition> characters, string name)
+    {
+        var candidate = name + " copy";
+        for (var n = 2; Taken(characters, candidate); n++)
+        {
+            candidate = $"{name} copy {n.ToString(CultureInfo.InvariantCulture)}";
+        }
+
+        return candidate;
+    }
+
+    private static bool Taken(IReadOnlyList<CharacterDefinition> characters, string name)
+    {
+        foreach (var character in characters)
+        {
+            if (string.Equals(character.Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    internal static string FooterLine(
+        IReadOnlyList<WorldDefinition> worlds,
+        int selectedWorld,
+        int selectedCharacter,
+        string accent,
+        int width,
+        ScreenFocus? focus = null)
+    {
+        (selectedWorld, selectedCharacter) = Resolve(worlds, selectedWorld, selectedCharacter);
         var context = string.Empty;
         if (worlds.Count > 0 && selectedWorld >= 0)
         {
@@ -183,7 +334,7 @@ internal static class WorldsScreenRenderer
             }
         }
 
-        var actions = ScreenChrome.Actions(accent);
+        var actions = ScreenChrome.Actions(accent, focus);
         return SpreadLR(" " + context, actions, width);
     }
 
@@ -191,6 +342,7 @@ internal static class WorldsScreenRenderer
         IReadOnlyList<WorldDefinition> worlds, int selectedWorld, ScreenFocus? focus = null)
     {
         var cursor = focus ?? ScreenFocus.None;
+        selectedWorld = Selected(worlds.Count, selectedWorld);
         var left = new List<string> { $"[{Label}]WORLDS[/]", string.Empty };
 
         for (var i = 0; i < worlds.Count; i++)
@@ -217,7 +369,14 @@ internal static class WorldsScreenRenderer
         }
 
         left.Add(string.Empty);
-        left.Add($"[{Accent}][[+ world]][/]  [{Label}][[- del]][/]");
+        AppendButtons(
+            left,
+            WorldButtons(worlds, selectedWorld),
+            cursor,
+            0,
+            worlds.Count,
+            LeftColumnWidth,
+            selectedWorld >= 0 && selectedWorld < worlds.Count ? worlds[selectedWorld].Name : null);
         return left;
     }
 
@@ -230,7 +389,8 @@ internal static class WorldsScreenRenderer
         ScreenFocus? focus = null)
     {
         var cursor = focus ?? ScreenFocus.None;
-        if (selectedWorld < 0 || selectedWorld >= worlds.Count)
+        (selectedWorld, selectedCharacter) = Resolve(worlds, selectedWorld, selectedCharacter);
+        if (selectedWorld < 0)
         {
             return new List<string>();
         }
@@ -279,7 +439,16 @@ internal static class WorldsScreenRenderer
         }
 
         right.Add(string.Empty);
-        right.Add($"[{Accent}][[+ add character]][/] [{Label}][[⧉ duplicate]] [[- remove]][/]");
+        AppendButtons(
+            right,
+            CharacterButtons(world, selectedCharacter),
+            cursor,
+            1,
+            world.Characters.Count,
+            CharacterRowWidth,
+            selectedCharacter >= 0 && selectedCharacter < world.Characters.Count
+                ? world.Characters[selectedCharacter].Name
+                : null);
         return right;
     }
 
@@ -304,6 +473,42 @@ internal static class WorldsScreenRenderer
             CharField("auto-login", character.AutoLogin ? $"[{accent}]yes[/]" : $"[{Label}]no[/]"),
             CharField("session", $"[{Label}]offline[/]"),
         };
+    }
+
+    /// <summary>
+    /// Draws a pane's button rows, in the same order and under the same conditions the model builds
+    /// them — the rows come *from* the model's own buttons rather than being written out again here,
+    /// so the label the cursor lands on and the command ⏎ runs cannot drift apart.
+    /// </summary>
+    private static void AppendButtons(
+        List<string> lines,
+        IReadOnlyList<ScreenRow> buttons,
+        ScreenFocus cursor,
+        int pane,
+        int firstIndex,
+        int barWidth,
+        string? target)
+    {
+        for (var i = 0; i < buttons.Count; i++)
+        {
+            if (buttons[i].Button is not { } button)
+            {
+                continue;
+            }
+
+            // A button that adds needs no target and gets the accent; one that acts on the selected row
+            // names it, because the cursor has to leave the list to reach the button and a destructive
+            // key whose victim is off-screen is exactly the kind of surprise these screens must not
+            // spring.
+            var adds = button.Label == AddWorldLabel || button.Label == AddCharacterLabel;
+            var row = $"[{(adds ? Accent : Label)}][[{Escape(button.Label)}]][/]";
+            if (!adds && target is not null)
+            {
+                row += $" [{Value}]{Escape(target)}[/]";
+            }
+
+            lines.Add(ScreenChrome.Cursor(row, cursor.IsOn(pane, firstIndex + i), barWidth));
+        }
     }
 
     /// <summary>Draws a value as a field, showing the buffer and caret when its edit is the open one.</summary>
@@ -390,6 +595,10 @@ internal static class WorldsScreenRenderer
         return merged;
     }
 
-    private static string Hex(TerminalColor color) =>
-        color.Kind == TerminalColorKind.Rgb ? $"#{color.R:x2}{color.G:x2}{color.B:x2}" : Accent;
+    /// <summary>
+    /// A world's accent as markup. Shared with the F2 swatches through <see cref="ScreenColours"/>, so
+    /// an indexed accent resolves to the colour the terminal will actually paint instead of collapsing
+    /// to the app's default teal; only the terminal *default* has no hex of its own.
+    /// </summary>
+    private static string Hex(TerminalColor color) => ScreenColours.Hex(color, Accent);
 }

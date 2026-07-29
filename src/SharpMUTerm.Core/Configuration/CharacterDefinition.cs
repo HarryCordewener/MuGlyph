@@ -39,6 +39,30 @@ public sealed class CharacterDefinition
     /// <summary>Logging is configured per character.</summary>
     public LoggingSettings Logging { get; set; } = new();
 
+    /// <summary>
+    /// A deep copy of this character — every mutable part copied, not shared. The F5 screen's
+    /// <c>duplicate</c> button is the caller: a copy that aliased <see cref="TriggerSets"/> or
+    /// <see cref="Logging"/> would look right on screen and then follow every later edit of the
+    /// original around, which is the sort of bug that only shows up once someone has re-pointed one
+    /// copy's log directory and lost the other's.
+    /// <para>
+    /// <see cref="Password"/> is carried over deliberately: it is <c>[JsonIgnore]</c> session state,
+    /// and a duplicate of a logged-in character that silently forgot its password would be a worse
+    /// surprise than one that kept it. Nothing here reaches disk.
+    /// </para>
+    /// </summary>
+    public CharacterDefinition Clone() => new()
+    {
+        Name = Name,
+        Password = Password,
+        ConnectString = ConnectString,
+        AutoLogin = AutoLogin,
+        OnConnect = OnConnect,
+        OnDisconnect = OnDisconnect,
+        TriggerSets = new List<string>(TriggerSets),
+        Logging = new LoggingSettings { Format = Logging.Format, Directory = Logging.Directory },
+    };
+
     /// <summary>Builds the default login line when <see cref="ConnectString"/> is unset.</summary>
     public string ResolveConnectString() =>
         !string.IsNullOrWhiteSpace(ConnectString)

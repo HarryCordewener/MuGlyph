@@ -23,7 +23,7 @@ internal static class KeypadScreenView
         var header = ScreenChrome.Band(
             KeypadScreenRenderer.HeaderLine(width, KeypadScreenRenderer.Model(macros), focus),
             ScreenPalette.HeaderBg);
-        var footer = ScreenChrome.Band(KeypadScreenRenderer.FooterLine(macros, width), ScreenPalette.FooterBg);
+        var footer = ScreenChrome.Band(KeypadScreenRenderer.FooterLine(macros, width, focus), ScreenPalette.FooterBg);
 
         // Body: numpad grid │ hotkey list, as two real columns.
         var numpadCol = ScreenChrome.Stretch(new MarkupControl(KeypadScreenRenderer.NumpadColumn(macros)));

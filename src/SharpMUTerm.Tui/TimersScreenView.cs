@@ -24,7 +24,7 @@ internal static class TimersScreenView
             TimersScreenRenderer.HeaderLine(width, TimersScreenRenderer.Model(sets, selected), focus),
             ScreenPalette.HeaderBg);
         var footer = ScreenChrome.Band(
-            TimersScreenRenderer.FooterLine(sets, selected, width), ScreenPalette.FooterBg);
+            TimersScreenRenderer.FooterLine(sets, selected, width, focus), ScreenPalette.FooterBg);
 
         // Body: timer list │ editor, as two real columns.
         var listCol = ScreenChrome.Stretch(

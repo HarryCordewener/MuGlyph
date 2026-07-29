@@ -27,7 +27,9 @@ internal static class ScreenChrome
     {
         if (focus?.Edit is { } edit)
         {
-            var editing = edit.RowFields > 1 ? EditingHints + NextFieldHint : EditingHints;
+            var editing = EditingHints
+                + (edit.HasChoices ? ChoiceHint : string.Empty)
+                + (edit.RowFields > 1 ? NextFieldHint : string.Empty);
             return $"[{ScreenPalette.Label}]{editing} · [/][{ScreenPalette.Accent}]{fkey}[/]"
                 + $"[{ScreenPalette.Label}] close [/]";
         }
@@ -58,12 +60,44 @@ internal static class ScreenChrome
     internal const string NextFieldHint = " · ⇥ next field";
 
     /// <summary>
-    /// The right-hand actions of a footer bar. <paramref name="accent"/> lets a screen with a
-    /// context colour (F5's per-world accent) tint the Save chip; it defaults to the app accent.
+    /// Added to <see cref="EditingHints"/> only when the open field is one of a fixed set of values —
+    /// a route, an encoding, a highlight colour — because only those have anything for ↑↓ to step
+    /// through. A free-text field would be claiming a key that does nothing.
     /// </summary>
-    internal static string Actions(string? accent = null) =>
-        $"[{ScreenPalette.Label}] [[Esc]] Cancel [/]  "
-        + $"[{ScreenPalette.Ink} on {accent ?? ScreenPalette.Accent}] [[⏎]] Save [/] ";
+    internal const string ChoiceHint = " · ↑↓ choose";
+
+    /// <summary>What the footer's Esc chip does while the screen is navigating.</summary>
+    internal const string CancelAction = "[[Esc]] Cancel";
+
+    /// <summary>What the footer's ⏎ chip does while the screen is navigating.</summary>
+    internal const string SaveAction = "[[⏎]] Save";
+
+    /// <summary>What the footer's Esc chip does while a field edit is open.</summary>
+    internal const string RevertAction = "[[Esc]] Revert";
+
+    /// <summary>What the footer's ⏎ chip does while a field edit is open.</summary>
+    internal const string CommitAction = "[[⏎]] Commit";
+
+    /// <summary>
+    /// The right-hand actions of a footer bar. <paramref name="accent"/> lets a screen with a
+    /// context colour (F5's per-world accent) tint the ⏎ chip; it defaults to the app accent.
+    /// <para>
+    /// <paramref name="focus"/> is read for the same reason <see cref="Hints"/> reads it: while a
+    /// field edit is open, ⏎ commits that field and Esc abandons its buffer — neither closes the
+    /// screen — so an action bar still offering <c>Save</c> and <c>Cancel</c> names two keys that do
+    /// something else at that moment. The footer is the more visible of the two claims, so it has to
+    /// change with the header rather than being left behind.
+    /// </para>
+    /// </summary>
+    internal static string Actions(string? accent = null, ScreenFocus? focus = null)
+    {
+        var editing = focus?.Edit is not null;
+        var escape = editing ? RevertAction : CancelAction;
+        var enter = editing ? CommitAction : SaveAction;
+
+        return $"[{ScreenPalette.Label}] {escape} [/]  "
+            + $"[{ScreenPalette.Ink} on {accent ?? ScreenPalette.Accent}] {enter} [/] ";
+    }
 
     /// <summary>
     /// Draws a row as the keyboard cursor: the row's own markup on a cursor band padded out to

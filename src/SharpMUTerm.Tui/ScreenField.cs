@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using SharpMUTerm.Core.Text;
 
 namespace SharpMUTerm.Tui;
 
@@ -17,8 +18,12 @@ namespace SharpMUTerm.Tui;
 /// <param name="RowFields">
 /// How many fields the row holds — the chrome only offers ⇥ when there is a next field to step to.
 /// </param>
+/// <param name="HasChoices">
+/// Whether the open field offers a fixed set of values, so the chrome only offers ↑↓ when there is
+/// something for them to step through.
+/// </param>
 internal readonly record struct ScreenFieldEdit(
-    int Field, string Text, int Caret, string? Error, int RowFields = 1);
+    int Field, string Text, int Caret, string? Error, int RowFields = 1, bool HasChoices = false);
 
 /// <summary>
 /// An editable value on a settings row: how to read it as text, whether a typed string is a legal
@@ -193,6 +198,36 @@ internal readonly record struct ScreenField(
             value => set(Canonical(choices, value) ?? value),
             Restore(get, set),
             choices);
+    }
+
+    /// <summary>
+    /// A colour, or no colour at all. <see cref="ScreenColours.Palette"/> is what ↑↓ steps through,
+    /// but the validator is deliberately wider than the palette: <c>#rrggbb</c> and <c>idx:N</c> are
+    /// accepted too, because a <see cref="SharpMUTerm.Core.Text.TerminalColor"/> already in config may
+    /// be a colour no short palette names, and opening the field on a value it would then refuse to
+    /// commit would make an existing highlight uneditable.
+    /// </summary>
+    internal static ScreenField Colour(
+        string label, Func<TerminalColor?> get, Action<TerminalColor?> set)
+    {
+        ArgumentNullException.ThrowIfNull(get);
+        ArgumentNullException.ThrowIfNull(set);
+
+        return new ScreenField(
+            label,
+            () => ScreenColours.Format(get()),
+            value => ScreenColours.TryParse(value, out _)
+                ? null
+                : $"{label} must be a colour name, #rrggbb, idx:N or none",
+            value =>
+            {
+                if (ScreenColours.TryParse(value, out var parsed))
+                {
+                    set(parsed);
+                }
+            },
+            Restore(get, set),
+            ScreenColours.Palette);
     }
 
     /// <summary>An enum value, typed or cycled by name — F9's log format is the canonical case.</summary>

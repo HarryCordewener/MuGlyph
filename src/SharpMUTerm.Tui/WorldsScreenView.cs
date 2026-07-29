@@ -24,13 +24,17 @@ internal static class WorldsScreenView
         int width,
         ScreenFocus? focus = null)
     {
+        // Both panes end in button rows, so a raw cursor can point past its list; resolving once here
+        // keeps every block of the screen agreeing on which world and character are selected.
+        (selectedWorld, selectedCharacter) =
+            WorldsScreenRenderer.Resolve(worlds, selectedWorld, selectedCharacter);
         var accent = WorldsScreenRenderer.AccentFor(worlds, selectedWorld);
 
         var model = WorldsScreenRenderer.Model(worlds, triggerSets, selectedWorld, selectedCharacter);
         var header = ScreenChrome.Band(
             WorldsScreenRenderer.HeaderLine(width, model, focus), ScreenPalette.HeaderBg);
         var footer = ScreenChrome.Band(
-            WorldsScreenRenderer.FooterLine(worlds, selectedWorld, selectedCharacter, accent, width),
+            WorldsScreenRenderer.FooterLine(worlds, selectedWorld, selectedCharacter, accent, width, focus),
             ScreenPalette.FooterBg);
 
         // Body: WORLDS list │ detail, as two real columns.

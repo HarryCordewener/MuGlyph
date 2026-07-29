@@ -33,8 +33,10 @@ internal enum ScreenAction
 /// field it is typing into out of each fresh model.
 /// </para>
 /// <para>
-/// The keys, in one place: ⏎ activates the focused row when it has something to activate (a field →
-/// open an edit) and otherwise saves and closes; ⌃S saves from anywhere; Esc cancels the screen,
+/// The keys, in one place: ↑↓ move a row and Home/End jump to a pane's first and last — End is how a
+/// pane's trailing buttons are reached without walking the selection to the end of its list; ⏎
+/// activates the focused row when it has something to activate (a field → open an edit, a button →
+/// run it) and otherwise saves and closes; ⌃S saves from anywhere; Esc cancels the screen,
 /// except while an edit is open, where it abandons the edit and leaves the screen up. Inside an edit,
 /// typing inserts, Backspace/Delete remove, ←→/Home/End move the caret, ↑↓ cycle an enum field's
 /// choices, ⇥ commits and steps to the row's next field, ⏎ commits, and Esc reverts.
@@ -77,6 +79,7 @@ internal sealed class SettingsSession
     {
         var model = _model(Selection);
         Selection.Clamp(model.Sizes);
+        Selection.Anchor(model.ListSizes);
         if (!Selection.HasSelection(model.Sizes))
         {
             return ScreenFocus.None;
@@ -88,7 +91,8 @@ internal sealed class SettingsSession
                 open.Text,
                 open.Caret,
                 open.Error,
-                model.RowAt(open.Pane, open.Index).FieldCount)
+                model.RowAt(open.Pane, open.Index).FieldCount,
+                model.FieldAt(open.Pane, open.Index, open.Field)?.Choices is { Count: > 0 })
             : (ScreenFieldEdit?)null;
 
         return new ScreenFocus(Selection.Pane, Selection.Index, edit);
@@ -102,8 +106,19 @@ internal sealed class SettingsSession
     /// </summary>
     internal ScreenAction Handle(ConsoleKeyInfo key)
     {
+        var action = Interpret(key);
+
+        // Re-anchored *after* the key, because a key is exactly what moves the cursor between a pane's
+        // list and its buttons — and the screen is rebuilt from the anchor on the very next frame.
+        Selection.Anchor(_model(Selection).ListSizes);
+        return action;
+    }
+
+    private ScreenAction Interpret(ConsoleKeyInfo key)
+    {
         var model = _model(Selection);
         Selection.Clamp(model.Sizes);
+        Selection.Anchor(model.ListSizes);
 
         if (_edit is not null)
         {
@@ -132,6 +147,12 @@ internal sealed class SettingsSession
                     ? Selection.PreviousPane(model.Sizes)
                     : Selection.NextPane(model.Sizes));
 
+            case ConsoleKey.Home:
+                return Changed(Selection.MoveTo(0, model.Sizes));
+
+            case ConsoleKey.End:
+                return Changed(Selection.MoveTo(int.MaxValue, model.Sizes));
+
             case ConsoleKey.Spacebar:
                 return Toggle(model);
 
@@ -152,12 +173,27 @@ internal sealed class SettingsSession
     }
 
     /// <summary>
-    /// ⏎ on a row that has something to open. A row with no field is not activatable, and ⏎ keeps its
-    /// old meaning there — the footer's <c>[[⏎]] Save</c>.
+    /// ⏎ on a row that has something to activate: a button runs, a record of fields opens its first.
+    /// A row that is neither is not activatable, and ⏎ keeps its old meaning there — the footer's
+    /// <c>[[⏎]] Save</c>.
     /// </summary>
     private ScreenAction Activate(ScreenModel model)
     {
-        if (!model.RowAt(Selection.Pane, Selection.Index).IsActivatable)
+        var row = model.RowAt(Selection.Pane, Selection.Index);
+        if (row.Button is { } button)
+        {
+            // The button rewrites the very list the cursor navigates, so where the cursor lands is the
+            // button's own answer (a new row wants the cursor on it, ready to be named) rather than a
+            // rule this method could guess. The next Focus()/Handle() re-projects and clamps it.
+            if (Edits.Apply(button) is { } select)
+            {
+                Selection.Seed(Selection.Pane, select);
+            }
+
+            return ScreenAction.Redraw;
+        }
+
+        if (!row.IsActivatable)
         {
             return ScreenAction.Save;
         }

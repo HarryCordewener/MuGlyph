@@ -26,10 +26,10 @@ internal static class TriggersScreenView
     {
         var header = ScreenChrome.Band(
             TriggersScreenRenderer.HeaderLine(
-                width, TriggersScreenRenderer.Model(sets, selectedTrigger), focus),
+                width, TriggersScreenRenderer.Model(sets, selectedTrigger, spawnTargets), focus),
             ScreenPalette.HeaderBg);
         var footer = ScreenChrome.Band(
-            TriggersScreenRenderer.FooterLine(sets, selectedTrigger, width), ScreenPalette.FooterBg);
+            TriggersScreenRenderer.FooterLine(sets, selectedTrigger, width, focus), ScreenPalette.FooterBg);
 
         // Body: rule list │ editor, as two real columns.
         var rulesCol = ScreenChrome.Stretch(

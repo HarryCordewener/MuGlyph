@@ -89,7 +89,7 @@ internal static class KeypadScreenRenderer
     }
 
     /// <summary>The action bar: how much of the keypad is bound on the left, cancel/save on the right.</summary>
-    internal static string FooterLine(IReadOnlyList<Macro> macros, int width)
+    internal static string FooterLine(IReadOnlyList<Macro> macros, int width, ScreenFocus? focus = null)
     {
         ArgumentNullException.ThrowIfNull(macros);
 
@@ -109,7 +109,7 @@ internal static class KeypadScreenRenderer
         var context = $"[{Label}]{total} bindings[/]"
             + $"[{Label}]  ·  {bound.ToString(CultureInfo.InvariantCulture)} of 9 numpad keys bound[/]";
 
-        var actions = ScreenChrome.Actions();
+        var actions = ScreenChrome.Actions(focus: focus);
         return SpreadLR(" " + context, actions, width);
     }
 
