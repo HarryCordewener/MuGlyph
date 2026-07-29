@@ -109,6 +109,14 @@ public class ConnectStringTemplateTests
         await Assert.That(Character("connect %CHARACTER%%PASSWORD%", null).ResolveConnectString())
             .IsEqualTo("connect Corvid");
 
+        // The same template *with* a password runs the two values together, and that is correct: the
+        // rule gives a space up, it never invents one. Pinned because `%CHARACTER%%PASSWORD%` is the
+        // template someone writes after misreading the default's `% %` as `%%` at a terminal font —
+        // so the failure needs to be the legible "connect Corvidhunter2" the server rejects, not a
+        // silently repaired line that hides which template is actually stored.
+        await Assert.That(Character("connect %CHARACTER%%PASSWORD%", "hunter2").ResolveConnectString())
+            .IsEqualTo("connect Corvidhunter2");
+
         // Exactly one space, so a deliberate double stays a double — the rule is narrow on purpose.
         await Assert.That(Character("connect %CHARACTER%  %PASSWORD%", null).ResolveConnectString())
             .IsEqualTo("connect Corvid ");
