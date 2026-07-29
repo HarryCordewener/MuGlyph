@@ -71,8 +71,47 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private readonly Dictionary<WorldSession, string> _sessionWindows = new();
 
-    /// <summary>The size each session was last told over NAWS, so an unchanged one isn't re-announced.</summary>
-    private readonly Dictionary<WorldSession, (int Width, int Height)> _reportedSizes = new();
+    /// <summary>
+    /// How often one session may be told a new size over NAWS. A report is a nine-byte
+    /// subnegotiation and the server does nothing urgent with it — it is the width future lines will
+    /// be wrapped at, not anything on screen now — so the only thing that has to be prompt is the
+    /// size a resize <em>settles</em> on. What must not happen is the other end: dragging a terminal
+    /// edge produces a size per frame, and the report rides the frame, so an unlimited path writes to
+    /// every connected world sixty times a second for as long as the drag lasts.
+    /// <para>
+    /// 250 ms caps that at four writes per second per world while staying well inside the ~300 ms a
+    /// person reads as "instant", and the leading edge is not delayed at all
+    /// (<see cref="OfferWindowSize"/>), so a split or a one-shot resize is as immediate as it ever
+    /// was. Deliberately a constant and not an F8 option: it is protocol hygiene rather than a
+    /// preference, there is no answer a user is in a position to prefer, and a row honest enough to
+    /// say what it does ("how often we tell the server the window size") would be a knob whose only
+    /// wrong settings are the ones a user might pick.
+    /// </para>
+    /// </summary>
+    internal static readonly TimeSpan WindowSizeReportInterval = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>What one session has been told over NAWS, and what it is waiting to be told.</summary>
+    private sealed class SizeReport
+    {
+        /// <summary>The size actually sent, or null when the session has been told nothing yet.</summary>
+        public (int Width, int Height)? Sent;
+
+        /// <summary>When <see cref="Sent"/> went out; meaningless while it is null.</summary>
+        public DateTimeOffset SentAt;
+
+        /// <summary>The newest size the interval is holding back — replaced, never queued.</summary>
+        public (int Width, int Height)? Pending;
+    }
+
+    /// <summary>Per-session NAWS bookkeeping. UI thread only.</summary>
+    private readonly Dictionary<WorldSession, SizeReport> _sizeReports = new();
+
+    /// <summary>The clock and timer source behind the rate limit; a fake one makes the tests exact.</summary>
+    private readonly TimeProvider _time;
+
+    /// <summary>The one-shot trailing flush, and the moment it is currently armed for.</summary>
+    private ITimer? _sizeFlushTimer;
+    private DateTimeOffset? _sizeFlushDueAt;
 
     private readonly ConsoleWindowSystem _system;
     private readonly Window _window;
@@ -180,10 +219,20 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>The window index the workspace row sits at (after the sticky-top header).</summary>
     private const int WorkspaceRowIndex = 1;
 
-    public SharpMUTermApp(AppConfiguration config, TerminalCapabilities capabilities, IConsoleDriver? driver = null)
+    /// <param name="time">
+    /// The clock and timer source the NAWS rate limit runs on. Defaults to the real one; a test
+    /// passes a manual provider so "the trailing update lands once the frames stop" is an assertion
+    /// rather than a sleep.
+    /// </param>
+    public SharpMUTermApp(
+        AppConfiguration config,
+        TerminalCapabilities capabilities,
+        IConsoleDriver? driver = null,
+        TimeProvider? time = null)
     {
         _config = config;
         _capabilities = capabilities;
+        _time = time ?? TimeProvider.System;
         _theme = ResolveTheme(config);
         _formatter = new MarkupFormatter(_theme, config.Text);
         _drafts = new DraftStore(() => config.Input.KeepDrafts);
@@ -825,7 +874,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(session);
         ArgumentException.ThrowIfNullOrEmpty(windowId);
         _sessionWindows[session] = windowId;
-        _reportedSizes.Remove(session);
+        _sizeReports.Remove(session);
     }
 
     /// <summary>The optional output-view timestamp gutter, or null when the column is off. Headless
@@ -3538,11 +3587,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// answer with less code.
     /// </para>
     /// <para>
-    /// A session is told only when the answer has changed since the last thing we told it. That is
-    /// not debouncing — nothing is delayed or merged, and every change is announced on the very next
-    /// frame — it is what stops a per-frame hook re-announcing an unchanged size sixty times a second.
-    /// A session that disconnects forgets what it was told, so a reconnect (which resets the server's
-    /// idea of NAWS along with everything else) announces again.
+    /// A session is told only when the answer has changed since the last thing we told it — an
+    /// unchanged size is never re-sent, rate limit or no — and no more than once per
+    /// <see cref="WindowSizeReportInterval"/>. What the interval holds back is coalesced to the
+    /// newest size and delivered by <see cref="FlushPendingSizes"/>; see
+    /// <see cref="OfferWindowSize"/> for the shape of the throttle.
+    /// A session that disconnects forgets what it was told <em>and</em> when, so a reconnect (which
+    /// resets the server's idea of NAWS along with everything else) announces at once rather than
+    /// serving out an interval belonging to the previous connection.
     /// </para>
     /// </summary>
     private void ReportPaneSizes()
@@ -3553,6 +3605,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         var rects = PaneOutputRects();
+        var now = _time.GetUtcNow();
 
         // Enumerated in place: this runs on the UI thread, which is also the only thread that
         // registers a session (see AttachSession), and nothing in the loop registers one. The
@@ -3561,7 +3614,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         {
             if (!session.IsConnected)
             {
-                _reportedSizes.Remove(session);
+                _sizeReports.Remove(session);
                 continue;
             }
 
@@ -3573,22 +3626,153 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 continue;
             }
 
-            var size = (Width: Math.Max(1, rect.Width), Height: Math.Max(1, rect.Height));
-            if (_reportedSizes.TryGetValue(session, out var last) && last == size)
+            OfferWindowSize(session, (Math.Max(1, rect.Width), Math.Max(1, rect.Height)), now);
+        }
+
+        ArmSizeFlush(now);
+    }
+
+    /// <summary>
+    /// Offers one session a size, and decides whether it goes out now or waits.
+    /// <list type="bullet">
+    /// <item>The size the server already has is dropped outright, and cancels anything waiting: a
+    /// drag that ends where it started owes the server nothing.</item>
+    /// <item>A session that has been told nothing, or nothing within
+    /// <see cref="WindowSizeReportInterval"/>, is told immediately. So a single discrete change — a
+    /// split, a zoom, a closed tab, a connect — carries no added latency at all; the limit only
+    /// engages while sizes are arriving faster than that.</item>
+    /// <item>Anything else becomes the pending size, <em>replacing</em> whatever was pending rather
+    /// than queueing behind it. Only where a drag ended matters, and a server made to re-wrap through
+    /// every intermediate width would be doing work the user never sees.</item>
+    /// </list>
+    /// </summary>
+    private void OfferWindowSize(WorldSession session, (int Width, int Height) size, DateTimeOffset now)
+    {
+        if (!_sizeReports.TryGetValue(session, out var report))
+        {
+            _sizeReports[session] = report = new SizeReport();
+        }
+
+        if (report.Sent == size)
+        {
+            report.Pending = null;
+            return;
+        }
+
+        if (report.Sent is null || now - report.SentAt >= WindowSizeReportInterval)
+        {
+            SendWindowSize(session, report, size, now);
+            return;
+        }
+
+        report.Pending = size;
+    }
+
+    /// <summary>Writes a size to a session and records what was sent, and when.</summary>
+    private void SendWindowSize(
+        WorldSession session,
+        SizeReport report,
+        (int Width, int Height) size,
+        DateTimeOffset now)
+    {
+        report.Sent = size;
+        report.SentAt = now;
+        report.Pending = null;
+        _ = AnnounceWindowSizeAsync(session, size.Width, size.Height);
+    }
+
+    /// <summary>
+    /// Delivers the sizes the interval held back. This is the half of the rate limit that makes it
+    /// safe: reports ride the frame, and the frames stop the instant a drag-resize ends, so a limiter
+    /// that only ever dropped would lose the one size that matters — the one the drag settled on.
+    /// Runs on the UI thread (the timer callback marshals through <see cref="OnUiThread"/>), so it
+    /// shares the report bookkeeping with the frame path rather than locking against it.
+    /// </summary>
+    private void FlushPendingSizes()
+    {
+        _sizeFlushDueAt = null; // whatever the timer was armed for has now happened
+        var now = _time.GetUtcNow();
+
+        foreach (var (session, report) in _sizeReports)
+        {
+            if (report.Pending is not { } pending)
             {
                 continue;
             }
 
-            _reportedSizes[session] = size;
-            _ = AnnounceWindowSizeAsync(session, size.Width, size.Height);
+            if (!session.IsConnected)
+            {
+                report.Pending = null;
+                continue;
+            }
+
+            // Re-armed rather than sent early: another session's earlier deadline can wake this up.
+            if (report.Sent is not null && now - report.SentAt < WindowSizeReportInterval)
+            {
+                continue;
+            }
+
+            SendWindowSize(session, report, pending, now);
         }
+
+        ArmSizeFlush(now);
     }
 
     /// <summary>
-    /// Sends one session's NAWS report. The callers cannot await it — a paint callback and a connect
-    /// continuation — but the failure is not swallowed the way the old fire-and-forget was: a write
-    /// that throws says so in that world's own output, and the cached size is dropped so the next
-    /// frame tries again rather than believing the server knows a size it was never sent.
+    /// Arms the one-shot trailing flush for the earliest moment a held-back size may go out, or
+    /// disarms it when nothing is waiting. A timer is used rather than the render loop precisely
+    /// because the render loop is what stops: the last frame of a resize is followed by silence, and
+    /// the settled size has to arrive out of that silence. Its callback does nothing but marshal onto
+    /// the UI thread, where the main loop drains queued actions every iteration whether or not
+    /// anything is dirty.
+    /// </summary>
+    private void ArmSizeFlush(DateTimeOffset now)
+    {
+        DateTimeOffset? due = null;
+        foreach (var report in _sizeReports.Values)
+        {
+            if (report.Pending is null)
+            {
+                continue;
+            }
+
+            var ready = report.Sent is null ? now : report.SentAt + WindowSizeReportInterval;
+            if (due is null || ready < due)
+            {
+                due = ready;
+            }
+        }
+
+        if (due is null)
+        {
+            _sizeFlushDueAt = null;
+            _sizeFlushTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            return;
+        }
+
+        // An earlier wake-up is already booked; it will re-arm for anything still waiting after it.
+        if (_sizeFlushDueAt is { } armed && armed <= due)
+        {
+            return;
+        }
+
+        _sizeFlushDueAt = due;
+        _sizeFlushTimer ??= _time.CreateTimer(
+            _ => OnUiThread(FlushPendingSizes),
+            null,
+            Timeout.InfiniteTimeSpan,
+            Timeout.InfiniteTimeSpan);
+        _sizeFlushTimer.Change(
+            due.Value > now ? due.Value - now : TimeSpan.Zero,
+            Timeout.InfiniteTimeSpan);
+    }
+
+    /// <summary>
+    /// Sends one session's NAWS report. The callers cannot await it — a paint callback, a timer and a
+    /// connect continuation — but the failure is not swallowed the way the old fire-and-forget was: a
+    /// write that throws says so in that world's own output, and the record of what it was told is
+    /// dropped so the next frame tries again rather than believing the server knows a size it was
+    /// never sent.
     /// </summary>
     private async Task AnnounceWindowSizeAsync(WorldSession session, int width, int height)
     {
@@ -3602,7 +3786,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             // an unobserved exception at a finalizer instead of a line the user can read.
             OnUiThread(() =>
             {
-                _reportedSizes.Remove(session);
+                _sizeReports.Remove(session);
                 session.PrintSystem($"*** Could not report the window size: {ex.Message}");
             });
         }
@@ -3768,6 +3952,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _system.ConsoleDriver.MouseEvent -= OnDriverMouseEvent;
+        _sizeFlushTimer?.Dispose(); // nothing left to tell a server we are shutting down to
         _webImageCts?.Cancel();
         _webImageCts?.Dispose();
         _imageLoader.Dispose();

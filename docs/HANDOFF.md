@@ -4,8 +4,8 @@ Context for whoever (human or agent) picks up this work next.
 
 - **Repository:** `SharpMUSH/SharpMUTerm`
 - **Start from:** a fresh branch off `main`
-- **Tests:** 1251 across the solution (416 Core / 83 Graphics / 42 Scripting /
-  30 Web / 680 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
+- **Tests:** 1256 across the solution (416 Core / 83 Graphics / 42 Scripting /
+  30 Web / 685 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
   from this repo; building against a local SharpConsoleUI clone surfaces 2 upstream
   NuGet advisory warnings for AngleSharp, which are the framework's, not ours)
 
@@ -405,10 +405,35 @@ What the framework actually provides (read at v2.5.14, not assumed):
   post-paint hook is the first moment the new layout can be read, and every resize, split, close,
   zoom and move repaints, so one hook covers all of them. For the same reason `OnResize` deliberately
   does **not** report: at that moment the panes still hold the old window's rectangles.
-- **A session is told only when the answer changed.** That is not debouncing (nothing is delayed or
-  merged, and a change is announced on the very next frame) — it is what keeps a per-frame hook from
-  re-sending an unchanged size sixty times a second. A session that disconnects forgets what it was
-  told, so a reconnect announces again.
+- **A session is told only when the answer changed**, rate limit or no. A size that comes back to
+  what the server already has cancels anything waiting, so a drag that ends where it started sends
+  nothing at all.
+- **And at most once per `SharpMUTermApp.WindowSizeReportInterval` (250 ms) per session.** A NAWS
+  frame is nine bytes and nothing on screen depends on it — it is the width *future* lines wrap at —
+  but the report rides the frame, so dragging a terminal edge would otherwise write to every
+  connected world ~60×/s for as long as the drag lasts. 250 ms caps that at four writes a second per
+  world while staying inside the ~300 ms a person reads as instant. It is a **constant, not an F8
+  option**: protocol hygiene rather than a preference, and a row honest enough to say what it does
+  would be a knob whose only wrong settings are the ones a user might pick.
+  - **The leading edge is never delayed.** A session that has been told nothing, or nothing within
+    the interval, is told on the frame that produced the change — so a split, a zoom, a closed tab or
+    a connect costs no added latency. The limit only engages while sizes arrive faster than that.
+  - **Held-back sizes are coalesced, not queued** (`SizeReport.Pending` is replaced): a server is
+    told where a drag ended, never the widths it swept through.
+  - **The trailing flush is mandatory, and it is a timer.** Frames stop the instant a drag-resize
+    ends, so a limiter that only dropped would lose the one size that matters. `ArmSizeFlush` arms a
+    one-shot `ITimer` for the earliest moment a held-back size may go; its callback does nothing but
+    `OnUiThread(FlushPendingSizes)`, which is safe because `ConsoleWindowSystem`'s main loop drains
+    queued UI actions **every iteration**, dirty or not (`DrainUIActionQueue`, before the render
+    gate). The render loop is exactly the wrong thing to hang it on: it is what stops.
+  - **A disconnect drops what the session was told *and when*,** so a reconnect announces at once
+    instead of serving out an interval belonging to the previous connection.
+- **The clock is injectable** — `new SharpMUTermApp(config, caps, driver, TimeProvider)`, defaulting
+  to `TimeProvider.System`. `ManualTimeProvider` in the Tui tests advances the clock and fires due
+  timers on the calling thread, so `TheSettledSizeArrivesAfterTheFramesStop` asserts the trailing
+  flush instead of sleeping for it. Two probes worth repeating if you touch this: setting the
+  interval to zero fails exactly the four throttle tests, and stubbing out `ArmSizeFlush` fails
+  exactly the three that need the trailing flush.
 - **A hidden tab is still reported**, at its pane's size: that is the size it will be shown at, and
   the alternative is the stale size that was the bug.
 - **`ForceRender()` on a clean window paints nothing** — `RenderCoordinator.RenderWindows` skips any

@@ -50,8 +50,9 @@ fallbacks) for inline images/maps.
   markup via `MarkupFormatter` (clickable `[link=…]` MXP/Pueblo/web spans); an `InputBarControl`
   command line (wrapping, auto-growing, per-window drafts, plus an optional per-window second bar),
   status line, `Ctrl+Q` quit, per-pane NAWS (every connected session is told its own pane's output
-  rectangle, on every resize and layout change). The tab/pane set is driven by the tested `Core.Workspaces`
-  model, with **splits** (thin single-line dividers) and the **connection rail** now rendered as well.
+  rectangle, on every resize and layout change, rate-limited to four writes a second with a trailing
+  flush). The tab/pane set is driven by the tested `Core.Workspaces` model, with **splits** (thin
+  single-line dividers) and the **connection rail** now rendered as well.
 
 ### Notes for future agents (learned the hard way)
 - **.NET 10 SDK**: install via `apt-get install -y dotnet-sdk-10.0` (the Microsoft CDN is often
