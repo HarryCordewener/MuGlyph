@@ -6,7 +6,7 @@ namespace SharpMUTerm.Tui;
 
 /// <summary>
 /// Renders the command surface (⌃P) results to markup lines, grouped GO TO / WORLD / TERMINAL /
-/// LAYOUT with the selected row highlighted, per the design. The flattened row order matches
+/// LAYOUT / SETTINGS with the selected row highlighted, per the design. The flattened row order matches
 /// <see cref="Order"/> so ↑↓ navigation and dispatch stay in sync. Pure so it's unit-testable.
 /// </summary>
 internal static class CommandSurfaceRenderer
@@ -17,6 +17,7 @@ internal static class CommandSurfaceRenderer
         (CommandGroup.World, "WORLD"),
         (CommandGroup.Terminal, "TERMINAL"),
         (CommandGroup.Layout, "LAYOUT"),
+        (CommandGroup.Settings, "SETTINGS"),
     };
 
     /// <summary>Flattens ranked results into display order: groups in fixed order, ranked within each.</summary>

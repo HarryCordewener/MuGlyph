@@ -12,6 +12,7 @@ public class CommandSurfaceRendererTests
         new(CommandGroup.GoTo, "Switch to Rookery", "char:k2", "Aetherfall · offline"),
         new(CommandGroup.GoTo, "Go to #public", "win:2", "Corvid · 3 unread"),
         new(CommandGroup.Terminal, "Start logging", "term:log-on"),
+        new(CommandGroup.Settings, "Open Worlds & Characters", "screen:worlds", "F5"),
     };
 
     [Test]
@@ -20,9 +21,23 @@ public class CommandSurfaceRendererTests
         var ranked = CommandMatcher.Rank("", Items);
         var ordered = CommandSurfaceRenderer.Order(ranked);
 
-        // GoTo entries come first (both), then Terminal, then Layout.
+        // GoTo entries come first (both), then Terminal, then Layout, then Settings last — the screens
+        // are where you go least often, and they are the only group whose rows all do the same kind of
+        // thing, so they read as a block at the foot rather than as noise in the middle.
         await Assert.That(ordered.Select(i => i.Id))
-            .IsEquivalentTo(new[] { "char:k2", "win:2", "term:log-on", "layout:zoom" }, CollectionOrdering.Matching);
+            .IsEquivalentTo(
+                new[] { "char:k2", "win:2", "term:log-on", "layout:zoom", "screen:worlds" },
+                CollectionOrdering.Matching);
+    }
+
+    [Test]
+    public async Task Render_DrawsTheSettingsGroup_WithEachScreensKeyAsItsSubtitle()
+    {
+        var ranked = CommandMatcher.Rank("", Items);
+        var lines = CommandSurfaceRenderer.Render(ranked, selected: -1, total: Items.Length, context: null);
+
+        await Assert.That(lines.Any(l => l.Contains("├ SETTINGS"))).IsTrue();
+        await Assert.That(lines.Any(l => l.Contains("Open Worlds & Characters") && l.Contains("F5"))).IsTrue();
     }
 
     [Test]
