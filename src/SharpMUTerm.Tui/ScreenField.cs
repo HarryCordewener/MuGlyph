@@ -90,6 +90,19 @@ internal readonly record struct ScreenFieldEdit(
 /// one field on these screens whose vocabulary is the keyboard itself, so a text buffer could only ever
 /// be a place to mis-spell a key name.
 /// </param>
+/// <param name="Follow">
+/// Where the row this field belongs to has ended up, asked <em>after</em> a commit, or null for the
+/// fields that leave their row where it was — which is nearly all of them. It exists for
+/// <see cref="ScreenLists.Owner{T}"/>: writing that field moves the item into another
+/// <see cref="SharpMUTerm.Core.Configuration.TriggerSet"/>'s list, and the panes those four screens
+/// draw are flattened across every set, so the row genuinely changes position under the cursor. Without
+/// it the cursor would be left pointing at whatever slid into the vacated row — and the next ⇥ would
+/// edit that instead, which is the one thing a move must not do.
+/// <para>
+/// It is the field-side counterpart of <see cref="ScreenPress.Select"/>, and for the same reason: only
+/// the thing that performed the change knows where the row went.
+/// </para>
+/// </param>
 internal readonly record struct ScreenField(
     string Label,
     Func<string> Get,
@@ -98,7 +111,8 @@ internal readonly record struct ScreenField(
     Func<Action> Snapshot,
     IReadOnlyList<string>? Choices = null,
     bool ClosedChoices = false,
-    bool Capture = false)
+    bool Capture = false,
+    Func<int>? Follow = null)
 {
     /// <summary>Longest rejection message kept; regex parser errors run to several lines otherwise.</summary>
     private const int MaxErrorLength = 44;
@@ -235,6 +249,38 @@ internal readonly record struct ScreenField(
                 : value.Any(char.IsControl) ? $"{label} cannot contain control characters" : null,
             value => set(value.Trim()),
             Restore(get, set));
+    }
+
+    /// <summary>
+    /// A name that is also a <em>key</em>: everything <see cref="Name"/> refuses, plus any name already
+    /// taken by one of its siblings. A <see cref="SharpMUTerm.Core.Configuration.TriggerSet"/>'s name is
+    /// the only one of these on the settings screens, and it is the exception that proves
+    /// <see cref="Name"/>'s rule — two rules called <c>Tell</c> are merely confusing, but two sets called
+    /// <c>Comms</c> are broken: a character opts into automation <em>by name</em>
+    /// (<see cref="SharpMUTerm.Core.Configuration.CharacterDefinition.TriggerSets"/> is a list of
+    /// strings), and <see cref="SharpMUTerm.Core.Configuration.AppConfiguration.ResolveTriggerSets"/>
+    /// takes the first match — so the second set of a colliding pair can never be assigned to anything.
+    /// <para>
+    /// Comparison is case-insensitive, matching the resolver: <c>comms</c> and <c>Comms</c> are one name
+    /// as far as an assignment is concerned, so they must be one name here too.
+    /// </para>
+    /// </summary>
+    /// <param name="taken">The names of the item's siblings — its own current name excluded.</param>
+    internal static ScreenField UniqueName(
+        string label, Func<string> get, Action<string> set, IReadOnlyList<string> taken)
+    {
+        ArgumentNullException.ThrowIfNull(get);
+        ArgumentNullException.ThrowIfNull(set);
+        ArgumentNullException.ThrowIfNull(taken);
+
+        var named = Name(label, get, set);
+        return named with
+        {
+            Validate = value => named.Validate(value)
+                ?? (taken.Contains(value.Trim(), StringComparer.OrdinalIgnoreCase)
+                    ? $"another {label} is already called that"
+                    : null),
+        };
     }
 
     /// <summary>

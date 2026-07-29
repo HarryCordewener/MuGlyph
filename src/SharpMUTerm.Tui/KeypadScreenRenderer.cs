@@ -26,8 +26,25 @@ internal static class KeypadScreenRenderer
     private const int KeyColumnWidth = 12;
     private const int ColumnWidth = 48;
 
+    /// <summary>
+    /// How wide a cursor bar runs across the binding list. It is wider than <see cref="ColumnWidth"/>
+    /// (which sizes the <em>numpad</em> column the merged <see cref="Render"/> pads to) because a
+    /// binding row now carries four wells rather than three: tick, key, name, owning set, then the
+    /// command. A bar narrower than its own row would leave the row's tail outside the highlight.
+    /// </summary>
+    private const int HotkeysColumnWidth = 64;
+
     /// <summary>Visible width the binding list's name column is padded to, so the arrows line up.</summary>
-    private const int NameColumnWidth = 14;
+    private const int NameColumnWidth = 12;
+
+    /// <summary>
+    /// Visible width of the owning-set cell, which is <em>truncated</em> to it rather than merely padded
+    /// — the one column on this row whose content the screen does not otherwise bound. The row already
+    /// runs to four wells and a command, and its widest state is the armed key capture, whose prompt is
+    /// more than twice the width of the key it replaces; a set called something discursive must not be
+    /// what pushes that state off the end of the pane. The whole name is on F5, where it is set.
+    /// </summary>
+    private const int SetColumnWidth = 8;
 
     /// <summary>
     /// The binding row's field ordinals, in the order ⇥ steps through them. The name leads, as it does
@@ -45,6 +62,14 @@ internal static class KeypadScreenRenderer
     /// rule that put F5's log fields and F2's action fields at the end of their rows.
     /// </summary>
     internal const int KeyField = 2;
+
+    /// <summary>
+    /// Which <see cref="TriggerSet"/> the binding lives in, appended last for the same reason the key
+    /// was. It only exists when the screen was handed the sets — without them there is no vocabulary to
+    /// move between and no list to move out of, which is the same condition that withholds the buttons.
+    /// Committing it moves the binding: see <see cref="ScreenLists.Owner{T}"/>.
+    /// </summary>
+    internal const int SetField = 3;
 
     /// <summary>The label the binding list's add button carries; it names the key it will claim.</summary>
     internal const string AddBindingLabel = "+ binding";
@@ -132,13 +157,32 @@ internal static class KeypadScreenRenderer
     {
         ArgumentNullException.ThrowIfNull(macros);
 
-        return new ScreenModel(ScreenModel.Rows(macros, macro => ScreenRow.Of(
-            ScreenToggle.Bind(() => macro.Enabled, v => macro.Enabled = v),
-            ScreenField.Name("name", () => macro.Name, v => macro.Name = v),
-            ScreenField.Text("command", () => macro.Command, v => macro.Command = v),
-            ScreenField.Key("key", () => macro.Key, v => macro.Key = v, key => AlreadyBound(macros, macro, key))))
+        return new ScreenModel(ScreenModel.Rows(macros, macro => BindingRow(macro, macros, sets))
             .Concat(Buttons(sets, selected))
             .ToArray());
+    }
+
+    /// <summary>
+    /// One binding's navigable row: Space enables it, and ⏎/⇥ walk its name, command, key and — when
+    /// the screen knows which sets the bindings came from — the set that owns it.
+    /// </summary>
+    private static ScreenRow BindingRow(
+        Macro macro, IReadOnlyList<Macro> macros, IReadOnlyList<TriggerSet>? sets)
+    {
+        var fields = new List<ScreenField>
+        {
+            ScreenField.Name("name", () => macro.Name, v => macro.Name = v),
+            ScreenField.Text("command", () => macro.Command, v => macro.Command = v),
+            ScreenField.Key("key", () => macro.Key, v => macro.Key = v, key => AlreadyBound(macros, macro, key)),
+        };
+
+        if (sets is not null)
+        {
+            fields.Add(ScreenLists.Owner(sets, s => s.Macros, macro));
+        }
+
+        return ScreenRow.Of(
+            ScreenToggle.Bind(() => macro.Enabled, v => macro.Enabled = v), fields.ToArray());
     }
 
     /// <summary>
@@ -335,16 +379,30 @@ internal static class KeypadScreenRenderer
             lines.Add(ScreenChrome.Cursor(
                 Hotkey(
                     macros[i],
+                    sets is null ? null : ScreenLists.OwnerOf(sets, s => s.Macros, macros[i])?.Name,
                     cursor.EditOn(0, i, NameField),
                     cursor.EditOn(0, i, CommandField),
-                    cursor.EditOn(0, i, KeyField)),
+                    cursor.EditOn(0, i, KeyField),
+                    cursor.EditOn(0, i, SetField)),
                 cursor.IsOn(0, i),
-                ColumnWidth));
+                HotkeysColumnWidth));
+        }
+
+        // A set holding no bindings owns none of the rows above and would otherwise be drawn nowhere at
+        // all — which, once sets can be created, is the first thing anyone would look for. It is markup
+        // and not a row: it stands for a set, not for a binding, so the cursor cannot reach it.
+        foreach (var set in sets ?? Array.Empty<TriggerSet>())
+        {
+            if (set.Macros.Count == 0)
+            {
+                lines.Add(ScreenChrome.EmptySet(set.Name, "bindings"));
+            }
         }
 
         lines.Add(string.Empty);
-        lines.AddRange(ScreenChrome.Buttons(Buttons(sets, selected), cursor, 0, macros.Count, ColumnWidth));
-        return ScreenChrome.Choices(lines, cursor.Edit, ColumnWidth);
+        lines.AddRange(ScreenChrome.Buttons(
+            Buttons(sets, selected), cursor, 0, macros.Count, HotkeysColumnWidth));
+        return ScreenChrome.Choices(lines, cursor.Edit, HotkeysColumnWidth);
     }
 
     private static string NumpadRow(int[] digits, IReadOnlyList<Macro> macros)
@@ -391,7 +449,13 @@ internal static class KeypadScreenRenderer
     /// answer to "does this do anything" is no.
     /// </para>
     /// </summary>
-    private static string Hotkey(Macro macro, ScreenFieldEdit? name, ScreenFieldEdit? command, ScreenFieldEdit? key)
+    private static string Hotkey(
+        Macro macro,
+        string? setName,
+        ScreenFieldEdit? name,
+        ScreenFieldEdit? command,
+        ScreenFieldEdit? key,
+        ScreenFieldEdit? set)
     {
         var verdict = MacroKeys.Verdict(macro.Key);
         var tick = macro.Enabled ? $"[{Accent}]✓[/]" : "[dim]·[/]";
@@ -405,7 +469,16 @@ internal static class KeypadScreenRenderer
         // reads as an empty field rather than as a slab of background.
         var label = string.IsNullOrWhiteSpace(macro.Name) ? "[dim]—[/]" : $"[{Value}]{Escape(macro.Name)}[/]";
         var named = ScreenChrome.Field(PadVisible(label, NameColumnWidth), name);
-        return $"{tick} {bound} {named} → {ScreenChrome.Field(Escape(macro.Command), command)}";
+
+        // The owning set, welled like everything else on this row: F4 has no editor pane, so a value
+        // that can be changed has to be drawn where it is changed. It sits before the arrow so the
+        // command — the one value with no width worth guessing — stays last.
+        var owner = setName is null
+            ? string.Empty
+            : ScreenChrome.Field(
+                PadVisible($"[{Value}]{Escape(Truncate(setName, SetColumnWidth))}[/]", SetColumnWidth), set) + " ";
+
+        return $"{tick} {bound} {named} {owner}→ {ScreenChrome.Field(Escape(macro.Command), command)}";
     }
 
     /// <summary>

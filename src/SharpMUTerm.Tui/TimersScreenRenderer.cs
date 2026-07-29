@@ -36,6 +36,12 @@ internal static class TimersScreenRenderer
 
     internal const int CommandField = 2;
 
+    /// <summary>
+    /// Which <see cref="TriggerSet"/> the timer lives in, appended last so the ordinals above keep
+    /// meaning what they meant. Committing it moves the timer — see <see cref="ScreenLists.Owner{T}"/>.
+    /// </summary>
+    internal const int SetField = 3;
+
     /// <summary>The labels the timer list's buttons carry, in the order they are drawn.</summary>
     internal const string AddTimerLabel = "+ timer";
 
@@ -115,7 +121,8 @@ internal static class TimersScreenRenderer
                 v => entry.Timer.IntervalSeconds = v,
                 MinIntervalSeconds,
                 MaxIntervalSeconds),
-            ScreenField.Text("command", () => entry.Timer.Command, v => entry.Timer.Command = v)))
+            ScreenField.Text("command", () => entry.Timer.Command, v => entry.Timer.Command = v),
+            ScreenLists.Owner(sets, s => s.Timers, entry.Timer)))
             .Concat(Buttons(sets, selected))
             .ToArray();
 
@@ -215,10 +222,24 @@ internal static class TimersScreenRenderer
             lines.Add("[dim]no timers[/]");
         }
 
-        for (var i = 0; i < entries.Count; i++)
+        // Walked per set rather than down the flattened list, so a set holding no timers can still say
+        // so — it owns none of these rows and would otherwise be drawn nowhere at all. The row indices
+        // are the flattened ones either way: the placeholder is markup, not a cursor stop.
+        var index = 0;
+        foreach (var set in sets)
         {
-            var row = Row(entries[i].Timer, entries[i].SetName, i == selected);
-            lines.Add(ScreenChrome.Cursor(row, cursor.IsOn(0, i), ColumnWidth));
+            if (set.Timers.Count == 0)
+            {
+                lines.Add(ScreenChrome.EmptySet(set.Name, "timers"));
+                continue;
+            }
+
+            foreach (var timer in set.Timers)
+            {
+                lines.Add(ScreenChrome.Cursor(
+                    Row(timer, set.Name, index == selected), cursor.IsOn(0, index), ColumnWidth));
+                index++;
+            }
         }
 
         lines.Add(string.Empty);
@@ -238,7 +259,10 @@ internal static class TimersScreenRenderer
         var cursor = focus ?? ScreenFocus.None;
         var entries = Flatten(sets);
         return selected >= 0 && selected < entries.Count
-            ? ScreenChrome.Choices(BuildEditor(entries[selected].Timer, cursor, selected), cursor.Edit, ColumnWidth)
+            ? ScreenChrome.Choices(
+                BuildEditor(entries[selected].Timer, entries[selected].SetName, cursor, selected),
+                cursor.Edit,
+                ColumnWidth)
             : new List<string>();
     }
 
@@ -269,12 +293,18 @@ internal static class TimersScreenRenderer
 
     /// <summary>
     /// The editor rows for one timer. The name leads because it leads the row's fields: ⏎ on a timer
-    /// opens it here, which is also where one created by <c>[[+ timer]]</c> lands ready to be named.
+    /// opens it here, which is also where one created by <c>[[+ timer]]</c> lands ready to be named. The
+    /// set follows it, because the list is flattened across every set and the two together are what
+    /// identify the timer; committing it <em>moves</em> the timer (<see cref="ScreenLists.Owner{T}"/>).
     /// </summary>
-    private static List<string> BuildEditor(TimerDefinition timer, ScreenFocus cursor, int selected) => new()
+    private static List<string> BuildEditor(
+        TimerDefinition timer, string setName, ScreenFocus cursor, int selected) => new()
     {
         "[dim]name[/]",
         $"  {ScreenChrome.Field(Escape(timer.Name), cursor.EditOn(0, selected, NameField))}",
+        string.Empty,
+        "[dim]set[/]",
+        $"  {ScreenChrome.Field($"[{Value}]{Escape(setName)}[/]", cursor.EditOn(0, selected, SetField))}",
         string.Empty,
         "[dim]interval (seconds)[/]",
         $"  {ScreenChrome.Field(Seconds(timer), cursor.EditOn(0, selected, IntervalField))}",

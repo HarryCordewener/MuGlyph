@@ -407,6 +407,24 @@ internal static class ScreenChrome
     internal static string ReadOnly(string text) => $"[{ScreenPalette.Muted}]{MarkupText.Escape(text)}[/]";
 
     /// <summary>
+    /// The one row an <em>empty</em> trigger set gets in a flattened pane. F2, F3, F4 and F6 each draw
+    /// one column of every set's rules, so a set holding none of that kind is drawn nowhere at all — and
+    /// once sets can be created, the very first thing you would look for after making one is the thing
+    /// the screen cannot show you. This says it is there and has nothing in it.
+    /// <para>
+    /// It is a readout and not a row: the cursor cannot reach it, because it stands for a set rather
+    /// than for an item, and giving it a cursor stop would put a row in the pane that <c>[[- del]]</c>,
+    /// Space and ⏎ would all have to make an exception for. Moving an item into the set — the
+    /// <c>set</c> field on any row (<see cref="ScreenLists.Owner{T}"/>) — is what replaces it with real
+    /// rows.
+    /// </para>
+    /// </summary>
+    /// <param name="set">The set with nothing in it.</param>
+    /// <param name="noun">What the screen's rows are called, plural — <c>triggers</c>, <c>timers</c>.</param>
+    internal static string EmptySet(string set, string noun) =>
+        $"  [{ScreenPalette.Muted}]▪ {MarkupText.Escape(set)} — no {MarkupText.Escape(noun)}[/]";
+
+    /// <summary>
     /// Draws a pane's button rows, appended after its list. The rows come *from* the pane's own
     /// <see cref="ScreenButton"/>s rather than being written out again per screen, so the label the
     /// cursor lands on and the command ⏎ runs cannot drift apart — and every screen paints them the

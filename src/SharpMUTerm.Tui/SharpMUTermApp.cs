@@ -924,7 +924,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private IReadOnlyList<SettingsScreen> SettingsScreens() => new SettingsScreen[]
     {
-        new(ConsoleKey.F2, new[] { "triggers", "route", "highlight" }, TriggersScreen),
+        new(ConsoleKey.F2, new[] { "triggers", "route", "highlight", "set" }, TriggersScreen),
         new(ConsoleKey.F3, new[] { "aliases" }, AliasesScreen),
         new(ConsoleKey.F4, new[] { "keypad" }, KeypadScreen),
         new(ConsoleKey.F5, new[] { "worlds", "settings" }, WorldsScreen),
@@ -1116,7 +1116,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _config.Worlds,
             _config.TriggerSets,
             selection.SelectionIn(WorldsScreenRenderer.WorldsPane),
-            selection.SelectionIn(WorldsScreenRenderer.CharactersPane)));
+            selection.SelectionIn(WorldsScreenRenderer.CharactersPane),
+            selection.SelectionIn(WorldsScreenRenderer.TriggerSetsPane)));
         session.Selection.Seed(WorldsScreenRenderer.WorldsPane, ActiveWorldIndex());
         session.Selection.Seed(WorldsScreenRenderer.CharactersPane, ActiveCharacterIndex());
         if (onCharacters)
@@ -1131,7 +1132,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             session.Selection.SelectionIn(WorldsScreenRenderer.CharactersPane),
             _system.DesktopDimensions.Width,
             session.Focus(),
-            fkey));
+            fkey,
+            session.Selection.SelectionIn(WorldsScreenRenderer.TriggerSetsPane)));
     }
 
     /// <summary>
@@ -1267,6 +1269,19 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             // name → on connect → log: the character row's fields, in order.
             yield return Stroke('\t', ConsoleKey.Tab);
             yield return Stroke('\t', ConsoleKey.Tab);
+            yield break;
+        }
+
+        if (string.Equals(view, "set", StringComparison.OrdinalIgnoreCase))
+        {
+            // Straight to the rule's last field, the set that owns it — the one edit on these screens
+            // that moves the row it is made on. A still frame is the only way to see the closed list of
+            // sets over a pane whose rows are flattened across all of them.
+            for (var i = 0; i < TriggersScreenRenderer.SetField; i++)
+            {
+                yield return Stroke('\t', ConsoleKey.Tab);
+            }
+
             yield break;
         }
 

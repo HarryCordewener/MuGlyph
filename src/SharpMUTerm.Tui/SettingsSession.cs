@@ -361,6 +361,12 @@ internal sealed class SettingsSession
     /// Validates the buffer and, if it holds, writes it through the undo log and closes the edit. A
     /// rejected buffer stays open and carries the reason, so the field is marked rather than the
     /// keystroke that produced it being thrown away mid-word.
+    /// <para>
+    /// A field that moved its own row answers where it went (<see cref="ScreenField.Follow"/>) and the
+    /// cursor goes with it. Only the owning-set field on the four flattened screens does this, and it
+    /// has to: those panes are one column of every set's items, so committing a move genuinely slides
+    /// the row out from under the cursor.
+    /// </para>
     /// </summary>
     private bool Commit(ScreenField field)
     {
@@ -371,11 +377,22 @@ internal sealed class SettingsSession
             return false;
         }
 
+        if (field.Follow is { } follow)
+        {
+            Selection.Seed(edit.Pane, follow());
+        }
+
         _edit = null;
         return true;
     }
 
-    /// <summary>⇥ inside an edit: commit this field, then open the row's next one, wrapping.</summary>
+    /// <summary>
+    /// ⇥ inside an edit: commit this field, then open the row's next one, wrapping. The model is
+    /// re-projected after the commit rather than reused, because the commit is allowed to have changed
+    /// the pane — a committed <c>set</c> field moves its row somewhere else in the flattened list, and
+    /// stepping through the stale projection would open the next field of whichever row used to be
+    /// there.
+    /// </summary>
     private ScreenAction Step(ScreenModel model, ScreenField field, int direction)
     {
         var edit = _edit!;
@@ -391,7 +408,7 @@ internal sealed class SettingsSession
             return ScreenAction.Redraw;
         }
 
-        Open(model, ((from + direction) % count + count) % count);
+        Open(_model(Selection), ((from + direction) % count + count) % count);
         return ScreenAction.Redraw;
     }
 

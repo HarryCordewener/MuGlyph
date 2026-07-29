@@ -73,6 +73,15 @@ internal static class WorldsScreenRenderer
 
     internal const int LogDirectoryField = 3;
 
+    /// <summary>
+    /// The trigger-set row's field ordinals. A set's name leads, as every list row's does — and here it
+    /// is more than a label: a character opts into automation <em>by name</em>, so renaming a set is a
+    /// change with consequences elsewhere in the configuration (see <see cref="RenameSet"/>).
+    /// </summary>
+    internal const int SetNameField = 0;
+
+    internal const int SetDescriptionField = 1;
+
     /// <summary>The F-key that opens this screen, and the second key that opens it on a character's log.</summary>
     internal const string FKey = "F5";
 
@@ -123,14 +132,15 @@ internal static class WorldsScreenRenderer
         int selectedWorld,
         int selectedCharacter,
         int width = 0,
-        int height = 0)
+        int height = 0,
+        int selectedSet = 0)
     {
         ArgumentNullException.ThrowIfNull(worlds);
         ArgumentNullException.ThrowIfNull(triggerSets);
 
         (selectedWorld, selectedCharacter) = Resolve(worlds, selectedWorld, selectedCharacter);
         var accent = AccentFor(worlds, selectedWorld);
-        var model = Model(worlds, triggerSets, selectedWorld, selectedCharacter);
+        var model = Model(worlds, triggerSets, selectedWorld, selectedCharacter, selectedSet);
         var lines = new List<string> { Band(HeaderLine(width, model), HeaderBg, width) };
         lines.AddRange(MergeColumns(WorldsColumn(worlds, selectedWorld),
             DetailColumn(worlds, triggerSets, selectedWorld, selectedCharacter, accent), LeftColumnWidth));
@@ -141,7 +151,8 @@ internal static class WorldsScreenRenderer
             lines.Add(string.Empty);
             lines.Add(Band($"[{Rule}]{new string('─', width > 4 ? width - 2 : 60)}[/]", EditBg, width));
             foreach (var row in MergeColumns(FormColumn(character, accent, null, selectedCharacter),
-                TriggersColumn(character, triggerSets, accent), CharDetailColumnWidth))
+                TriggersColumn(character, triggerSets, accent, null, selectedSet, worlds),
+                CharDetailColumnWidth))
             {
                 lines.Add(Band(" " + row, EditBg, width));
             }
@@ -203,13 +214,32 @@ internal static class WorldsScreenRenderer
 
     internal const string RemoveCharacterLabel = "- remove";
 
+    /// <summary>The labels the trigger-set list's buttons carry, in the order they are drawn.</summary>
+    internal const string AddSetLabel = "+ set";
+
+    internal const string RemoveSetLabel = "- del";
+
+    /// <summary>What a brand-new trigger set is called before it is renamed.</summary>
+    internal const string NewSetName = "New Set";
+
+    /// <summary>What an unset description reads as, so the row is visibly a place one goes.</summary>
+    internal const string NoDescription = "—";
+
     /// <summary>
     /// The screen's four navigable panes, in ⇥ order: the WORLDS list (no checkbox on a world's row,
     /// but ⏎ opens the world's own fields — the ones the detail column lists), the selected world's
     /// characters (Space flips auto-login, ⏎ edits the character's name, on-connect line and log), the
-    /// selected character's assigned trigger sets (Space assigns/unassigns), and the selected world's
-    /// two security checkboxes. All but the first collapse to empty when there is nothing selected above
-    /// them, and ⇥ skips empty panes, so the cursor never lands somewhere with no rows.
+    /// <b>trigger sets</b> (Space assigns the selected character to one, ⏎ renames it, and the pane's
+    /// own buttons make and unmake them), and the selected world's two security checkboxes. All but the
+    /// first collapse to empty when there is nothing selected above them, and ⇥ skips empty panes, so
+    /// the cursor never lands somewhere with no rows.
+    /// <para>
+    /// The trigger-set pane is where sets are <em>managed</em>, not merely assigned — it is the only
+    /// view in the app of sets as objects, because F2, F3, F4 and F6 each flatten one <em>kind</em> of a
+    /// set's contents across all of them and so cannot show a set that holds none of that kind. It still
+    /// needs a selected character, because the other half of every row is that character's opt-in; on a
+    /// configuration with no characters yet there is also nothing a set could apply to.
+    /// </para>
     /// <para>
     /// A world's *typed* values hang off its list row rather than becoming a pane of their own: the
     /// detail column is a projection of whatever the WORLDS list has selected, so those values already
@@ -233,11 +263,17 @@ internal static class WorldsScreenRenderer
     /// lands on a row that silently does nothing.
     /// </para>
     /// </summary>
+    /// <param name="selectedSet">
+    /// Which trigger set the third pane has selected — what <c>[[- del]]</c> would remove. It defaults to
+    /// the first, the way every other pane's cursor starts on its first row, so a caller that only wants
+    /// the navigable shape still gets the pane's real buttons.
+    /// </param>
     internal static ScreenModel Model(
         IReadOnlyList<WorldDefinition> worlds,
         IReadOnlyList<TriggerSet> triggerSets,
         int selectedWorld,
-        int selectedCharacter)
+        int selectedCharacter,
+        int selectedSet = 0)
     {
         ArgumentNullException.ThrowIfNull(worlds);
         ArgumentNullException.ThrowIfNull(triggerSets);
@@ -273,35 +309,135 @@ internal static class WorldsScreenRenderer
         }
 
         var character = worlds[selectedWorld].Characters[selectedCharacter];
-        var setRows = new ScreenRow[triggerSets.Count];
-        for (var i = 0; i < triggerSets.Count; i++)
-        {
-            var name = triggerSets[i].Name;
-
-            // Assignment is list membership, and the character's own order decides which set wins a
-            // conflict (see AppConfiguration.ResolveTriggerSets) — so the snapshot restores the whole
-            // list rather than re-adding the name at the end, which would silently reorder priority.
-            setRows[i] = ScreenRow.Of(new ScreenToggle(
-                () => character.TriggerSets.Contains(name),
-                () =>
-                {
-                    if (!character.TriggerSets.Remove(name))
-                    {
-                        character.TriggerSets.Add(name);
-                    }
-                },
-                () =>
-                {
-                    var previous = character.TriggerSets.ToList();
-                    return () =>
-                    {
-                        character.TriggerSets.Clear();
-                        character.TriggerSets.AddRange(previous);
-                    };
-                }));
-        }
+        var setRows = ScreenModel.Rows(triggerSets, set => ScreenRow.Of(
+            Assignment(character, set.Name),
+            ScreenField.UniqueName(
+                "set name",
+                () => set.Name,
+                value => RenameSet(worlds, set, value),
+                triggerSets.Where(s => !ReferenceEquals(s, set)).Select(s => s.Name).ToArray()),
+            ScreenField.Optional("description", () => set.Description, v => set.Description = v)))
+            .Concat(SetButtons(worlds, triggerSets, selectedSet))
+            .ToArray();
 
         return new ScreenModel(worldRows, characterRows, setRows, securityRows);
+    }
+
+    /// <summary>
+    /// A character's opt-in to one set. Assignment is list membership, and the character's own order
+    /// decides which set wins a conflict (see
+    /// <see cref="AppConfiguration.ResolveTriggerSets"/>) — so the snapshot restores the whole list
+    /// rather than re-adding the name at the end, which would silently reorder priority.
+    /// </summary>
+    private static ScreenToggle Assignment(CharacterDefinition character, string name) => new(
+        () => character.TriggerSets.Contains(name),
+        () =>
+        {
+            if (!character.TriggerSets.Remove(name))
+            {
+                character.TriggerSets.Add(name);
+            }
+        },
+        () =>
+        {
+            var previous = character.TriggerSets.ToList();
+            return () =>
+            {
+                character.TriggerSets.Clear();
+                character.TriggerSets.AddRange(previous);
+            };
+        });
+
+    /// <summary>
+    /// Renames a set <em>and every reference to it</em>. This is the one rename on these screens that
+    /// reaches outside the object it is on: a character selects automation by name, so a set renamed on
+    /// its own would leave every character that used it pointing at a set that no longer exists — the
+    /// automation would simply stop, silently, at the next connect. Each reference keeps its position in
+    /// the character's list, because that order is what decides which set wins a conflict.
+    /// <para>
+    /// The references are found by the <em>old</em> name before anything is written, and undo comes for
+    /// free: <see cref="ScreenField.Name"/>'s snapshot replays this same setter with the old name, which
+    /// walks the references back the way it walked them here.
+    /// </para>
+    /// </summary>
+    private static void RenameSet(IReadOnlyList<WorldDefinition> worlds, TriggerSet set, string name)
+    {
+        var renamed = name.Trim();
+        TriggerSetReferences.Rename(TriggerSetReferences.Find(worlds, set.Name), renamed);
+        set.Name = renamed;
+    }
+
+    /// <summary>
+    /// The trigger-set list's buttons — the only place in the app that makes or unmakes a set. They live
+    /// here because this pane is the only one that shows sets as things in their own right rather than
+    /// as a column of somebody's rules: F2, F3, F4 and F6 each flatten one <em>kind</em> of the set's
+    /// contents across every set, so a set holding none of that kind is invisible on all four, and a set
+    /// you have just made holds nothing at all.
+    /// <para>
+    /// A new set is empty and named apart from its neighbours, because its name is a key rather than a
+    /// label (<see cref="ScreenField.UniqueName"/>) and two called <c>New Set</c> could not both be
+    /// assigned.
+    /// </para>
+    /// </summary>
+    private static List<ScreenRow> SetButtons(
+        IReadOnlyList<WorldDefinition> worlds, IReadOnlyList<TriggerSet> triggerSets, int selectedSet)
+    {
+        var rows = new List<ScreenRow>();
+
+        // Arrays report IsReadOnly through IList<T>, and a renderer handed one (the unit tests, any
+        // caller with a fixed projection) must not offer a button whose only effect would be to throw.
+        if (triggerSets is not IList<TriggerSet> { IsReadOnly: false } list)
+        {
+            return rows;
+        }
+
+        rows.Add(ScreenRow.Of(ScreenButton.Add(
+            AddSetLabel,
+            list,
+            () => new TriggerSet { Name = ScreenLists.Available(list.Select(s => s.Name), NewSetName) })));
+
+        if (selectedSet >= 0 && selectedSet < list.Count)
+        {
+            rows.Add(ScreenRow.Of(RemoveSet(worlds, list, selectedSet)));
+        }
+
+        return rows;
+    }
+
+    /// <summary>
+    /// Deleting a set, which is the destructive edit on these screens with the longest reach: the set
+    /// goes, and so does every character's opt-in to it — a character left holding the name of a set
+    /// that no longer exists would show an assignment that resolves to nothing.
+    /// <para>
+    /// It is a hand-built button rather than <see cref="ScreenButton.Remove{T}"/> because its undo is
+    /// two restorations, not one: the set back at its index, and each stripped reference back at
+    /// <em>its</em> index inside the character that held it. Restoring the set alone would be the
+    /// quieter half of a change nobody agreed to.
+    /// </para>
+    /// </summary>
+    private static ScreenButton RemoveSet(
+        IReadOnlyList<WorldDefinition> worlds, IList<TriggerSet> sets, int index)
+    {
+        var set = sets[index];
+        return new ScreenButton(
+            RemoveSetLabel,
+            () =>
+            {
+                var name = set.Name;
+                var references = TriggerSetReferences.Find(worlds, name);
+                sets.RemoveAt(index);
+                TriggerSetReferences.Detach(references);
+
+                return new ScreenPress(
+                    () =>
+                    {
+                        sets.Insert(Math.Clamp(index, 0, sets.Count), set);
+                        TriggerSetReferences.Reattach(references, name);
+                    },
+                    index);
+            },
+            ScreenButtonKind.Remove,
+            set.Name);
     }
 
     /// <summary>
@@ -650,38 +786,94 @@ internal static class WorldsScreenRenderer
     private static string Field(string display, ScreenFocus cursor, int index, int field, int pane = 0) =>
         ScreenChrome.Field(display, cursor.EditOn(pane, index, field));
 
-    /// <summary>The assigned-trigger-sets checklist for a character.</summary>
+    /// <summary>
+    /// The trigger-set list: which sets exist, what each is called and for, how much it holds, and
+    /// whether this character has opted into it. It is the app's only view of sets as objects — every
+    /// other screen shows one <em>kind</em> of a set's contents flattened across all of them — so it is
+    /// also where sets are made, renamed and unmade, and the only place an empty one can be seen at all.
+    /// <para>
+    /// The name and description are welled because ⏎ opens them here; the assignment stays a checkbox,
+    /// which is the affordance for the key that presses it.
+    /// </para>
+    /// </summary>
     internal static List<string> TriggersColumn(
         CharacterDefinition character,
         IReadOnlyList<TriggerSet> triggerSets,
         string accent,
-        ScreenFocus? focus = null)
+        ScreenFocus? focus = null,
+        int selectedSet = 0,
+        IReadOnlyList<WorldDefinition>? worlds = null)
     {
         var cursor = focus ?? ScreenFocus.None;
+
+        // Padded to shared widths so the wells line up into columns and the inventories at the end of
+        // each row can be read down. Measured over the drawn text, since a name may carry brackets.
+        var nameWidth = Width(triggerSets, s => "▪ " + Escape(s.Name));
+        var noteWidth = Width(triggerSets, s => Escape(s.Description ?? NoDescription));
+
         var rows = new List<string>(triggerSets.Count);
         foreach (var set in triggerSets)
         {
             var assigned = character.TriggerSets.Contains(set.Name);
             var box = assigned ? $"[{accent}][[x]][/]" : $"[{Label}][[ ]][/]";
             var nameColor = assigned ? Value : Label;
-            var description = Escape(set.Description ?? string.Empty);
-            rows.Add(
-                $"{box} [{nameColor}]▪ {Escape(set.Name)}[/] [{Label}]— {description}   {set.Triggers.Count.ToString(CultureInfo.InvariantCulture)} rules[/]");
+            var index = rows.Count;
+
+            // The bullet lives inside the well with the name rather than beside it: the well is the box
+            // the value is typed in, and a bullet floating outside it would read as a second column.
+            var name = ScreenChrome.Field(
+                PadVisible($"[{nameColor}]▪ {Escape(set.Name)}[/]", nameWidth),
+                cursor.EditOn(TriggerSetsPane, index, SetNameField));
+            var note = ScreenChrome.Field(
+                PadVisible($"[{Label}]{Escape(set.Description ?? NoDescription)}[/]", noteWidth),
+                cursor.EditOn(TriggerSetsPane, index, SetDescriptionField));
+
+            rows.Add($"{box} {name} {note} [{Label}]{Inventory(set)}[/]");
         }
 
         // The checklist sits in an auto-width column (see WorldsScreenView), so a cursor bar sized to
         // one row would widen the block and shunt it sideways as the cursor moved. Sizing every bar to
         // the widest row keeps the column's measured width constant whatever is focused.
+        var buttons = ScreenChrome.Buttons(
+            SetButtons(worlds ?? Array.Empty<WorldDefinition>(), triggerSets, selectedSet),
+            cursor,
+            TriggerSetsPane,
+            triggerSets.Count,
+            0);
         var barWidth = rows.Count == 0 ? 0 : rows.Max(VisibleLength);
 
-        var list = new List<string> { $"[{Label}]assigned trigger sets[/]", string.Empty };
+        var list = new List<string> { $"[{Label}]trigger sets[/]", string.Empty };
         for (var i = 0; i < rows.Count; i++)
         {
             list.Add(ScreenChrome.Cursor(rows[i], cursor.IsOn(TriggerSetsPane, i), barWidth));
         }
 
+        if (triggerSets.Count == 0)
+        {
+            list.Add($"[{Label}]no trigger sets — nothing to assign yet.[/]");
+        }
+
+        list.Add(string.Empty);
+        list.AddRange(buttons);
         return list;
     }
+
+    /// <summary>
+    /// What a set holds, counted across everything it can hold rather than only its triggers. The count
+    /// is the one thing on this row that says whether a set is doing anything, and a set carrying two
+    /// timers and no triggers reading <c>0 rules</c> would be exactly the wrong answer.
+    /// </summary>
+    private static string Inventory(TriggerSet set)
+    {
+        var count = set.Triggers.Count + set.Aliases.Count + set.Macros.Count + set.Timers.Count;
+        return count == 0
+            ? "empty"
+            : $"{count.ToString(CultureInfo.InvariantCulture)} rules";
+    }
+
+    /// <summary>The widest of a projection over the sets, or zero when there are none.</summary>
+    private static int Width(IReadOnlyList<TriggerSet> sets, Func<TriggerSet, string> part) =>
+        sets.Count == 0 ? 0 : sets.Max(s => VisibleLength(part(s)));
 
     private static string CharacterRow(CharacterDefinition character, bool selected)
     {

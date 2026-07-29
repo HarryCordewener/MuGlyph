@@ -4,8 +4,8 @@ Context for whoever (human or agent) picks up this work next.
 
 - **Repository:** `SharpMUSH/SharpMUTerm`
 - **Start from:** a fresh branch off `main`
-- **Tests:** 1071 across the solution (396 Core / 83 Graphics / 42 Scripting /
-  28 Web / 522 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
+- **Tests:** 1101 across the solution (404 Core / 83 Graphics / 42 Scripting /
+  28 Web / 544 Tui), all passing; `dotnet build SharpMUTerm.slnx` clean (0 warnings
   from this repo; building against a local SharpConsoleUI clone surfaces 2 upstream
   NuGet advisory warnings for AngleSharp, which are the framework's, not ours)
 
@@ -78,6 +78,23 @@ works.
   `Name` went `init` → `set`; none of them has cached derived state (checked:
   the engines match on patterns and `MacroEngine` is keyed by `Macro.Key`), which
   `AutomationCloneTests.RenamingLeavesTheCompiledMatcherAlone` pins.
+- **Trigger sets are managed now**, which they were not: nothing created, renamed
+  or deleted one, and nothing moved an item between them. Two surfaces, chosen
+  over a per-screen set switcher (see *Managing trigger sets* under Critical
+  Gotchas for the full reasoning):
+  - **F5's third pane owns the sets.** Space still assigns the selected character
+    to one; ⏎ renames it, ⇥ edits its description, and `[+ set]` / `[- del]` make
+    and unmake them. It is the only view of sets as objects, so it is also the
+    only place an empty set is always visible — and its inventory counts
+    everything a set holds, not only its triggers. `Sizes[2]` went 1 → 3 in
+    `ScreenModelTests`/`ScreenButtonTests`; `ListSizes[2]` is unchanged and still
+    asserted, so the original meaning survives beside the new total.
+  - **A `set` field on every item's row** on F2/F3/F4/F6, appended last
+    (`FieldCount` 9 → 10 on F2, 3 → 4 on F4), so no ordinal moved. It is a
+    **closed** list of the configured set names, and committing it *moves* the
+    item — which is why `ScreenField` grew `Follow`: the four panes are flattened
+    across every set, so the row genuinely changes position and the cursor has to
+    go with it.
 - **Rows still not editable** (deliberately): a character's password (it is
   `[JsonIgnore]` and belongs in a credential store), and everything derived (the
   numpad grid, the session/state readouts). **All of them now say so on screen** —
@@ -196,7 +213,7 @@ Things that will waste your time if you don't know them.
   demo. Drop the flag only when reproducing something specific to a real setup.
 - **Snapshot view names:** `worlds`/`settings`, `triggers`, `route`, `highlight`,
   `aliases`, `timers`,
-  `keypad`, `textansi`, `input`, `logging`, `freeze`, `spawn`, `split`, `move`,
+  `keypad`, `set`, `textansi`, `input`, `logging`, `freeze`, `spawn`, `split`, `move`,
   `drag`, `history`, `menu`, `menu-split`, plus the default (no `--view`) workspace.
   Extra state toggles: `collapsed`, `prefix`, `timestamps`. Any settings screen also
   takes a `-edit` suffix (`worlds-edit`, `logging-edit`, `keypad-edit`, …), which
@@ -497,6 +514,58 @@ What the framework actually provides (read at v2.5.14, not assumed):
   that whole list back, not merely "assigned".
 - Pane shape: F4/F7/F8 are single-pane (no ⇥); **F5 has four** (worlds → characters
   → trigger sets → the world's security checkboxes); the rest have two.
+
+### Managing trigger sets
+
+- **A set switcher on F2/F3/F4/F6 was rejected.** It is the obvious shape — the
+  screens become "the triggers in *this* set" — and it costs a new pane on four
+  screens, which renumbers every pane index those screens, their `-edit` snapshot
+  scripts and their tests navigate by, for a "current set" that has no home
+  (per screen? shared?). It also *hides* something true: a session runs the
+  **union** of a character's sets, so the flattened list is the only view that
+  shows every rule that can actually fire, and two sets both matching
+  `^\[public\]` are only visible in it. What the complaint ("at ten sets it
+  collapses") really wants is a filter, which is a separate feature; what it
+  needed to be *usable* was the ability to move an item, which a field gives.
+- **So: sets are objects on F5, and "which set" is a field everywhere else.**
+  The field re-uses machinery that already existed (`ScreenField` with choices,
+  and the dropdown that draws them), and makes the move an ordinary edit with the
+  ordinary undo.
+- **A set's name is a key, not a label.** `CharacterDefinition.TriggerSets` is a
+  list of *names* and `AppConfiguration.ResolveTriggerSets` takes the first match,
+  so it is the one name on these screens that must be **unique**
+  (`ScreenField.UniqueName`, case-insensitive like the resolver) — everything
+  else is deliberately not (see *A row's fields lead with its name*).
+- **Renaming a set rewrites every character's assignment, in place.**
+  `TriggerSetReferences` (Core) is the one definition: `Find` by the old name,
+  then `Rename` / `Detach` / `Reattach`. In place matters — the character's order
+  decides which set wins a conflict. Undo is free: `ScreenField.Name`'s snapshot
+  replays the same setter with the old name.
+- **Deleting a set strips the assignments too**, and its undo is two
+  restorations, not one: the set at its index, and each reference at *its* index
+  inside the character that held it. That is why it is a hand-built
+  `ScreenButton` rather than `ScreenButton.Remove`. `Detach` walks backwards and
+  `Reattach` forwards, or the second reference in one character renumbers under
+  the first.
+- **`ScreenField.Follow`** is the field-side counterpart of `ScreenPress.Select`:
+  only the thing that performed the change knows where the row went.
+  `SettingsSession.Commit` seeds the cursor from it, and `Step` (⇥) re-projects
+  the model afterwards — stepping through the projection the key arrived with
+  would open the next field of whichever row *used* to be under the cursor.
+- **An empty set is drawn, twice over.** On F5 it is a row like any other
+  (`▪ Combat  hp + damage tracking  empty`). On the four flattened screens it is
+  `ScreenChrome.EmptySet` — a muted `▪ Combat — no triggers` line that is markup
+  and **not a row**: it stands for a set rather than an item, so it costs no
+  cursor stop and no pinned row count. The wording is per screen, because "empty"
+  means empty of the thing that screen edits.
+- **The demo scene has three sets**, and the third (`Combat`) is deliberately
+  lopsided — an alias and a binding, no triggers and no timers — so F2 and F6
+  draw the empty-set line and F5 shows an unassigned set. `--view set-edit` is
+  the frame of the closed set list, alongside `route-edit`/`highlight-edit`.
+- **F5's set pane still needs a selected character**, because the other half of
+  every row is that character's opt-in. On a fresh configuration you add a world
+  and a character first — which you must do anyway before automation applies to
+  anything.
 
 ### What a settings field actually reaches (audited)
 

@@ -140,8 +140,14 @@ public class ScreenDeleteKeyTests
 
     /// <summary>
     /// A pane with no remove button doesn't answer the key either — the key and the drawn row are the
-    /// same command, so they are offered under the same conditions. F5's trigger-set pane is
-    /// assignment, not ownership: there is nothing there to delete.
+    /// same command, so they are offered under the same conditions. F5's security pane is two checkboxes
+    /// belonging to the world above it: there is nothing there to take out of a list.
+    /// <para>
+    /// This claim used to be made about the trigger-set pane, which was assignment and nothing else.
+    /// That pane now owns the sets themselves, so it answers Delete — see
+    /// <see cref="Delete_RemovesTheSelectedTriggerSetAndItsAssignments"/>, which is the same rule read
+    /// the other way.
+    /// </para>
     /// </summary>
     [Test]
     public async Task Delete_IsLeftForTheFrameworkWhereThereIsNothingToRemove()
@@ -149,14 +155,45 @@ public class ScreenDeleteKeyTests
         var worlds = Worlds();
         var sets = Sets();
         var session = new SettingsSession(selection => WorldsScreenRenderer.Model(
-            worlds, sets, selection.SelectionIn(0), selection.SelectionIn(1)));
+            worlds, sets, selection.SelectionIn(0), selection.SelectionIn(1), selection.SelectionIn(2)));
+
+        for (var i = 0; i < 3; i++)
+        {
+            session.Handle(Key(ConsoleKey.Tab)); // worlds → characters → trigger sets → security
+        }
+
+        await Assert.That(session.Focus().Pane).IsEqualTo(WorldsScreenRenderer.SecurityPane);
+        await Assert.That(session.Handle(Key(ConsoleKey.Delete))).IsEqualTo(ScreenAction.None);
+        await Assert.That(session.Edits.IsDirty).IsFalse();
+    }
+
+    /// <summary>
+    /// The other half: the trigger-set pane <em>does</em> answer Delete now, and deleting a set takes
+    /// every character's opt-in with it rather than leaving assignments pointing at a set that no longer
+    /// exists. Esc puts both back.
+    /// </summary>
+    [Test]
+    public async Task Delete_RemovesTheSelectedTriggerSetAndItsAssignments()
+    {
+        var worlds = Worlds();
+        var sets = Sets();
+        var character = worlds[0].Characters[0];
+        character.TriggerSets.Add("Comms");
+        var session = new SettingsSession(selection => WorldsScreenRenderer.Model(
+            worlds, sets, selection.SelectionIn(0), selection.SelectionIn(1), selection.SelectionIn(2)));
 
         session.Handle(Key(ConsoleKey.Tab));
-        session.Handle(Key(ConsoleKey.Tab)); // into the assigned-trigger-sets pane
+        session.Handle(Key(ConsoleKey.Tab)); // into the trigger-set pane
 
-        await Assert.That(session.Focus().Pane).IsEqualTo(2);
-        await Assert.That(session.Handle(Key(ConsoleKey.Delete))).IsEqualTo(ScreenAction.None);
-        await Assert.That(sets).Count().IsEqualTo(1);
+        await Assert.That(session.Focus().Pane).IsEqualTo(WorldsScreenRenderer.TriggerSetsPane);
+        await Assert.That(session.Handle(Key(ConsoleKey.Delete))).IsEqualTo(ScreenAction.Redraw);
+        await Assert.That(sets).IsEmpty();
+        await Assert.That(character.TriggerSets).IsEmpty();
+
+        session.Edits.Revert();
+
+        await Assert.That(sets.Select(s => s.Name)).IsEquivalentTo(new[] { "Comms" });
+        await Assert.That(character.TriggerSets).IsEquivalentTo(new[] { "Comms" });
     }
 
     /// <summary>

@@ -17,7 +17,13 @@ namespace SharpMUTerm.Tui;
 /// </summary>
 internal static class KeypadScreenView
 {
-    private const int NumpadColumnWidth = 50;
+    /// <summary>
+    /// The numpad column's width — its 3×3 grid measures exactly this (three cells of "[[N]] " plus a
+    /// command, two gaps between them), so anything wider is slack taken from the binding list beside
+    /// it. That list is the one that needs it: a binding row carries four wells and a command, and its
+    /// widest state is an armed key capture whose prompt is twice the width of the key it replaces.
+    /// </summary>
+    private const int NumpadColumnWidth = 48;
 
     public static IWindowControl Build(
         IReadOnlyList<Macro> macros,

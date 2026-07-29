@@ -179,10 +179,11 @@ public class ScreenModelTests
         await Assert.That(model.PaneCount).IsEqualTo(4);
 
         // Two worlds then [+ world] / [- del]; two characters then [+ add] / [⧉ duplicate] /
-        // [- remove]. Buttons are appended after each list, so every index below still addresses
-        // the same item it always did — which is what the list counts assert independently of the total.
+        // [- remove]; one trigger set then [+ set] / [- del]. Buttons are appended after each list, so
+        // every index below still addresses the same item it always did — which is what the list counts
+        // assert independently of the total.
         await Assert.That(model.ListSizes).IsEquivalentTo(new[] { 2, 2, 1, 2 });
-        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 4, 5, 1, 2 });
+        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 4, 5, 3, 2 });
 
         // Worlds are selection only — there is no checkbox on a world row.
         await Assert.That(model.ToggleAt(0, 0)).IsNull();

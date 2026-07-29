@@ -59,10 +59,11 @@ public class ScreenButtonTests
         var worlds = Worlds();
         var model = WorldsScreenRenderer.Model(worlds, Sets(), selectedWorld: 0, selectedCharacter: 0);
 
-        // 2 worlds + [+ world] + [- del]; 2 characters + [+ add] + [⧉ duplicate] + [- remove]; 1 set;
-        // and the world's 2 security checkboxes, a pane with no buttons of its own.
+        // 2 worlds + [+ world] + [- del]; 2 characters + [+ add] + [⧉ duplicate] + [- remove];
+        // 1 set + [+ set] + [- del]; and the world's 2 security checkboxes, a pane with no buttons of
+        // its own. The list counts are what every index below addresses and are unchanged by any of it.
         await Assert.That(model.ListSizes).IsEquivalentTo(new[] { 2, 2, 1, 2 });
-        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 4, 5, 1, 2 });
+        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 4, 5, 3, 2 });
 
         await Assert.That(model.ButtonAt(0, 2)!.Value.Label).IsEqualTo(WorldsScreenRenderer.AddWorldLabel);
         await Assert.That(model.ButtonAt(0, 3)!.Value.Label).IsEqualTo(WorldsScreenRenderer.RemoveWorldLabel);
@@ -70,6 +71,8 @@ public class ScreenButtonTests
         await Assert.That(model.ButtonAt(1, 3)!.Value.Label)
             .IsEqualTo(WorldsScreenRenderer.DuplicateCharacterLabel);
         await Assert.That(model.ButtonAt(1, 4)!.Value.Label).IsEqualTo(WorldsScreenRenderer.RemoveCharacterLabel);
+        await Assert.That(model.ButtonAt(2, 1)!.Value.Label).IsEqualTo(WorldsScreenRenderer.AddSetLabel);
+        await Assert.That(model.ButtonAt(2, 2)!.Value.Label).IsEqualTo(WorldsScreenRenderer.RemoveSetLabel);
 
         // A world's own rows are still where they were — the buttons come after the list, so giving the
         // pane buttons doesn't renumber the rows the cursor navigates by.

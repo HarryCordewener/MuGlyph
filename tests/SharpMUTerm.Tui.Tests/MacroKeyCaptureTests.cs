@@ -186,7 +186,8 @@ public class MacroKeyCaptureTests
     /// <summary>
     /// The key is the row's third field, appended after the name and the command so the two ordinals
     /// that were already addressed by the renderer, the tests and the snapshot scripts still mean what
-    /// they meant. Opening it arms a capture rather than a buffer.
+    /// they meant. Opening it arms a capture rather than a buffer. The owning set was appended after it
+    /// on the same rule, so the key is still the third and the row is now four.
     /// </summary>
     [Test]
     public async Task TheBindingRowCarriesItsKeyAsACaptureField()
@@ -195,7 +196,8 @@ public class MacroKeyCaptureTests
         var model = KeypadScreenRenderer.Model(sets.SelectMany(s => s.Macros).ToList(), sets, 0);
         var row = model.RowAt(0, 0);
 
-        await Assert.That(row.FieldCount).IsEqualTo(3);
+        await Assert.That(row.FieldCount).IsEqualTo(4);
+        await Assert.That(row.FieldAt(KeypadScreenRenderer.SetField)!.Value.Get()).IsEqualTo(sets[0].Name);
         await Assert.That(row.FieldAt(KeypadScreenRenderer.NameField)!.Value.Get()).IsEqualTo("Look");
         await Assert.That(row.FieldAt(KeypadScreenRenderer.CommandField)!.Value.Get()).IsEqualTo("look");
         await Assert.That(row.FieldAt(KeypadScreenRenderer.KeyField)!.Value.Get()).IsEqualTo("Num5");

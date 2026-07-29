@@ -81,6 +81,30 @@ public class SettingsScreenViewTests
     }
 
     /// <summary>
+    /// The <c>set</c> view is F2 stopped on a rule's owning set — the one field on these screens whose
+    /// commit moves the row it is made on. The list it offers is <em>closed</em>, because a set is a real
+    /// object with characters assigned to it and a name typed here could only be one that does not
+    /// exist; the frame is where that presentation is checked rather than merely asserted.
+    /// </summary>
+    [Test]
+    public async Task TheSetViewOpensARulesOwningSetAsAClosedList()
+    {
+        var frame = Frame("set-edit");
+
+        await Assert.That(frame).Contains("Triggers & spawn routing");
+        await Assert.That(frame).Contains(ScreenChrome.ClosedChoicesCaption);
+
+        // Every configured set is offered, including the one holding no triggers at all — which is the
+        // whole point of the list being drawn from the configuration rather than from the pane's rows.
+        foreach (var set in DemoScene.Build().TriggerSets)
+        {
+            await Assert.That(frame).Contains(set.Name);
+        }
+
+        await Assert.That(Carets(frame)).IsGreaterThan(Carets(Frame("triggers")));
+    }
+
+    /// <summary>
     /// How many cells the frame paints in the block-caret colours. Counted rather than matched, because
     /// what distinguishes a field being typed into from the same field at rest is the caret cell.
     /// </summary>

@@ -57,6 +57,13 @@ internal static class TriggersScreenRenderer
     internal const int ScriptField = 8;
 
     /// <summary>
+    /// Which <see cref="TriggerSet"/> the rule lives in — appended last, like every field added to these
+    /// rows since, so the ordinals above keep addressing what they always did. It is what makes a rule
+    /// created in the wrong set fixable: see <see cref="ScreenLists.Owner{T}"/>.
+    /// </summary>
+    internal const int SetField = 9;
+
+    /// <summary>
     /// How wide the <c>fg</c> / <c>bg</c> / <c>attrs</c> and <c>rewrite</c> / <c>respond</c> /
     /// <c>script</c> labels are padded, so the field wells in each section start in the same column.
     /// </summary>
@@ -287,7 +294,8 @@ internal static class TriggersScreenRenderer
                 "script",
                 () => entry.Trigger.Actions.ScriptCallback,
                 v => entry.Trigger.Actions.ScriptCallback = v,
-                Callbacks(entry.Trigger, callbacks))))
+                Callbacks(entry.Trigger, callbacks)),
+            ScreenLists.Owner(sets, s => s.Triggers, entry.Trigger)))
             .Concat(Buttons(sets, selectedTrigger))
             .ToArray();
 
@@ -392,11 +400,25 @@ internal static class TriggersScreenRenderer
             left.Add("[dim]no triggers[/]");
         }
 
-        for (var i = 0; i < flattened.Count; i++)
+        // Walked per set rather than down the flattened list, so a set holding no rules can still say so
+        // — it owns none of these rows and would otherwise be drawn nowhere at all. The row indices are
+        // the flattened ones either way: the placeholder is markup, not a cursor stop.
+        var row = 0;
+        foreach (var set in sets)
         {
-            var (trigger, setName) = flattened[i];
-            left.Add(ScreenChrome.Cursor(RuleRow(i, selectedTrigger, trigger), cursor.IsOn(0, i), ColumnWidth));
-            left.Add(RuleSub(setName, trigger.Actions));
+            if (set.Triggers.Count == 0)
+            {
+                left.Add(ScreenChrome.EmptySet(set.Name, "triggers"));
+                continue;
+            }
+
+            foreach (var trigger in set.Triggers)
+            {
+                left.Add(ScreenChrome.Cursor(
+                    RuleRow(row, selectedTrigger, trigger), cursor.IsOn(0, row), ColumnWidth));
+                left.Add(RuleSub(set.Name, trigger.Actions));
+                row++;
+            }
         }
 
         left.Add(string.Empty);
@@ -421,7 +443,12 @@ internal static class TriggersScreenRenderer
         var cursor = focus ?? ScreenFocus.None;
         var flattened = Flatten(sets);
         return selectedTrigger >= 0 && selectedTrigger < flattened.Count
-            ? BuildEditor(flattened[selectedTrigger].Trigger, spawnTargets, cursor, selectedTrigger)
+            ? BuildEditor(
+                flattened[selectedTrigger].Trigger,
+                flattened[selectedTrigger].SetName,
+                spawnTargets,
+                cursor,
+                selectedTrigger)
             : new List<string>();
     }
 
@@ -493,9 +520,10 @@ internal static class TriggersScreenRenderer
     }
 
     private static List<string> BuildEditor(
-        Trigger trigger, IReadOnlyList<string> spawnTargets, ScreenFocus cursor, int index)
+        Trigger trigger, string setName, IReadOnlyList<string> spawnTargets, ScreenFocus cursor, int index)
     {
         var name = cursor.EditOn(0, index, NameField);
+        var set = cursor.EditOn(0, index, SetField);
         var pattern = cursor.EditOn(0, index, PatternField);
         var route = cursor.EditOn(0, index, RouteField);
         var foreground = cursor.EditOn(0, index, ForegroundField);
@@ -515,6 +543,14 @@ internal static class TriggersScreenRenderer
         {
             "[dim]name[/]",
             $"  {ScreenChrome.Field(Escape(trigger.Name), name)}",
+            string.Empty,
+
+            // Which set owns the rule, drawn immediately under the name because the two together are
+            // what identify it: the list is flattened across every set, so "the rule called page" is
+            // only half an answer. Committing it *moves* the rule (ScreenLists.Owner) and takes the
+            // cursor with it, which is the only way a rule created in the wrong set can be put right.
+            "[dim]set[/]",
+            $"  {ScreenChrome.Field($"[{Value}]{Escape(setName)}[/]", set)}",
             string.Empty,
             "[dim]match pattern (regex)[/]",
             $"  {ScreenChrome.Field(Escape(trigger.Pattern), pattern)}",

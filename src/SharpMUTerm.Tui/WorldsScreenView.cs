@@ -23,7 +23,8 @@ internal static class WorldsScreenView
         int selectedCharacter,
         int width,
         ScreenFocus? focus = null,
-        string fkey = WorldsScreenRenderer.FKey)
+        string fkey = WorldsScreenRenderer.FKey,
+        int selectedSet = 0)
     {
         // Both panes end in button rows, so a raw cursor can point past its list; resolving once here
         // keeps every block of the screen agreeing on which world and character are selected.
@@ -31,7 +32,8 @@ internal static class WorldsScreenView
             WorldsScreenRenderer.Resolve(worlds, selectedWorld, selectedCharacter);
         var accent = WorldsScreenRenderer.AccentFor(worlds, selectedWorld);
 
-        var model = WorldsScreenRenderer.Model(worlds, triggerSets, selectedWorld, selectedCharacter);
+        var model = WorldsScreenRenderer.Model(
+            worlds, triggerSets, selectedWorld, selectedCharacter, selectedSet);
         var header = ScreenChrome.Band(
             WorldsScreenRenderer.HeaderLine(width, model, focus, fkey), ScreenPalette.HeaderBg);
         var footer = ScreenChrome.Band(
@@ -62,7 +64,9 @@ internal static class WorldsScreenView
         {
             var character = worlds[selectedWorld].Characters[selectedCharacter];
             var form = WorldsScreenRenderer.FormColumn(character, accent, focus, selectedCharacter).ToList();
-            var triggers = WorldsScreenRenderer.TriggersColumn(character, triggerSets, accent, focus).ToList();
+            var triggers = WorldsScreenRenderer
+                .TriggersColumn(character, triggerSets, accent, focus, selectedSet, worlds)
+                .ToList();
             var editHeight = Math.Max(form.Count, triggers.Count);
 
             // Form panel on the left; the trigger checklist pushed to the right by a flex spacer so its

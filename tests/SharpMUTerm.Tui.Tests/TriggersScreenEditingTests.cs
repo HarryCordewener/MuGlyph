@@ -58,10 +58,11 @@ public class TriggersScreenEditingTests
         var sets = Sets();
         var model = TriggersScreenRenderer.Model(sets, 0, Targets);
 
-        // The name leads, then everything the editor pane draws. The first five ordinals are unchanged
-        // — the four new ones are appended, so nothing the screen, the snapshot keys or these tests
-        // already address is renumbered.
-        await Assert.That(model.RowAt(0, 0).FieldCount).IsEqualTo(9);
+        // The name leads, then everything the editor pane draws, then the set that owns the rule. Every
+        // ordinal below is unchanged — each new field is appended, so nothing the screen, the snapshot
+        // keys or these tests already address is renumbered.
+        await Assert.That(model.RowAt(0, 0).FieldCount).IsEqualTo(10);
+        await Assert.That(model.FieldAt(0, 0, TriggersScreenRenderer.SetField)!.Value.Get()).IsEqualTo("Comms");
         await Assert.That(model.FieldAt(0, 0, TriggersScreenRenderer.NameField)!.Value.Get()).IsEqualTo("Tell");
         await Assert.That(model.FieldAt(0, 0, TriggersScreenRenderer.PatternField)!.Value.Get()).IsEqualTo("tells you");
         await Assert.That(model.FieldAt(0, 0, TriggersScreenRenderer.RouteField)!.Value.Get()).IsEqualTo("Chat");

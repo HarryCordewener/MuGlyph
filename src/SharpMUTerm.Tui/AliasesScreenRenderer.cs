@@ -35,6 +35,12 @@ internal static class AliasesScreenRenderer
 
     internal const int ExpansionField = 2;
 
+    /// <summary>
+    /// Which <see cref="TriggerSet"/> the alias lives in, appended last so the ordinals above keep
+    /// meaning what they meant. Committing it moves the alias — see <see cref="ScreenLists.Owner{T}"/>.
+    /// </summary>
+    internal const int SetField = 3;
+
     /// <summary>The labels the alias list's buttons carry, in the order they are drawn.</summary>
     internal const string AddAliasLabel = "+ alias";
 
@@ -110,7 +116,8 @@ internal static class AliasesScreenRenderer
             ScreenToggle.Bind(() => entry.Alias.Enabled, v => entry.Alias.Enabled = v),
             ScreenField.Name("name", () => entry.Alias.Name, v => entry.Alias.Name = v),
             ScreenField.Pattern("match pattern", () => entry.Alias.Pattern, v => entry.Alias.Pattern = v),
-            ScreenField.Lines("expansion", () => entry.Alias.Substitution, v => entry.Alias.Substitution = v)))
+            ScreenField.Lines("expansion", () => entry.Alias.Substitution, v => entry.Alias.Substitution = v),
+            ScreenLists.Owner(sets, s => s.Aliases, entry.Alias)))
             .Concat(Buttons(sets, selected))
             .ToArray();
 
@@ -212,10 +219,24 @@ internal static class AliasesScreenRenderer
             lines.Add("[dim]no aliases[/]");
         }
 
-        for (var i = 0; i < entries.Count; i++)
+        // Walked per set rather than down the flattened list, so a set holding no aliases can still say
+        // so — it owns none of these rows and would otherwise be drawn nowhere at all. The row indices
+        // are the flattened ones either way: the placeholder is markup, not a cursor stop.
+        var index = 0;
+        foreach (var set in sets)
         {
-            var row = Row(entries[i].Alias, entries[i].SetName, i == selected);
-            lines.Add(ScreenChrome.Cursor(row, cursor.IsOn(0, i), ColumnWidth));
+            if (set.Aliases.Count == 0)
+            {
+                lines.Add(ScreenChrome.EmptySet(set.Name, "aliases"));
+                continue;
+            }
+
+            foreach (var alias in set.Aliases)
+            {
+                lines.Add(ScreenChrome.Cursor(
+                    Row(alias, set.Name, index == selected), cursor.IsOn(0, index), ColumnWidth));
+                index++;
+            }
         }
 
         lines.Add(string.Empty);
@@ -235,7 +256,7 @@ internal static class AliasesScreenRenderer
         var cursor = focus ?? ScreenFocus.None;
         var entries = Flatten(sets);
         return selected >= 0 && selected < entries.Count
-            ? BuildEditor(entries[selected].Alias, cursor, selected)
+            ? BuildEditor(entries[selected].Alias, entries[selected].SetName, cursor, selected)
             : new List<string>();
     }
 
@@ -264,14 +285,21 @@ internal static class AliasesScreenRenderer
         return $"{check} {marker} [bold]{name}[/] [dim]{pattern}[/] [dim]▪ {Escape(setName)}[/] → {expansion}";
     }
 
-    private static List<string> BuildEditor(Alias alias, ScreenFocus cursor, int selected)
+    private static List<string> BuildEditor(Alias alias, string setName, ScreenFocus cursor, int selected)
     {
+        var set = cursor.EditOn(0, selected, SetField);
+
         // The name leads the editor because it leads the row's fields: ⏎ on an alias opens it here,
-        // which is also where one created by [+ alias] lands ready to be called something.
+        // which is also where one created by [+ alias] lands ready to be called something. The set
+        // follows it, because the list is flattened across every set and the two together are what
+        // identify the alias; committing it *moves* the alias (ScreenLists.Owner).
         var lines = new List<string>
         {
             "[dim]name[/]",
             $"  {ScreenChrome.Field(Escape(alias.Name), cursor.EditOn(0, selected, NameField))}",
+            string.Empty,
+            "[dim]set[/]",
+            $"  {ScreenChrome.Field($"[{Value}]{Escape(setName)}[/]", set)}",
             string.Empty,
             "[dim]match pattern (regex)[/]",
             $"  {ScreenChrome.Field(Escape(alias.Pattern), cursor.EditOn(0, selected, PatternField))}",

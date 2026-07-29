@@ -147,6 +147,20 @@ internal static class DemoScene
             },
             Timers = { new TimerDefinition { Name = "market", IntervalSeconds = 300, Command = "prices", OneShot = false } },
         });
+
+        // A third set, and deliberately a lopsided one. Two sets is enough to show that rules belong to
+        // a set; it is not enough to show what the set screens have to cope with, which is that a set
+        // holds four *kinds* of thing and rarely holds all four. Combat has no triggers and no timers, so
+        // F2 and F6 draw it as a set with nothing of theirs in it — the one state a flattened pane could
+        // not show at all before, and the state a set is in the moment it is created. It is also left
+        // unassigned, so the F5 checklist shows both states of the checkbox on one character.
+        config.TriggerSets.Add(new TriggerSet
+        {
+            Name = "Combat",
+            Description = "hp + damage tracking",
+            Aliases = { new Alias { Name = "hp", Pattern = @"^hp$", Substitution = "score\nconsider" } },
+            Macros = { new Macro { Name = "flee", Key = "Ctrl+F2", Command = "flee" } },
+        });
     }
 
     /// <summary>
