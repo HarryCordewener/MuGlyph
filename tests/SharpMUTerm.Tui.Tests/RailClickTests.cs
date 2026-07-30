@@ -69,6 +69,57 @@ public class RailClickTests
         await Assert.That(app.StatusMarkup).Contains("switched to Rookery");
     }
 
+    /// <summary>
+    /// The rail lists the <em>active</em> character's windows, so a window opened for a different
+    /// character must not appear under it. Reported from real use: after switching to Thistle and then
+    /// on to Rookery, Thistle's own tab was drawn nested under Rookery.
+    /// <para>
+    /// The cause was that the rail's window list walked every window in the workspace without asking
+    /// who owned it. That was invisible for as long as the client could only really hold one session —
+    /// "all windows" and "the active character's windows" were the same list — and became wrong the
+    /// moment switching characters started giving each one a window of its own. Asserted in both
+    /// directions, because a filter that showed nothing would pass a one-sided test.
+    /// </para>
+    /// </summary>
+    [Test]
+    public async Task TheRailListsOnlyTheActiveCharactersWindows()
+    {
+        var app = App();
+        app.RenderSnapshot();
+
+        // Read the ids off the app rather than writing them down: whichever character is switched to
+        // first inherits the main window, so Thistle's window is "main" here and would be
+        // "char:Grapevine.Thistle" if the order were reversed. The rule under test is about ownership,
+        // not naming.
+        ClickRailRow(app, "Thistle");
+        app.RenderSnapshot();
+        await Assert.That(app.ActiveSessionKey).IsEqualTo(Thistle);
+
+        var thistles = WindowTargets(app);
+        await Assert.That(thistles).IsNotEmpty(); // the other direction: its own window IS listed
+
+        ClickRailRow(app, "Rookery");
+        app.RenderSnapshot();
+
+        await Assert.That(app.ActiveSessionKey).IsEqualTo(Rookery);
+        var rookerys = WindowTargets(app);
+        await Assert.That(rookerys).IsNotEmpty();
+        foreach (var stale in thistles)
+        {
+            await Assert.That(rookerys).DoesNotContain(stale);
+        }
+    }
+
+    /// <summary>
+    /// The <c>win:</c> targets the rail currently draws, excluding the web view — that one belongs to no
+    /// character by design (it is opened without a session key) and is listed under whoever is active
+    /// precisely so it stays clickable, so it is not evidence of the leak this asserts against.
+    /// </summary>
+    private static List<string> WindowTargets(SharpMUTermApp app) =>
+        Targets(app.RailLines)
+            .Where(t => t.StartsWith("win:", StringComparison.Ordinal) && t != "win:web")
+            .ToList();
+
     /// <summary>A character under another world is reachable the same way — the rail spans all of them.</summary>
     [Test]
     public async Task ClickingACharacterInAnotherWorld_SwitchesToIt()

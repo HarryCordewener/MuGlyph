@@ -37,8 +37,12 @@ public sealed class WorkspaceWindow
     /// <summary>What the window hosts.</summary>
     public WindowKind Kind { get; }
 
-    /// <summary>The <c>world.character</c> session this window belongs to, or null if unowned.</summary>
-    public string? SessionKey { get; }
+    /// <summary>
+    /// The <c>world.character</c> session this window belongs to, or null if unowned. Settable through
+    /// <see cref="Workspace.SetWindowOwner"/> because a session can adopt a window that already exists
+    /// — the main one, which is opened before any session does.
+    /// </summary>
+    public string? SessionKey { get; internal set; }
 
     /// <summary>Unread lines accumulated while the window was not showing its newest output.</summary>
     public int Unread { get; internal set; }

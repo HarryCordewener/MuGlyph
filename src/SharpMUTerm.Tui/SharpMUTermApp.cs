@@ -1286,6 +1286,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             PaneContentFor(windowId, SessionTitle(session));
             RebuildPaneArea();
         }
+        else
+        {
+            // Adopting a window that already exists — the main one, which is built before any session.
+            // Its recorded owner would otherwise still name whoever held it before, and the rail reads
+            // ownership to decide whose windows to list.
+            _workspace.SetWindowOwner(windowId, session.SessionKey);
+        }
 
         return windowId;
     }
@@ -2740,7 +2747,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             {
                 var key = $"{world.Name}.{character.Name}";
                 var active = key == activeKey;
-                var windows = active ? BuildRailWindows(paneLabels) : Array.Empty<RailWindow>();
+                var windows = active ? BuildRailWindows(key, paneLabels) : Array.Empty<RailWindow>();
                 characters.Add(new RailCharacter(
                     character.Name,
                     key,
@@ -2757,12 +2764,30 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         return RailModel.Build(worlds);
     }
 
-    /// <summary>The active character's windows, in registration order, as rail window rows.</summary>
-    private IReadOnlyList<RailWindow> BuildRailWindows(IReadOnlyDictionary<string, string> paneLabels)
+    /// <summary>
+    /// The windows to list under <paramref name="owner"/>, in registration order: that character's own
+    /// windows, plus the ones that belong to nobody.
+    /// <para>
+    /// The owner test is the point. Every window a session or a trigger opens carries its owner
+    /// (<see cref="OpenSessionWindow"/>, and <c>RouteSpawn(target, _active?.SessionKey)</c>), so a
+    /// window with no owner is an auxiliary like the web view — global, reachable from wherever you
+    /// are, and listed here because the rail is the only place you can click back to it. Without the
+    /// test this returned <em>every</em> window in the workspace, so the rail drew one character's tabs
+    /// nested under another: invisible while a single session was all the client could open, and wrong
+    /// from the moment switching characters started giving each one its own window.
+    /// </para>
+    /// </summary>
+    private IReadOnlyList<RailWindow> BuildRailWindows(
+        string owner, IReadOnlyDictionary<string, string> paneLabels)
     {
         var windows = new List<RailWindow>();
         foreach (var window in _workspace.Windows)
         {
+            if (window.SessionKey is { } key && !string.Equals(key, owner, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
             var pane = _workspace.Layout.FindWindow(window.Id);
             var label = pane is not null ? paneLabels.GetValueOrDefault(pane.Id) : null;
             windows.Add(new RailWindow(

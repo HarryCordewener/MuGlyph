@@ -158,6 +158,26 @@ public sealed class Workspace
         }
     }
 
+    /// <summary>
+    /// Records who owns a window, for the case where a session takes over one that already exists.
+    /// Unknown ids are ignored.
+    /// <para>
+    /// A window's owner is otherwise fixed at creation, which was fine while the first session always
+    /// created its own: the main window is opened before any session exists and the first session
+    /// simply adopts it, so without this its <see cref="WorkspaceWindow.SessionKey"/> keeps naming
+    /// whoever held it before — and anything that reads ownership (the connection rail listing a
+    /// character's windows, the command surface subtitling them with their owner) is then reading a
+    /// stale answer.
+    /// </para>
+    /// </summary>
+    public void SetWindowOwner(string windowId, string? sessionKey)
+    {
+        if (_windows.TryGetValue(windowId, out var window))
+        {
+            window.SessionKey = sessionKey;
+        }
+    }
+
     /// <summary>Closes a window: removes its tab (pruning empty panes) and forgets its state.</summary>
     public bool CloseWindow(string windowId)
     {
