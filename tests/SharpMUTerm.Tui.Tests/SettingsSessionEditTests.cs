@@ -351,7 +351,10 @@ public class SettingsSessionEditTests
         await Assert.That(model.FieldAt(0, 0, 0)!.Value.Get()).IsEqualTo("Aardwolf");
         await Assert.That(model.FieldAt(0, 0, 1)!.Value.Get()).IsEqualTo("aardmud.org");
         await Assert.That(model.FieldAt(0, 0, 2)!.Value.Get()).IsEqualTo("4000");
-        await Assert.That(model.FieldAt(0, 0, 3)!.Value.Get()).IsEqualTo("UTF-8");
+        // "auto" rather than "UTF-8": a world's encoding now defaults to following CHARSET negotiation,
+        // and naming one is an override. The claim here is unchanged — ordinal 3 is the encoding field
+        // and reads the world's own property — it is the property's default that moved.
+        await Assert.That(model.FieldAt(0, 0, 3)!.Value.Get()).IsEqualTo("auto");
         await Assert.That(model.FieldAt(0, 0, 4)!.Value.Get()).IsEqualTo("0");
 
         new ScreenEdits().Apply(model.FieldAt(0, 0, 1)!.Value, "example.net");

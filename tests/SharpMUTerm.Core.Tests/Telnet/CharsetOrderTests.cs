@@ -33,17 +33,52 @@ public class CharsetOrderTests
     }
 
     /// <summary>
-    /// UTF-8 asked for by name resolves to the BOM-less instance the default order already holds, not
-    /// to <see cref="Encoding.UTF8"/>, which emits a preamble.
+    /// Every encoding we state must compare equal to the instance this machine's encoding provider
+    /// yields for the same charset. <b>This assertion is the inverse of the one it replaces</b>, which
+    /// required a BOM-less <c>new UTF8Encoding(false)</c> at the head so no preamble could be emitted,
+    /// and that is not a weakening — the old instance was breaking negotiation and the hazard it
+    /// guarded against does not exist here.
+    /// <para>
+    /// TelnetNegotiationCore ranks the charsets a server offers by <c>IndexOf</c> over the list we
+    /// state, against encodings it gets from <see cref="Encoding.GetEncodings"/>. <see cref="UTF8Encoding"/>
+    /// compares its BOM flag in <see cref="object.Equals(object)"/>, so the BOM-less instance matched
+    /// nothing the library looked up, scored −1, and sorted <em>below</em> every charset that did
+    /// match: a server offering <c>UTF-8;ISO-8859-1</c> was answered with Latin-1 by a client whose
+    /// first preference was UTF-8. And a preamble was never at risk — only
+    /// <see cref="Encoding.GetPreamble"/> produces one, which nothing in this stack calls;
+    /// <see cref="Encoding.GetBytes(string)"/> does not.
+    /// </para>
     /// </summary>
     [Test]
-    public async Task PreferEncoding_Utf8_StaysBomless()
+    public async Task PreferEncoding_UsesTheProvidersOwnInstances_SoNegotiationCanRankThem()
+    {
+        var order = TelnetSessionOptions.PreferEncoding("UTF-8");
+        var provider = Encoding.GetEncodings().Select(e => e.GetEncoding()).ToArray();
+
+        await Assert.That(order[0].CodePage).IsEqualTo(Encoding.UTF8.CodePage);
+        await Assert.That(order.Length).IsEqualTo(2);
+        foreach (var encoding in order)
+        {
+            await Assert.That(provider.Contains(encoding)).IsTrue();
+        }
+
+        // And the head really does out-rank the tail under the library's own comparison, which is the
+        // property the instances exist to satisfy.
+        var ranked = provider
+            .Where(e => order.Contains(e))
+            .OrderByDescending(e => order.Reverse().ToList().IndexOf(e))
+            .ToArray();
+        await Assert.That(ranked[0].CodePage).IsEqualTo(Encoding.UTF8.CodePage);
+    }
+
+    /// <summary>Encoding text still emits no byte-order mark, which is what the old pin actually cared about.</summary>
+    [Test]
+    public async Task PreferEncoding_Utf8_PutsNoByteOrderMarkOnTheWire()
     {
         var order = TelnetSessionOptions.PreferEncoding("UTF-8");
 
-        await Assert.That(order[0].CodePage).IsEqualTo(Encoding.UTF8.CodePage);
-        await Assert.That(order[0].GetPreamble().Length).IsEqualTo(0);
-        await Assert.That(order.Length).IsEqualTo(2);
+        await Assert.That(order[0].GetBytes("a").Length).IsEqualTo(1);
+        await Assert.That(order[0].GetBytes("café")).IsEquivalentTo(Encoding.UTF8.GetBytes("café"));
     }
 
     [Test]

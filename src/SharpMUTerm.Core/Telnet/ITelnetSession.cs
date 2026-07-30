@@ -9,8 +9,17 @@ public interface ITelnetSession : IAsyncDisposable
 {
     bool IsConnected { get; }
 
+    /// <summary>
+    /// The encoding this session is decoding and encoding with, and whether CHARSET negotiated it,
+    /// the world pinned it, or it is merely what was assumed because nothing negotiated.
+    /// </summary>
+    SessionEncoding CurrentEncoding { get; }
+
     /// <summary>Server output: completed lines and prompts.</summary>
     event EventHandler<TelnetOutputEventArgs>? OutputReceived;
+
+    /// <summary>Raised when <see cref="CurrentEncoding"/> changes.</summary>
+    event EventHandler<SessionEncodingEventArgs>? EncodingChanged;
 
     /// <summary>GMCP messages routed from the server.</summary>
     event EventHandler<GmcpMessageEventArgs>? GmcpReceived;

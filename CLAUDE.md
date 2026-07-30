@@ -39,7 +39,7 @@ fallbacks) for inline images/maps.
   paged off an ephemeral per-session cache under `$XDG_CACHE_HOME`; absolute line indices, ranged
   reads capped at `MaxRangeLines`, and any disk failure degrades to memory-only. Emphatically **not**
   the session log — that stays `PlainTextLogSink`/`HtmlLogSink`, opt-in and kept),
-  `TcpTransport` (TLS + IPv6), `TelnetSession` (wraps TelnetNegotiationCore **2.5.3**),
+  `TcpTransport` (TLS + IPv6), `TelnetSession` (wraps TelnetNegotiationCore **2.6.0**),
   trigger/alias/macro engines + `IntervalScheduler`, plain-text + HTML logging, versioned JSON
   config (worlds → characters + shared trigger sets, with migration),
   `Theme`/`ThemeLibrary`, and `WorldSession`/`SessionManager` orchestration.
@@ -323,6 +323,29 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   first-class `OnByte` builder hook remains a good upstream PR. It handles the option handshake
   (TELOPT, GA, TTYPE/MTTS, EOR, NAWS, CHARSET, MSSP, GMCP) — **Pueblo and all ANSI/MXP/Pueblo
   payload _parsing_ stay our layer.**
+- **Text encoding is CHARSET's answer, not a setting** (`SessionEncoding`, `TelnetSession.CurrentEncoding`).
+  A world's `encoding` is `auto` by default — state the app's `CharsetOrder`, decode with whatever RFC
+  2066 settles on — and naming one is an *override*: still offered at the head of the order so a
+  cooperative server agrees, but used regardless of what it says. Four things about this library will
+  bite you, and all four already have:
+  - **`TelnetInterpreter.CurrentEncoding` defaults to `Encoding.ASCII`**, and that default is not inert:
+    it is handed to `CallbackOnByteAsync`/`CallbackOnSubmitAsync` for every byte and used for GMCP/MSDP/
+    MSSP and everything we send. On a server that never negotiates CHARSET — most MU\* servers — every
+    byte above 0x7F became `?`. `TelnetSession` seeds that property (reflectively, `internal set`, the
+    same way `CharsetProtocol` itself writes it) with the head of the stated order.
+  - **The encodings we state must be the platform provider's own instances** (`Encoding.UTF8`, *not*
+    `new UTF8Encoding(false)`). `CharsetProtocol` ranks a server's offer by `IndexOf` over our list
+    against encodings from `Encoding.GetEncodings()`, and `UTF8Encoding.Equals` compares the BOM flag —
+    so a BOM-less instance matched nothing, scored −1, and sorted *below* every charset that did match.
+    A `GetBytes` never emits a preamble, so the BOM that instance was avoiding was never at risk.
+  - **The interpreter's `CurrentEncoding` is updated *after* the read batch returns**, so polling it is a
+    batch late; `CharsetProtocol.OnCharsetChange`'s own argument is the prompt, authoritative signal.
+    But that callback is **only raised when the server offers a list and we choose** — the direction
+    where we offer and the server accepts updates the interpreter silently. Both arms are needed.
+    (An `OnCharsetChange` on the accepted path is a good upstream PR.)
+  - The seed is a `Clone()` for a reason: it doubles as the "nothing has negotiated" marker by reference,
+    and seeding a provider instance would make a successful negotiation of that same charset look like
+    the seed.
 - **MoonSharp** — package id `MoonSharp`, pure-managed, no native deps.
 - **Serilog** behind `Microsoft.Extensions.Logging` (`ClientDiagnostics`) feeds a capped in-memory
   `ClientMessageLog` (⌃P ▸ *Show client messages*) and a rolling file kept **separate from session

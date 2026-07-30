@@ -1,3 +1,4 @@
+using System.Text;
 using SharpMUTerm.Core.Telnet;
 
 namespace SharpMUTerm.Core.Tests.Session;
@@ -9,12 +10,17 @@ internal sealed class FakeTelnetSession : ITelnetSession
 
     public List<string> SentLines { get; } = new();
 
+    /// <summary>What this fake reports as in force; a test that cares sets it and raises the event.</summary>
+    public SessionEncoding CurrentEncoding { get; set; } =
+        new(new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), EncodingSource.Assumed);
+
     public event EventHandler<TelnetOutputEventArgs>? OutputReceived;
     public event EventHandler<GmcpMessageEventArgs>? GmcpReceived;
 #pragma warning disable CS0067 // Required by the interface; not exercised by current tests.
     public event EventHandler<MsdpMessageEventArgs>? MsdpReceived;
     public event EventHandler<MsspReceivedEventArgs>? MsspReceived;
 #pragma warning restore CS0067
+    public event EventHandler<SessionEncodingEventArgs>? EncodingChanged;
     public event EventHandler<SessionDisconnectedEventArgs>? Disconnected;
 
     public Task ConnectAsync(CancellationToken cancellationToken = default)
@@ -58,4 +64,10 @@ internal sealed class FakeTelnetSession : ITelnetSession
 
     public void EmitGmcp(string package, string json) =>
         GmcpReceived?.Invoke(this, new GmcpMessageEventArgs(package, json));
+
+    public void EmitEncoding(SessionEncoding encoding)
+    {
+        CurrentEncoding = encoding;
+        EncodingChanged?.Invoke(this, new SessionEncodingEventArgs(encoding));
+    }
 }

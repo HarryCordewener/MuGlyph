@@ -1,5 +1,6 @@
 using System.Globalization;
 using SharpMUTerm.Core.Configuration;
+using SharpMUTerm.Core.Telnet;
 using SharpMUTerm.Core.Text;
 using static SharpMUTerm.Tui.MarkupText;
 using static SharpMUTerm.Tui.ScreenPalette;
@@ -217,8 +218,13 @@ internal static class WorldsScreenRenderer
         return SpreadLR(" " + title, hints, width);
     }
 
-    /// <summary>The wire encodings a world may be set to; the detail column cycles them with ↑↓.</summary>
-    private static readonly string[] Encodings = { "UTF-8", "ISO-8859-1", "ASCII", "CP437", "CP1252" };
+    /// <summary>
+    /// The encodings a world may be set to; the detail column cycles them with ↑↓. <c>auto</c> leads
+    /// and is the default: it follows CHARSET negotiation. Every other entry is an <em>override</em> —
+    /// used whatever the server says — which is why the detail column labels them as one.
+    /// </summary>
+    private static readonly string[] Encodings =
+        { TelnetSessionOptions.AutoEncodingName, "UTF-8", "ISO-8859-1", "ASCII", "CP437", "CP1252" };
 
     /// <summary>The label the WORLDS list's add button carries, and the row the renderer draws for it.</summary>
     internal const string AddWorldLabel = "+ world";
@@ -721,7 +727,7 @@ internal static class WorldsScreenRenderer
         right.AddRange(new[]
         {
             WorldField("encoding", Field(
-                $"[{Value}]{Escape(world.Encoding)}[/]", cursor, selectedWorld, EncodingField)),
+                EncodingDetail(world.Encoding), cursor, selectedWorld, EncodingField)),
             WorldField("keepalive", Field(
                 world.KeepaliveSeconds > 0
                     ? $"[{Value}]{world.KeepaliveSeconds.ToString(CultureInfo.InvariantCulture)}s[/]"
@@ -1114,6 +1120,16 @@ internal static class WorldsScreenRenderer
 
     private static string WorldField(string label, string value) =>
         $"  [{Label}]{label.PadLeft(WorldLabelWidth)}[/]  {value}";
+
+    /// <summary>
+    /// The encoding cell: <c>auto</c> reads as the unremarkable default it is (dimmed, like keepalive's
+    /// <c>off</c> directly below it), and anything else is named <em>override</em>, because the choice
+    /// list gives no other way to tell that picking one stops the client believing the server.
+    /// </summary>
+    internal static string EncodingDetail(string? encoding) =>
+        TelnetSessionOptions.ResolveEncoding(encoding) is null
+            ? $"[{Label}]{TelnetSessionOptions.AutoEncodingName}[/]"
+            : $"[{Value}]{Escape(encoding!)}[/] [{Label}]override[/]";
 
     private static string CharField(string label, string value) =>
         $"  [{Label}]{label.PadRight(CharLabelWidth)}[/]  {value}";

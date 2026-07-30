@@ -1,3 +1,4 @@
+using System.Text;
 using SharpMUTerm.Core.Telnet;
 
 namespace SharpMUTerm.Tui.Tests;
@@ -13,6 +14,10 @@ internal sealed class RecordingTelnetSession : ITelnetSession
     private readonly List<string> _lines = new();
 
     public bool IsConnected { get; private set; }
+
+    /// <summary>What this fake reports as in force; a test that cares sets it and raises the event.</summary>
+    public SessionEncoding CurrentEncoding { get; set; } =
+        new(new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), EncodingSource.Assumed);
 
     /// <summary>
     /// What <see cref="ConnectAsync"/> throws instead of connecting, or null to connect. A refused
@@ -59,6 +64,13 @@ internal sealed class RecordingTelnetSession : ITelnetSession
     public event EventHandler<MsdpMessageEventArgs>? MsdpReceived;
     public event EventHandler<MsspReceivedEventArgs>? MsspReceived;
 #pragma warning restore CS0067
+
+    public event EventHandler<SessionEncodingEventArgs>? EncodingChanged;
+
+    /// <summary>Announces whatever <see cref="CurrentEncoding"/> has been set to, as a live session would.</summary>
+    public void RaiseEncodingChanged() =>
+        EncodingChanged?.Invoke(this, new SessionEncodingEventArgs(CurrentEncoding));
+
     public event EventHandler<SessionDisconnectedEventArgs>? Disconnected;
 
     /// <summary>

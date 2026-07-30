@@ -23,7 +23,37 @@ public static class ConfigurationMigrator
             MigrateV1ToV2(root);
         }
 
+        if (version < 3)
+        {
+            MigrateV2ToV3(root);
+        }
+
         root["version"] = AppConfiguration.CurrentVersion;
+    }
+
+    /// <summary>
+    /// v2's world <c>encoding</c> was a preference the client stated and then ignored; in v3 it is an
+    /// <em>override</em> of what CHARSET negotiates, with <c>auto</c> as the default. Every v2 file
+    /// carries an explicit <c>UTF-8</c> because that was the default nobody chose, so leaving it would
+    /// pin every existing world to an override for ever and defeat the feature entirely. It becomes
+    /// <c>auto</c>. Any other name was typed on the F5 screen deliberately and is kept as the override
+    /// it now means.
+    /// </summary>
+    private static void MigrateV2ToV3(JsonObject root)
+    {
+        if (root["worlds"] is not JsonArray worlds)
+        {
+            return;
+        }
+
+        foreach (var world in worlds.OfType<JsonObject>())
+        {
+            if (world["encoding"]?.GetValue<string>() is { } encoding &&
+                encoding.Trim().Equals("utf-8", StringComparison.OrdinalIgnoreCase))
+            {
+                world["encoding"] = Telnet.TelnetSessionOptions.AutoEncodingName;
+            }
+        }
     }
 
     /// <summary>
