@@ -136,6 +136,25 @@ public sealed class RestoreLog : IDisposable
     private const UnixFileMode OwnerOnlyDirectoryMode =
         UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
 
+    /// <summary>
+    /// How a window's open writer shares its file. A second <em>writer</em> stays refused — two appenders
+    /// on one log would interleave half-records — but readers are welcome and so is an unlink or a rename,
+    /// which is what <see cref="Purge"/>, <see cref="Forget"/> and compaction's atomic rename need.
+    /// <see cref="FileShare.Delete"/> has to be said out loud for Windows; POSIX allows it unasked.
+    /// </summary>
+    private const FileShare WriterShare = FileShare.Read | FileShare.Delete;
+
+    /// <summary>
+    /// How every read of a log file is opened — and the whole reason <see cref="ReadAllBytesShared"/>
+    /// exists instead of <see cref="File.ReadAllBytes"/>, which opens with <see cref="FileShare.Read"/>
+    /// and so, on Windows, <b>refuses a file this very process holds open for appending</b>. That is not a
+    /// theoretical race: <see cref="Read"/> during a live session came back empty for every window with a
+    /// writer, and <c>Writer.Open</c> read the same way — so a log that could not be read was taken for
+    /// absent and recreated over the top of itself. POSIX ignores share modes entirely, which is why none
+    /// of it showed up on Linux.
+    /// </summary>
+    private const FileShare ReaderShare = FileShare.ReadWrite | FileShare.Delete;
+
     private readonly object _gate = new();
     private readonly Dictionary<string, Writer> _writers = new(StringComparer.Ordinal);
     private readonly MemoryStream _scratch = new(256);
@@ -491,7 +510,7 @@ public sealed class RestoreLog : IDisposable
         DateTimeOffset written;
         try
         {
-            bytes = File.ReadAllBytes(path);
+            bytes = ReadAllBytesShared(path);
             written = new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero);
         }
         catch (Exception ex)
@@ -562,6 +581,21 @@ public sealed class RestoreLog : IDisposable
         }
 
         return new RestoredWindow(windowId, title, written, lines, lost);
+    }
+
+    /// <summary>
+    /// Reads a whole log file, sharing it with the writer this process may already be holding open. See
+    /// <see cref="ReaderShare"/> for why <see cref="File.ReadAllBytes"/> cannot be used here.
+    /// </summary>
+    private static byte[] ReadAllBytesShared(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, ReaderShare);
+
+        // A concurrent append may land between the length and the read; the framing loop stops at the
+        // first record that does not fit, which is the same treatment a torn tail already gets.
+        var bytes = new byte[stream.Length];
+        stream.ReadExactly(bytes);
+        return bytes;
     }
 
     private static RestoredLine DecodeRecord(byte[] bytes, int payloadStart, int payloadLength)
@@ -725,7 +759,7 @@ public sealed class RestoreLog : IDisposable
                 // The mode is fixed up rather than set at creation: this file already has an inode, and
                 // one written by an older build (or copied in) should still end up owner-only.
                 RestrictToOwner(path, logger);
-                stream = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.Read);
+                stream = new FileStream(path, FileMode.Open, FileAccess.Write, WriterShare);
                 if (usable < stream.Length)
                 {
                     logger.LogInformation(
@@ -740,7 +774,7 @@ public sealed class RestoreLog : IDisposable
                 // UnixCreateMode, not a chmod afterwards: the mode is applied by the open that makes the
                 // inode, so the umask never gets a chance to widen it and there is no window in which a
                 // world-readable file already holds someone's chat.
-                stream = new FileStream(path, CreateOwnerOnly(FileShare.Read));
+                stream = new FileStream(path, CreateOwnerOnly(WriterShare));
 
                 var header = BuildHeader(windowId, title);
                 stream.Write(header);
@@ -787,7 +821,7 @@ public sealed class RestoreLog : IDisposable
             try
             {
                 _stream.Flush();
-                using (var source = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var source = new FileStream(_path, FileMode.Open, FileAccess.Read, ReaderShare))
                 using (var destination = new FileStream(temporary, CreateOwnerOnly(FileShare.None)))
                 {
                     var header = new byte[_dataStart];
@@ -801,7 +835,7 @@ public sealed class RestoreLog : IDisposable
                 _stream.Dispose();
                 File.Move(temporary, _path, overwrite: true);
 
-                _stream = new FileStream(_path, FileMode.Open, FileAccess.Write, FileShare.Read);
+                _stream = new FileStream(_path, FileMode.Open, FileAccess.Write, WriterShare);
                 _stream.Seek(0, SeekOrigin.End);
 
                 var shift = keepFrom - _dataStart;
@@ -817,7 +851,7 @@ public sealed class RestoreLog : IDisposable
                 TryRemove(temporary);
                 if (!_stream.CanWrite)
                 {
-                    _stream = new FileStream(_path, FileMode.Append, FileAccess.Write, FileShare.Read);
+                    _stream = new FileStream(_path, FileMode.Append, FileAccess.Write, WriterShare);
                 }
             }
         }
@@ -855,7 +889,7 @@ public sealed class RestoreLog : IDisposable
                     return false;
                 }
 
-                bytes = File.ReadAllBytes(path);
+                bytes = ReadAllBytesShared(path);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {

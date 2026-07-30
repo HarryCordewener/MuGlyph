@@ -22,8 +22,8 @@ namespace SharpMUTerm.Core.Text;
 /// <para>
 /// <b>Layout.</b> Each store owns a directory under the platform cache root
 /// (<see cref="DefaultRoot"/>) named for the process that owns it, holding a <c>.lock</c> file — kept
-/// open with <see cref="FileShare.None"/> so a concurrent instance's purge can tell a live store from
-/// an abandoned one — and a series of segment files. A segment is a 16-byte header followed by
+/// open sharing nothing but <see cref="FileShare.Delete"/>, so a concurrent instance's purge can tell a
+/// live store from an abandoned one — and a series of segment files. A segment is a 16-byte header followed by
 /// length-prefixed, CRC-32-checked records (see <see cref="StyledLineCodec"/> for the payload).
 /// Space is reclaimed by deleting the oldest segment whole, which is an <c>unlink</c> rather than a
 /// rewrite of everything on every line.
@@ -70,6 +70,24 @@ public sealed class FileScrollbackSpill : IScrollbackSpill
     private const string StoreDirectoryPrefix = "store-";
     private const string LockFileName = ".lock";
     private const string SegmentPattern = "seg-*.bin";
+
+    /// <summary>
+    /// How a segment file is shared while this store holds it open. <b>Every flag here is load-bearing on
+    /// Windows and inert on POSIX</b>, which is why getting it wrong was invisible on Linux: a Windows
+    /// <c>CreateFile</c> refuses any open whose access the existing handle's share mode does not permit.
+    /// <see cref="FileShare.Write"/> is what lets anything else rewrite a segment underneath us — the case
+    /// <see cref="HeaderIsValid"/> and the per-record checksums exist to survive — and
+    /// <see cref="FileShare.Delete"/> is what lets the file be unlinked or its directory removed while we
+    /// still hold the handle, which POSIX allows unasked and Windows refuses unless it is said here.
+    /// </summary>
+    private const FileShare SegmentShare = FileShare.ReadWrite | FileShare.Delete;
+
+    /// <summary>
+    /// How the <c>.lock</c> file is shared. Read and write stay denied — that denial <em>is</em> the
+    /// liveness signal <see cref="TryPurgeStore"/> reads — but the file may still be unlinked, so a cache
+    /// directory can vanish underneath a live store on Windows as it always could on POSIX.
+    /// </summary>
+    private const FileShare LockShare = FileShare.Delete;
 
     private static readonly HashSet<string> PurgedRoots = new(StringComparer.Ordinal);
     private static int _storeSequence;
@@ -234,8 +252,8 @@ public sealed class FileScrollbackSpill : IScrollbackSpill
 
     /// <summary>
     /// Deletes spill directories under <paramref name="root"/> that no live process holds — what a
-    /// crash or a kill leaves behind. A store still in use keeps its <c>.lock</c> file open with
-    /// <see cref="FileShare.None"/>, so it cannot be acquired and is skipped. Returns how many
+    /// crash or a kill leaves behind. A store still in use keeps its <c>.lock</c> file open without
+    /// sharing read or write, so it cannot be acquired and is skipped. Returns how many
     /// directories were removed; never throws.
     /// </summary>
     public static int PurgeStale(string? root = null, ILogger? logger = null)
@@ -493,7 +511,7 @@ public sealed class FileScrollbackSpill : IScrollbackSpill
             Path.Combine(directory, LockFileName),
             FileMode.Create,
             FileAccess.ReadWrite,
-            FileShare.None,
+            LockShare,
             bufferSize: 1,
             FileOptions.DeleteOnClose);
 
@@ -504,7 +522,7 @@ public sealed class FileScrollbackSpill : IScrollbackSpill
     private void StartSegment()
     {
         var path = Path.Combine(_directory!, $"seg-{_segmentSequence++:D6}.bin");
-        var handle = File.OpenHandle(path, FileMode.Create, FileAccess.ReadWrite, FileShare.Read);
+        var handle = File.OpenHandle(path, FileMode.Create, FileAccess.ReadWrite, SegmentShare);
         var header = new byte[HeaderBytes];
         Magic.CopyTo(header, 0);
         BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(Magic.Length), FormatVersion);

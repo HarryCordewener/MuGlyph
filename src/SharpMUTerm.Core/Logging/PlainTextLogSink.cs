@@ -16,11 +16,21 @@ public sealed class PlainTextLogSink : ILogSink
     }
 
     /// <summary>Opens a plain-text log file, creating parent directories as needed.</summary>
+    /// <remarks>
+    /// The share mode names <see cref="FileShare.Delete"/> deliberately: a transcript belongs to the user,
+    /// and on Windows a file opened without it can be neither deleted nor renamed nor its directory
+    /// removed until the client exits — so tidying up or rotating a log mid-session failed with a sharing
+    /// violation there and worked on Linux, which ignores share modes.
+    /// </remarks>
     public static PlainTextLogSink CreateFile(string path, bool append = true)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-        var stream = new FileStream(path, append ? FileMode.Append : FileMode.Create, FileAccess.Write, FileShare.Read);
+        var stream = new FileStream(
+            path,
+            append ? FileMode.Append : FileMode.Create,
+            FileAccess.Write,
+            FileShare.Read | FileShare.Delete);
         return new PlainTextLogSink(new StreamWriter(stream) { AutoFlush = false });
     }
 
