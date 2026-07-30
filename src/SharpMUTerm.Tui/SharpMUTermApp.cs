@@ -319,6 +319,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private readonly string? _logRoot;
 
+    /// <summary>
+    /// Where each pane's recent content is kept so a restart refills it, or null for an app that owns
+    /// no restore log — which is the default, and is what every test and every snapshot gets. Third of
+    /// the same family as <see cref="_save"/> and <see cref="_logRoot"/>, for the same reason.
+    /// </summary>
+    private readonly RestoreLog? _restore;
+
     /// <summary>The pane the live mouse drag is hovering, and the edge it would split — null when idle.</summary>
     private string? _dragTargetPaneId;
     private Edge? _dragEdge;
@@ -372,6 +379,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// and a fixture naming an absolute path is still a test reaching outside itself.
     /// </para>
     /// </param>
+    /// <param name="restore">
+    /// The <see cref="RestoreLog"/> this app reads its panes' previous content out of and writes their
+    /// new content into, or null for an app that owns no restore log — which is the default, and is
+    /// what every test and every snapshot gets. The third member of the <paramref name="save"/> /
+    /// <paramref name="logRoot"/> family, handed in for exactly their reason: this one writes a file
+    /// per window under the user's configuration directory, and an app that is not the live entry point
+    /// has no business creating those. It is also what keeps the demo scene honest — a
+    /// <c>--demo-config</c> snapshot would otherwise restore <em>your</em> panes into the demo's.
+    /// </param>
     public SharpMUTermApp(
         AppConfiguration config,
         TerminalCapabilities capabilities,
@@ -379,11 +395,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         TimeProvider? time = null,
         ClientDiagnostics? diagnostics = null,
         Action<AppConfiguration>? save = null,
-        string? logRoot = null)
+        string? logRoot = null,
+        RestoreLog? restore = null)
     {
         _config = config;
         _save = save;
         _logRoot = string.IsNullOrWhiteSpace(logRoot) ? null : logRoot;
+        _restore = restore;
         _capabilities = capabilities;
         _time = time ?? TimeProvider.System;
         _diagnostics = diagnostics ?? ClientDiagnostics.InMemory();
@@ -563,6 +581,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // desktop cells, which is exactly what a drag between panes needs.
         _system.ConsoleDriver.MouseEvent += OnDriverMouseEvent;
         RegisterGlobalShortcuts();
+
+        // Before the window is shown, so the first frame already has the panes' previous content in
+        // them — a pane that filled itself in a frame or two later would read as a glitch, and this is
+        // also the last moment at which no live line has arrived to be restored *above*.
+        RestorePreviousSession();
         _system.AddWindow(_window);
     }
 
@@ -1205,6 +1228,101 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
+    /// Refills every pane with what it was showing when the client last ran, and marks where that ends.
+    /// <para>
+    /// <b>It is the content half of <see cref="ResumeOrNew"/>.</b> That rebuilds the workspace — which
+    /// windows exist, which pane each sits in, which was focused — from
+    /// <see cref="AppConfiguration.LastSession"/>; this refills those windows from the restore log,
+    /// keyed by the same window ids. Both halves are needed and neither implies the other: a client that
+    /// resumed its layout and showed every pane empty is what the whole feature is about.
+    /// </para>
+    /// <para>
+    /// <b>The two halves are joined loosely, on purpose.</b> A window in the log that the saved
+    /// workspace no longer holds — a spawn window whose pane was closed — is still buffered, because
+    /// <see cref="_lines"/> is keyed by window and not by anything the workspace has to agree with; if
+    /// that channel speaks again its pane reopens with its history already in it
+    /// (<see cref="PaneContentFor"/>). A window in the saved workspace with no log simply starts empty.
+    /// Neither is an error and neither throws, which is the property that matters most here: this runs
+    /// before the first frame, and a client that will not start because of a cache of old chat lines
+    /// would be a worse client than one that starts with an empty pane.
+    /// </para>
+    /// <para>
+    /// <b>Nothing restored is written back.</b> The log is fed from <see cref="OnLine"/> and
+    /// <see cref="OnSpawnLine"/> — the two places a <em>world's</em> output reaches a pane — and this
+    /// replay goes straight to <see cref="AppendWindowLine"/>, so a restart cannot echo its own history
+    /// into the log and double every pane.
+    /// </para>
+    /// </summary>
+    private void RestorePreviousSession()
+    {
+        if (_restore is null || !_config.RestoreLog.Enabled)
+        {
+            return;
+        }
+
+        var restoredWindows = 0;
+        var restoredLines = 0;
+        foreach (var window in _restore.Read())
+        {
+            // A character who opted out gets their content dropped rather than merely un-drawn: an
+            // opt-out that left the last session's text lying in the config directory would be
+            // answering a different question from the one it was asked.
+            if (!RestoreLogWanted(_workspace.FindWindow(window.WindowId)?.SessionKey))
+            {
+                _restore.Forget(window.WindowId);
+                continue;
+            }
+
+            if (window.Lines.Count == 0)
+            {
+                continue;
+            }
+
+            foreach (var line in window.Lines)
+            {
+                AppendWindowLine(window.WindowId, _formatter.ToMarkup(line.Line), line.Stamp);
+            }
+
+            // The boundary marker carries no stamp: it did not arrive, it was drawn, and a timestamp
+            // gutter beside it would be claiming a time for a row the game never sent.
+            AppendWindowLine(
+                window.WindowId,
+                RestoreBarRenderer.Bar(window.Lines.Count, window.LastWritten, FrozenAccentHex()));
+
+            restoredWindows++;
+            restoredLines += window.Lines.Count;
+        }
+
+        if (restoredWindows == 0)
+        {
+            return;
+        }
+
+        _diagnostics.Logger.LogInformation(
+            "Restored {Lines} line(s) into {Windows} pane(s) from the previous session",
+            restoredLines,
+            restoredWindows);
+    }
+
+    /// <summary>
+    /// Whether a window owned by <paramref name="sessionKey"/> takes part in the restore log. An
+    /// unowned window — the main window before any session adopts it, the web view — is allowed: no
+    /// character has said otherwise, and the app-wide switch is checked by the caller.
+    /// </summary>
+    private bool RestoreLogWanted(string? sessionKey) =>
+        sessionKey is null || CharacterFor(sessionKey)?.Logging.RestoreLog != false;
+
+    /// <summary>
+    /// The configured character behind a <c>world.character</c> session key, or null when the key names
+    /// no character this configuration still holds (an anonymous connection, or one whose character has
+    /// since been renamed or deleted).
+    /// </summary>
+    private CharacterDefinition? CharacterFor(string sessionKey) => _config.Worlds
+        .SelectMany(world => world.Characters.Select(character => (Key: $"{world.Name}.{character.Name}", character)))
+        .FirstOrDefault(pair => string.Equals(pair.Key, sessionKey, StringComparison.Ordinal))
+        .character;
+
+    /// <summary>
     /// Sets the demo's focused/connected character from the resumed config (snapshot chrome). It asks
     /// <see cref="StartupConnections"/> rather than reaching for the first world's first character,
     /// because that is now what a launch actually does — and the demo faking a connection the live
@@ -1503,7 +1621,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             AppendWindowLine(windowId, _formatter.ToMarkup(line));
         }
 
-        session.LinePrinted += (_, line) => OnUi(() => OnLine(windowId, line));
+        session.LinePrinted += (_, line) => OnUi(() => OnLine(session, windowId, line));
         session.PromptChanged += (_, _) => OnUi(UpdateStatus);
 
         // Every connect reports the automation it is running — see ReportAutomation. Hung off the state
@@ -1781,6 +1899,46 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
+    /// Records one of a world's lines in the restore log, so the pane it landed in comes back holding
+    /// it next launch.
+    /// <para>
+    /// It is called from <see cref="OnLine"/> and <see cref="OnSpawnLine"/> and from nowhere else, and
+    /// deliberately <em>not</em> from <see cref="AppendWindowLine"/> even though that is the seam every
+    /// line goes through. Two reasons, and both are bugs avoided rather than tidiness. That seam also
+    /// carries the client's own chrome — <c>/graphics</c>, <c>/triggers</c>, the restore bar itself —
+    /// which is not session content and has no business surviving into a later run. And it carries the
+    /// restore <em>replay</em>, so logging there would have each launch re-record its own history and
+    /// double every pane against the bound.
+    /// </para>
+    /// <para>
+    /// The <see cref="StyledLine"/> is what is stored rather than the markup it was rendered to, because
+    /// markup is the theme's answer and not the world's: a line logged as markup would come back frozen
+    /// in whatever colours were configured the day it arrived, and would have lost the palette indices,
+    /// the rule colour and each span's interaction on the way (see <see cref="StyledLineCodec"/>).
+    /// </para>
+    /// </summary>
+    private void RecordForRestore(WorldSession session, string windowId, string title, StyledLine line, string? stamp)
+    {
+        if (_restore is null || !_config.RestoreLog.Enabled)
+        {
+            return;
+        }
+
+        // Read off the session rather than the window's recorded owner: it is the character whose line
+        // this is, it cannot be stale, and a session with no character (a host typed on the command
+        // line) has nobody to have opted out.
+        if (session.Character?.Logging.RestoreLog == false)
+        {
+            return;
+        }
+
+        _restore.Append(windowId, title, line, stamp);
+    }
+
+    /// <summary>A window's title, or its id when the workspace does not (yet) know it.</summary>
+    private string WindowTitle(string windowId) => _workspace.FindWindow(windowId)?.Title ?? windowId;
+
+    /// <summary>
     /// Puts <paramref name="count"/> lines of a window's buffer, starting at <paramref name="from"/>,
     /// into one output control.
     /// <para>
@@ -1895,9 +2053,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// badge is the only thing that could tell them.
     /// </para>
     /// </summary>
-    private void OnLine(string windowId, StyledLine line)
+    private void OnLine(WorldSession session, string windowId, StyledLine line)
     {
-        AppendWindowLine(windowId, _formatter.ToMarkup(line), StampNow());
+        var stamp = StampNow();
+        AppendWindowLine(windowId, _formatter.ToMarkup(line), stamp);
+        RecordForRestore(session, windowId, WindowTitle(windowId), line, stamp);
 
         if (!_workspace.IsCaughtUp(windowId))
         {
@@ -1930,7 +2090,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // the *main window's* title, which is a different session's name as soon as more than one is open.
         window.OwnerLabel ??= SessionTitle(session);
         PaneContentFor(window.Id, window.Title); // ensure the live control exists before buffering
-        AppendWindowLine(window.Id, _formatter.ToMarkup(line), StampNow());
+
+        // The restore log is fed here as well as in OnLine, and that is the crux of the whole feature:
+        // a spawn window's content never reaches WorldSession.Scrollback, so a restore built on session
+        // scrollback would bring the main windows back and leave every channel pane empty.
+        var stamp = StampNow();
+        AppendWindowLine(window.Id, _formatter.ToMarkup(line), stamp);
+        RecordForRestore(session, window.Id, window.Title, line, stamp);
 
         // A first-seen spawn adds a tab to its pane, so rebuild; otherwise just refresh badges.
         if (existed)
@@ -4460,6 +4626,9 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             case "term:messages":
                 _messageLog.Toggle();
                 return true;
+            case "term:restore-purge":
+                PurgeRestoreLog();
+                return true;
             case "term:history":
                 ToggleHistorySearch();
                 return true;
@@ -4647,6 +4816,34 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <c>*** Logging to …</c> over a client that opened no file is the defect this gate exists to stop.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// ⌃P ▸ <c>Purge the restore log</c>: deletes every window's saved content, now.
+    /// <para>
+    /// It is "forget what is on disk", not "switch the feature off" — a pane that goes on printing
+    /// starts a fresh file on its next line, and the standing preference is F9's per-character
+    /// <c>restore</c> row. Nor does it blank the panes: what has already been drawn is on your screen
+    /// and clearing it would be answering a question nobody asked, while leaving it would be leaving a
+    /// file. The count comes back so the entry reports what it actually did rather than claiming
+    /// success at nothing, which is the difference between a purge and a placebo.
+    /// </para>
+    /// </summary>
+    private void PurgeRestoreLog()
+    {
+        if (_restore is null)
+        {
+            RefuseCommand("nothing to purge — this client owns no restore log");
+            return;
+        }
+
+        var removed = _restore.Purge();
+        Notice(
+            removed == 0
+                ? "restore log purged — there was nothing saved"
+                : $"restore log purged — {removed} window{(removed == 1 ? string.Empty : "s")} forgotten",
+            MessageSeverity.Info,
+            "⌃P");
+    }
+
     private void StartLogging()
     {
         if (_logRoot is null)
@@ -5191,7 +5388,18 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         return control;
     }
 
-    /// <summary>The content control for a window, created (with link routing) on first use.</summary>
+    /// <summary>
+    /// The content control for a window, created (with link routing) on first use — and filled from
+    /// that window's line buffer if one is already there.
+    /// <para>
+    /// The fill is what makes a control and its buffer the same thing at every moment rather than only
+    /// after the next re-feed. It matters because a buffer can now outlive every control for its window
+    /// and predate the first one: the restore log fills <see cref="_lines"/> for a window the saved
+    /// workspace no longer holds, and the control only comes into being later, when a capture reopens
+    /// that spawn window. Without this the pane would open holding one line — the one that reopened it
+    /// — with its restored history sitting invisibly in the buffer behind it.
+    /// </para>
+    /// </summary>
     private MarkupControl PaneContentFor(string id, string title)
     {
         if (_panes.TryGetValue(id, out var existing))
@@ -5202,6 +5410,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         var control = new MarkupControl(new List<string>());
         control.LinkClicked += (_, e) => OnLinkClicked(id, e.Url);
         _panes[id] = control;
+
+        if (_lines.TryGetValue(id, out var buffer) && buffer.Count > 0)
+        {
+            FeedRange(control, buffer, 0, buffer.Count);
+        }
+
         return control;
     }
 

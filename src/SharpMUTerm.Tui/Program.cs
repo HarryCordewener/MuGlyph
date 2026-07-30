@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using SharpMUTerm.Core.Configuration;
+using SharpMUTerm.Core.Text;
 using SharpMUTerm.Graphics;
 using SharpConsoleUI.Drivers;
 
@@ -91,12 +92,27 @@ internal static class Program
             loadLogger.LogWarning("{Notice}", notice);
         }
 
+        // The panes' own memory between runs, beside the configuration whose LastSession says where each
+        // pane goes. Resolved here for the same reason logRoot is: only this code knows it is the live
+        // client, so only it hands over a directory to write in. It is created unconditionally even when
+        // the feature is off — constructing one touches no disk, and the ⌃P purge has to be able to
+        // clear what an earlier, enabled run left behind.
+        using var restore = new RestoreLog(
+            string.IsNullOrWhiteSpace(config.RestoreLog.Directory)
+                ? RestoreLog.DefaultRoot(ConfigurationStore.DefaultPath)
+                : config.RestoreLog.Directory!,
+            config.RestoreLog)
+        {
+            Logger = diagnostics.For("SharpMUTerm.RestoreLog"),
+        };
+
         var liveApp = new SharpMUTermApp(
             config,
             capabilities,
             diagnostics: diagnostics,
             save: saved => ConfigurationStore.Save(ConfigurationStore.DefaultPath, saved),
-            logRoot: logRoot);
+            logRoot: logRoot,
+            restore: restore);
         var exitCode = liveApp.Run(startup); // blocks on the SharpConsoleUI main loop until exit
 
         // Persist the workspace so the next launch resumes where this one left off.

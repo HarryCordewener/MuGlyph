@@ -100,6 +100,16 @@ internal static class WorldsScreenRenderer
     internal const int LogDirectoryField = 6;
 
     /// <summary>
+    /// <see cref="LoggingSettings.RestoreLog"/> — whether this character's panes come back holding their
+    /// previous session's content. Appended after the two log rows rather than inserted among them,
+    /// because it is the third answer to "what does this client write down about me" and reads in that
+    /// order: what a transcript is, where it goes, and then whether the panes remember. It is a field
+    /// and not a toggle for the same reason <see cref="StartupField"/> is — a character row draws no
+    /// checkbox, so a value on the row's toggle would have no affordance at all.
+    /// </summary>
+    internal const int RestoreLogField = 7;
+
+    /// <summary>
     /// The trigger-set row's field ordinals. A set's name leads, as every list row's does — and here it
     /// is more than a label: a character opts into automation <em>by name</em>, so renaming a set is a
     /// change with consequences elsewhere in the configuration (see <see cref="RenameSet"/>).
@@ -283,6 +293,33 @@ internal static class WorldsScreenRenderer
     private static readonly string[] StartupChoices = { StartupOn, StartupOff };
 
     /// <summary>
+    /// The row for <see cref="LoggingSettings.RestoreLog"/>. It says <c>restore</c> and not "restore
+    /// log", because the two rows above it already carry the word <c>log</c> and mean the transcript by
+    /// it; a third row wearing it would read as a third transcript setting, which is exactly what this
+    /// is not. The note beside it is what carries the meaning.
+    /// </summary>
+    internal const string RestoreLabel = "restore";
+
+    /// <summary>
+    /// What the <c>restore</c> row says it does. Short because the CHARACTER panel is 48 cells and
+    /// <c>CharField</c> has already spent fourteen of them on the indent and the label column — the
+    /// same budget <see cref="StartupLabel"/> and <see cref="StorageNote"/> are written to, and the one
+    /// a longer sentence here quietly overran until <c>ScreenReadOnlyTests</c> caught it.
+    /// </summary>
+    internal const string RestoreNote = "panes refill after a restart";
+
+    /// <summary>The default: the panes come back.</summary>
+    internal const string RestoreOn = "on";
+
+    /// <summary>
+    /// Opted out. It reads <c>off</c> to match <c>at start</c> and the world's <c>keepalive</c> row —
+    /// the screen's other "this feature is simply not on" values — and is drawn in the same muted ink.
+    /// </summary>
+    internal const string RestoreOff = "off";
+
+    private static readonly string[] RestoreChoices = { RestoreOn, RestoreOff };
+
+    /// <summary>
     /// The screen's four navigable panes, in ⇥ order: the WORLDS list (no checkbox on a world's row,
     /// but ⏎ opens the world's own fields — the ones the detail column lists), the selected world's
     /// characters (no checkbox on a character's row either — ⏎ edits its name, password, connect line,
@@ -367,7 +404,12 @@ internal static class WorldsScreenRenderer
                     v => c.ConnectAtStartup = string.Equals(v, StartupOn, StringComparison.OrdinalIgnoreCase),
                     StartupChoices),
                 ScreenField.Enumeration("log", () => c.Logging.Format, v => c.Logging.Format = v),
-                ScreenField.Optional("log folder", () => c.Logging.Directory, v => c.Logging.Directory = v)))
+                ScreenField.Optional("log folder", () => c.Logging.Directory, v => c.Logging.Directory = v),
+                ScreenField.Choice(
+                    RestoreLabel,
+                    () => c.Logging.RestoreLog ? RestoreOn : RestoreOff,
+                    v => c.Logging.RestoreLog = string.Equals(v, RestoreOn, StringComparison.OrdinalIgnoreCase),
+                    RestoreChoices)))
                 .Concat(CharacterButtons(world, selectedCharacter))
                 .ToArray();
 
@@ -879,9 +921,10 @@ internal static class WorldsScreenRenderer
     /// <summary>
     /// The character form — labels left-aligned with their values, one field per row. The editable ones
     /// are the character row's own fields (name, password, connect line, on-connect, <c>at start</c>,
-    /// then the two log values) and are the only seven drawn in a field well. The other two deliberately
-    /// are not: <c>login</c> is <em>derived</em> from the fields above it and there is nothing there to
-    /// set, and the session line is a report of what the connection is doing rather than a setting.
+    /// the two log values, then <c>restore</c>) and are the only eight drawn in a field well. The other
+    /// two deliberately are not: <c>login</c> is <em>derived</em> from the fields above it and there is
+    /// nothing there to set, and the session line is a report of what the connection is doing rather
+    /// than a setting.
     /// <para>
     /// <b>A row here draws no checkbox at all</b> (<see cref="CharacterRow"/>), so every settable thing
     /// about a character is a field on this form and there is nothing Space can reach. That used not to
@@ -977,12 +1020,22 @@ internal static class WorldsScreenRenderer
                 selectedCharacter,
                 LogDirectoryField,
                 pane: CharactersPane)),
+            CharField(RestoreLabel, Field(
+                character.Logging.RestoreLog
+                    ? $"[{Value}]{RestoreOn}[/]"
+                    : $"[{Label}]{RestoreOff}[/]",
+                cursor,
+                selectedCharacter,
+                RestoreLogField,
+                pane: CharactersPane)),
+            CharField(string.Empty, $"[{Label}]{RestoreNote}[/]"),
         };
 
-        // The log format is the second-to-last row of this block, so its list is drawn upward — the one
-        // case on these screens where a downward list would have nowhere to go. The block's height is a
-        // grid row in WorldsScreenView, which is the other half of why the list overlays rather than
-        // pushes: growing this list would resize the pane and shove the whole screen about.
+        // The log format and `restore` both sit near the foot of this block, so their lists are drawn
+        // upward — the one place on these screens where a downward list would have nowhere to go, and
+        // Choices picks the direction from the room it has rather than being told. The block's height
+        // is a grid row in WorldsScreenView, which is the other half of why a list overlays rather than
+        // pushes: growing one would resize the pane and shove the whole screen about.
         return ScreenChrome.Choices(form, cursor.Edit, CharDetailColumnWidth);
     }
 
