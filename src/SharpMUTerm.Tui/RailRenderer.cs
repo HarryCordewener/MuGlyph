@@ -1,4 +1,3 @@
-using System.Globalization;
 using SharpConsoleUI.Parsing;
 using SharpMUTerm.Core.Text;
 using SharpMUTerm.Core.Workspaces;
@@ -161,11 +160,12 @@ internal static class RailRenderer
     /// </summary>
     private const int UnsentFieldWidth = 2;
 
-    /// <summary>Cells kept for an unread count, blank when there is none. See <see cref="UnreadField"/>.</summary>
-    private const int UnreadFieldWidth = 3;
-
-    /// <summary>The largest count drawn in full; above it the badge reads <c>99+</c> and stops growing.</summary>
-    private const int MaxUnread = 99;
+    /// <summary>
+    /// Cells kept for an unread count, blank when there is none. See <see cref="UnreadField"/>. It is
+    /// <see cref="UnreadBadge.FieldWidth"/> because the badge's own cap is what makes the field finite —
+    /// the two numbers are one fact and may not be written down twice.
+    /// </summary>
+    private const int UnreadFieldWidth = UnreadBadge.FieldWidth;
 
     /// <summary>The pen, or the same width in blanks. See <see cref="UnsentFieldWidth"/>.</summary>
     private static string Unsent(bool unsent) =>
@@ -176,16 +176,17 @@ internal static class RailRenderer
     /// the pen is (<see cref="UnsentFieldWidth"/>) and with more urgency: unread arrives <em>unbidden from
     /// the wire</em>, so an unreserved badge resizes the sidebar — and every connected server's idea of its
     /// terminal — on a line of output the reader did not ask for, and again at 9 → 10 when it takes a
-    /// second digit. The cap is what makes the field finite: a count past <see cref="MaxUnread"/> reads
-    /// <c>99+</c>, which is the same three cells and the same information at a glance.
+    /// second digit. The cap is what makes the field finite: a count past <see cref="UnreadBadge.Max"/>
+    /// reads <c>99+</c>, which is the same three cells and the same information at a glance.
+    /// <para>
+    /// Both the wording and the colour come from <see cref="UnreadBadge"/>, which the pane tab labels draw
+    /// from as well, so the sidebar and the strip cannot come to say different things about one count.
+    /// </para>
     /// </summary>
     private static string UnreadField(int unread) =>
         unread <= 0
             ? new string(' ', UnreadFieldWidth)
-            : $"[#00f5b7]{Badge(unread).PadLeft(UnreadFieldWidth)}[/]";
-
-    private static string Badge(int unread) =>
-        unread > MaxUnread ? $"{MaxUnread}+" : unread.ToString(CultureInfo.InvariantCulture);
+            : $"[{UnreadBadge.Tint}]{UnreadBadge.Format(unread).PadLeft(UnreadFieldWidth)}[/]";
 
     /// <summary>
     /// A window row: what the window is, then — when there is anything to say — where it is.

@@ -380,6 +380,38 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   `FocusIndicationTests.TypingDoesNotMoveAnyPaneRectangle` are the pins — the latter is the typing
   counterpart of `MovingFocusDoesNotMoveAnyPaneRectangle`, and it has to read the rail's *widest* row,
   because in the demo scene the Chat row's unread badge coincidentally masked the pen's two cells.
+- **A tab title is *markup*, and that is what makes the new-activity tint free.** `TabControl.Rendering`
+  parses each label with `MarkupParser.Parse`, and every width it is measured by — the header paint, the
+  strip's desired width, and the click hit test that picks the tab and its `×` — is
+  `MarkupParser.StripLength`. So a `[#rrggbb]` tag on a tab costs **no cells** and moves no hit test.
+  `TabTitles` claimed the opposite for as long as it existed, and the claim had two costs: the unread
+  count went out untinted, and a window title was never escaped — a window called `[Chat]`, or a web view
+  titled from the page it loaded, had that eaten as a tag by the parser *and* by the hit test. Titles are
+  `MarkupText.Escape`d now. The tint covers the name and the count only; the `▌` stays outside it, because
+  focus and activity are independent facts and a marker that changed colour on an incoming line would be
+  reporting the wrong one. **The two cues are different channels on purpose** — focus is said entirely in
+  *backgrounds* from the theme's chrome family, activity in a *foreground* no plane is painted in.
+- **One unread count, one spelling: `UnreadBadge`.** The sidebar and the tab strip are two views of
+  `WorkspaceWindow.Unread`, and they had two formatters — the rail capped at `99+`, the tab printed the
+  raw integer, so a busy channel read `99+` in one place and `(4127)` in the other. Cap, field width and
+  tint colour (the app accent, previously a `#00f5b7` literal in `RailRenderer`) now live in one type.
+  **The tab strip deliberately does *not* get the rail's reserved-width treatment**, and the asymmetry is
+  real rather than an oversight: a rail row's width sizes the sidebar's grid column and the pane area is
+  what is left over, so there a badge that appears narrows every pane; a tab strip is a `TabControl`
+  arranged `Fill`+`Stretch` inside the pane it already fills, and the framework pads the header row out to
+  the pane's own edge, so a longer label only shifts the tabs beside it. Reserving three cells per tab
+  would cost width on every strip for ever to prevent a reflow this layout cannot produce. The cap is kept
+  for the *other* two reasons: the two surfaces must agree, and an unbounded count must not push a narrow
+  pane's later tabs off the end. `TabActivityIndicatorTests.ActivityMovesNoPaneRectangle` is the pin.
+- **The status row's scrollback distance was the same bug one field over, and it was live.** That segment
+  counts lines below the viewport — a number that grows *unbidden from the wire* while a reader sits in
+  their scrollback — and it was written out raw. Its own comment already warned that a wordier phrasing
+  had once wrapped the row and that "a status line that grows a row takes one off the workspace"; the
+  number was never guarded. At 80 columns the 99 → 100 step took the row from 80 cells to 81, it wrapped,
+  every pane lost a row, and per-pane NAWS re-announced the new size to every connected server. It is now
+  in a reserved field capped by `UnreadBadge`, the same as the rail's. **The lesson generalises: any cell
+  on the chrome whose width is a function of something arriving from the wire needs a reserved field, and
+  "it is only one digit" is exactly the size of every instance of this bug so far.**
 - **A rail window row is `what` then `where`, and neither column may wear the other's word.** A
   character's own session window reads `main` (`RailWindowLabel`); its title names the *connection*, which
   the row's own ancestors — its character, under its world — have already said. The hosting-pane column
