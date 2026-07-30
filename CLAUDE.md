@@ -578,10 +578,21 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   cooperative server agrees, but used regardless of what it says. Four things about this library will
   bite you, and all four already have:
   - **`TelnetInterpreter.CurrentEncoding` defaults to `Encoding.ASCII`**, and that default is not inert:
-    it is handed to `CallbackOnByteAsync`/`CallbackOnSubmitAsync` for every byte and used for GMCP/MSDP/
-    MSSP and everything we send. On a server that never negotiates CHARSET — most MU\* servers — every
+    it is handed to `CallbackOnByteAsync`/`CallbackOnSubmitAsync` for every byte and used for GMCP, MSDP
+    and everything we send. On a server that never negotiates CHARSET — most MU\* servers — every
     byte above 0x7F became `?`. `TelnetSession` seeds that property (reflectively, `internal set`, the
     same way `CharsetProtocol` itself writes it) with the head of the stated order.
+    **MSSP is the exception, and the seed does not reach it.** `MSSPProtocol.FlushField` decodes every
+    MSSP name and value with a hardcoded `Encoding.ASCII` (at 2.6.0 the same call was inlined at four
+    sites), so a game whose `NAME` is `Café Noir` reports `Caf? Noir` no matter what CHARSET settled on
+    and no matter what we seed. The bytes are gone by the time any callback sees them. This is arguably
+    *conformant* — RFC 2066 scopes CHARSET to text, not commands, and a subnegotiation is a command —
+    but it is lossy where it need not be, since `Encoding.Latin1` would round-trip all 256 byte values
+    and cost nothing. It is a good upstream PR, and until it lands, treat non-ASCII in an MSSP field as
+    unrecoverable. Two consequences worth knowing: the plaintext `MSSP-REQUEST` fallback does **not**
+    go through `MSSPProtocol`, so the same server read the two ways disagrees byte for byte; and 2.6.0
+    additionally `ToUpper()`s variable names with the *current culture*, which is a Turkish-I hazard in
+    the same lines.
   - **The encodings we state must be the platform provider's own instances** (`Encoding.UTF8`, *not*
     `new UTF8Encoding(false)`). `CharsetProtocol` ranks a server's offer by `IndexOf` over our list
     against encodings from `Encoding.GetEncodings()`, and `UTF8Encoding.Equals` compares the BOM flag —
