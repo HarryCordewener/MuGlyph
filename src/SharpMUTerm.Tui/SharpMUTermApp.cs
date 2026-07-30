@@ -1526,7 +1526,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 UpdateStatus();
             }
         });
-        session.SpawnLine += (_, e) => OnUi(() => OnSpawnLine(session, e.Target, e.Line));
+        session.SpawnLine += (_, e) => OnUi(() => OnSpawnLine(session, e.Target, e.Pattern, e.Line));
 
         // The status row's encoding cell is live, so it has to be repainted when the thing it reports
         // changes. WorldSession has already put the change in the client message log by the time this
@@ -1886,12 +1886,6 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
     }
 
-    /// <summary>The trigger pattern that routes to a spawn <paramref name="target"/>, for its capture line.</summary>
-    private string? CaptureFor(string target) =>
-        _config.TriggerSets.SelectMany(s => s.Triggers)
-            .FirstOrDefault(t => string.Equals(t.Actions.SpawnTarget, target, StringComparison.Ordinal))
-            ?.Pattern;
-
     /// <summary>
     /// Appends a line to a window's pane and badges it unread when the reader cannot see where it landed.
     /// <para>
@@ -1922,11 +1916,16 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// which world a link clicked in a spawn window sends to by it.
     /// </para>
     /// </summary>
-    private void OnSpawnLine(WorldSession session, string target, StyledLine line)
+    private void OnSpawnLine(WorldSession session, string target, string pattern, StyledLine line)
     {
         var existed = _workspace.FindWindow(Workspace.SpawnWindowId(target)) is not null;
         var window = _workspace.RouteSpawn(target, session.SessionKey);
-        window.CapturePattern ??= CaptureFor(target); // label the pane with the trigger that feeds it
+
+        // Label the pane with the rule that feeds it. The pattern comes with the line rather than being
+        // looked up from the target: a route of "Channel $1" resolves to a different name every time, so
+        // finding the rule by comparing its SpawnTarget to this window's name would find nothing.
+        window.CapturePattern ??= pattern;
+
         // Its owner's own name, which for a session with no character is its world's. It used to fall back on
         // the *main window's* title, which is a different session's name as soon as more than one is open.
         window.OwnerLabel ??= SessionTitle(session);

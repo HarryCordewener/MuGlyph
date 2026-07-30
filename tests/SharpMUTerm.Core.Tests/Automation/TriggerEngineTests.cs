@@ -77,7 +77,101 @@ public class TriggerEngineTests
         var engine = new TriggerEngine();
         engine.Add(new Trigger { Pattern = "chat", Actions = new TriggerActions { SpawnTarget = "Chat" } });
         var result = engine.Process(Line("[chat] hi"));
-        await Assert.That(result.SpawnTargets).Contains("Chat");
+        await Assert.That(result.SpawnTargets.Select(s => s.Target)).Contains("Chat");
+    }
+
+    /// <summary>
+    /// <b>One rule, a pane per channel.</b> The route expands <c>$1</c> like rewrite and respond always
+    /// have, so <c>^&lt;(.+?)&gt;</c> routing to <c>Channel $1</c> sends each channel's lines to its own
+    /// window. Without this a rule can only ever feed one statically-named pane, and a client with a
+    /// hundred channels needs a hundred near-identical rules.
+    /// </summary>
+    [Test]
+    [Arguments("<Public> Ann waves", "Channel Public")]
+    [Arguments("<Newbie> Bob asks", "Channel Newbie")]
+    [Arguments("<Admin Chat> Cal notes", "Channel Admin Chat")]
+    public async Task SpawnTarget_ExpandsCaptureGroups(string line, string expected)
+    {
+        var engine = new TriggerEngine();
+        engine.Add(new Trigger
+        {
+            Pattern = "^<(.+?)>",
+            Actions = new TriggerActions { SpawnTarget = "Channel $1" },
+        });
+
+        var result = engine.Process(Line(line));
+
+        await Assert.That(result.SpawnTargets.Select(s => s.Target)).Contains(expected);
+    }
+
+    /// <summary>
+    /// The rule's pattern rides with the route, because the destination no longer identifies the rule:
+    /// <c>Channel $1</c> resolves to a different name every time, so a consumer looking the rule up by
+    /// comparing it to the window's name would find nothing for any dynamic pane.
+    /// </summary>
+    [Test]
+    public async Task SpawnRoute_CarriesThePatternOfTheRuleThatRoutedIt()
+    {
+        var engine = new TriggerEngine();
+        engine.Add(new Trigger
+        {
+            Pattern = "^<(.+?)>",
+            Actions = new TriggerActions { SpawnTarget = "Channel $1" },
+        });
+
+        var result = engine.Process(Line("<Public> Ann waves"));
+
+        await Assert.That(result.SpawnTargets.Single().Pattern).IsEqualTo("^<(.+?)>");
+    }
+
+    /// <summary>
+    /// A resolved name becomes a window id, a tab title and a sidebar row, built out of whatever the
+    /// server sent — so unlike a rewrite (text on a line) it is refused when it cannot be a name. The
+    /// line still prints; it is simply not routed.
+    /// </summary>
+    [Test]
+    [Arguments("<> hi", "$1", "an empty capture cannot name a window")]
+    [Arguments("<   > hi", "$1", "a capture of nothing but spaces cannot name a window either")]
+    [Arguments("<[31m> hi", "Channel $1", "a capture carrying a control character would corrupt every surface that draws it")]
+    [Arguments("<Public> hi", "$3", "a template naming a group the pattern does not have is malformed")]
+    [Arguments("<Public> hi", "Channel $2", "Regex.Result leaves an out-of-range group reference as literal text, so without a guard this opens a pane named \"Channel $2\"")]
+    public async Task SpawnTarget_ThatCannotNameAWindow_IsNotRouted(string line, string template, string because)
+    {
+        var engine = new TriggerEngine();
+        engine.Add(new Trigger { Pattern = "^<(.*?)>", Actions = new TriggerActions { SpawnTarget = template } });
+
+        var result = engine.Process(Line(line));
+
+        await Assert.That(result.SpawnTargets).IsEmpty().Because(because);
+    }
+
+    /// <summary>A capture longer than a name has any business being does not open a pane.</summary>
+    [Test]
+    public async Task SpawnTarget_LongerThanTheCeiling_IsNotRouted()
+    {
+        var engine = new TriggerEngine();
+        engine.Add(new Trigger { Pattern = "^<(.*?)>", Actions = new TriggerActions { SpawnTarget = "$1" } });
+
+        var atTheCeiling = new string('a', TriggerEngine.MaxTargetLength);
+        var overIt = new string('a', TriggerEngine.MaxTargetLength + 1);
+
+        await Assert.That(engine.Process(Line($"<{atTheCeiling}> hi")).SpawnTargets).IsNotEmpty();
+        await Assert.That(engine.Process(Line($"<{overIt}> hi")).SpawnTargets).IsEmpty();
+    }
+
+    /// <summary>
+    /// A route with no <c>$</c> in it is unchanged — the overwhelmingly common case, and the one every
+    /// existing configuration is written in.
+    /// </summary>
+    [Test]
+    public async Task SpawnTarget_WithoutCaptures_IsUnchanged()
+    {
+        var engine = new TriggerEngine();
+        engine.Add(new Trigger { Pattern = "^<(.+?)>", Actions = new TriggerActions { SpawnTarget = "Chat" } });
+
+        var result = engine.Process(Line("<Public> Ann waves"));
+
+        await Assert.That(result.SpawnTargets.Single().Target).IsEqualTo("Chat");
     }
 
     [Test]
