@@ -400,6 +400,132 @@ public class FocusIndicationTests
     }
 
     /// <summary>
+    /// <b>Typing moves no pane rectangle either.</b> The counterpart of
+    /// <see cref="MovingFocusDoesNotMoveAnyPaneRectangle"/>, and the one that was missing: the rail's
+    /// unsent-draft pen was a conditional one-to-two cells, the sidebar's width is its widest row's, and
+    /// the pane area is what is left over — so the <em>first keystroke</em> of every line widened the
+    /// sidebar, narrowed every pane and re-announced a new terminal size to every connected server. A
+    /// reader watching a game reflow as they started to type was watching this.
+    /// <para>
+    /// Both edges are checked, because either one alone can hide a fix that only pads in one direction:
+    /// the draft going out (⌃U on the demo's seeded line) and the draft coming back (the next character).
+    /// </para>
+    /// </summary>
+    [Test]
+    [Arguments(160, 48)]
+    [Arguments(120, 34)]
+    [Arguments(100, 24)]
+    [Arguments(80, 20)]
+    public async Task TypingDoesNotMoveAnyPaneRectangle(int width, int height)
+    {
+        var app = App(width, height);
+        app.RenderSnapshot("split");
+        SettleTheRail(app);
+
+        Type(app, string.Empty); // ⌃E ⌃U — the seeded draft goes out and with it the ✎
+        app.RenderNextFrame();
+        await Assert.That(PenIsShowing(app)).IsFalse();
+
+        var before = app.PaneOutputRects().ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal);
+        var railBefore = app.RailColumnWidth;
+
+        app.SimulateKey(Plain('h', ConsoleKey.NoName)); // the first keystroke — the reported moment
+        app.RenderNextFrame();
+        await Assert.That(PenIsShowing(app)).IsTrue(); // the marker really did appear
+
+        await Assert.That(app.RailColumnWidth).IsEqualTo(railBefore); // the direct cause
+        foreach (var (paneId, rect) in before)
+        {
+            await Assert.That(app.PaneOutputRects()[paneId]).IsEqualTo(rect);
+        }
+
+        // And on out to a longer line, so it is the marker's presence being tested and not one glyph.
+        foreach (var c in "ello there")
+        {
+            app.SimulateKey(Plain(c, ConsoleKey.NoName));
+        }
+
+        app.RenderNextFrame();
+        await Assert.That(app.RailColumnWidth).IsEqualTo(railBefore);
+        foreach (var (paneId, rect) in before)
+        {
+            await Assert.That(app.PaneOutputRects()[paneId]).IsEqualTo(rect);
+        }
+    }
+
+    /// <summary>
+    /// Reads the spawn window's unread badge away, so the rail's widest row is the one the pen lands on.
+    /// <b>Without this the test passes on a broken client</b>: in the demo scene the Chat row's unread
+    /// count happens to make it exactly as wide as the main row becomes once the pen appears, so the
+    /// widest row — and therefore the sidebar's width — does not move even though the pen still costs two
+    /// cells. That coincidence is why no snapshot ever caught this. Activating a window clears its unread,
+    /// which is the ordinary way a reader gets there.
+    /// </summary>
+    private static void SettleTheRail(SharpMUTermApp app)
+    {
+        var spawn = app.WindowIds().Single(id => id.StartsWith("spawn:", StringComparison.Ordinal));
+        var main = app.ActiveWindowId();
+        app.SimulateWindowChange(spawn);
+        app.SimulateWindowChange(main);
+        app.RenderNextFrame();
+    }
+
+    /// <summary>
+    /// The same claim on the bytes: a connected world is not told a new size because someone started
+    /// typing. This is the consequence the rectangle test exists to prevent — a rail that widens on the
+    /// first keystroke re-reports the terminal size to every server and reflows their output.
+    /// <para>
+    /// Driven on a <see cref="ManualTimeProvider"/> and wound past the report interval, because the NAWS
+    /// throttle is four writes a second with a <em>trailing flush</em>: on a still clock a changed size is
+    /// coalesced and never delivered inside the test, so this passes on a broken client without the wind.
+    /// (It did. That is why the clock is here.)
+    /// </para>
+    /// </summary>
+    [Test]
+    public async Task TypingTellsNoServerANewSize()
+    {
+        Console.SetIn(TextReader.Null);
+        var clock = new ManualTimeProvider();
+        var app = new SharpMUTermApp(
+            DemoScene.Build(), Headless, new HeadlessConsoleDriver(120, 34), clock);
+        app.RenderSnapshot("split");
+
+        // Before the session is attached, because activating a window whose session this becomes would
+        // make it the active character — and the rail lists the *active* character's windows, so the very
+        // rows the pen lands on would stop being drawn and the test would have nothing left to catch.
+        SettleTheRail(app);
+        Type(app, string.Empty);
+
+        var telnet = new RecordingTelnetSession();
+        var session = new WorldSession(
+            new WorldDefinition { Name = "W", Host = "h", Port = 1 }, sessionFactory: _ => telnet);
+        await session.ConnectAsync();
+        app.AttachSession(session, "main");
+        app.RenderNextFrame();
+        clock.Advance(TimeSpan.FromSeconds(1));
+        app.RenderNextFrame();
+
+        var before = telnet.Sizes.Distinct().ToList();
+        await Assert.That(before).IsNotEmpty();
+
+        Type(app, "hello there");
+        app.RenderNextFrame();
+        clock.Advance(TimeSpan.FromSeconds(1));
+        app.RenderNextFrame();
+
+        await Assert.That(telnet.Sizes.Distinct().ToList()).IsEquivalentTo(before);
+    }
+
+    /// <summary>
+    /// Whether the unsent-draft pen is on any tab of the frame — the visible half of the state the rail
+    /// row carries, read off the strip the framework will draw rather than off a private field, so
+    /// <see cref="TypingDoesNotMoveAnyPaneRectangle"/> cannot pass by never toggling anything.
+    /// </summary>
+    private static bool PenIsShowing(SharpMUTermApp app) =>
+        app.PaneIds.Any(pane => app.PaneTabStrip(pane).Any(
+            tab => tab.Title.Contains(Glyphs.Draft, StringComparison.Ordinal)));
+
+    /// <summary>
     /// The same claim from the other end: a connected world is not told a new size because focus moved.
     /// This is the consequence the rectangle test exists to prevent, asserted on the bytes the server
     /// would actually receive.

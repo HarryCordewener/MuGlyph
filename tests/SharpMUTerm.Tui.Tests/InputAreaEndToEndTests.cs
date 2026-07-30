@@ -381,4 +381,106 @@ public class InputAreaEndToEndTests
         app.SimulateKey(Chord(ConsoleKey.B, ctrl: true));
         app.SimulateKey(new ConsoleKeyInfo('i', ConsoleKey.I, false, false, false));
     }
+
+    // --- where the caret is *painted* ---------------------------------------------------------
+
+    /// <summary>
+    /// <b>The caret sits on the cell after the last character it can see, on the row that character was
+    /// drawn on.</b> Asserted against the frame, through the cursor position the driver is handed — not
+    /// against <c>InputBarControl.GetLogicalCursorPosition</c>, which is the function a caret bug lives
+    /// in and which a test built on it would agree with while the screen disagreed.
+    /// <para>
+    /// The heights are the point. F8's <c>input height</c> changes <c>MinRows</c> at runtime, and the bar
+    /// is sticky-bottom, so growing it moves the row the text starts on — while the caret is computed
+    /// from the control's own idea of its box. The two derive that box from one place now
+    /// (<c>InputBarControl.Geometry</c>); this is what would notice if they stopped.
+    /// </para>
+    /// </summary>
+    [Test]
+    [Arguments(1, false)]
+    [Arguments(3, false)]
+    [Arguments(8, false)]
+    [Arguments(1, true)]
+    [Arguments(5, true)]
+    public async Task TheCaretIsPaintedOnTheRowTheTextIs(int rows, bool wrapped)
+    {
+        var (app, config) = Demo();
+        config.Input.Rows = 1;
+        app.SaveConfiguration();
+
+        // A sentinel the rest of the frame cannot contain, so "where the caret should be" is read off
+        // the painted cells rather than computed the way the code under test computes it.
+        Type(app, (wrapped ? new string('x', 260) : "ab") + Sentinel);
+        app.RenderNextFrame();
+        await Assert.That(CaretFollowsTheSentinel(app)).IsTrue();
+
+        config.Input.Rows = rows; // F8, live
+        app.SaveConfiguration();
+        app.RenderNextFrame();
+
+        await Assert.That(CaretFollowsTheSentinel(app)).IsTrue();
+    }
+
+    /// <summary>
+    /// Showing the second bar, cycling to it and back with ⇥ (which is what ⌃I arrives as — 0x09 is HT,
+    /// and the parser reports it with no Control bit), and hiding it again: at every step the painted
+    /// caret is on the bar that ⏎ sends from, at that bar's own prompt. The first cycle is checked
+    /// separately from the second because "initial switching" was reported as behaving differently.
+    /// </summary>
+    [Test]
+    public async Task TheCaretFollowsTheArmedBarThroughShowCycleAndHide()
+    {
+        var (app, _) = Demo();
+        Type(app, "ab" + Sentinel);
+        app.RenderNextFrame();
+        await Assert.That(CaretFollowsTheSentinel(app)).IsTrue();
+
+        ToggleSecondBar(app); // the second bar arms itself, empty, on its own row
+        await Assert.That(app.SecondBarArmed).IsTrue();
+        var second = CaretRow(app);
+        await Assert.That(second).IsGreaterThan(SentinelRow(app)); // below the primary, where it is drawn
+
+        app.SimulateKey(new ConsoleKeyInfo('\t', ConsoleKey.Tab, false, false, false)); // the first cycle
+        await Assert.That(app.SecondBarArmed).IsFalse();
+        await Assert.That(CaretFollowsTheSentinel(app)).IsTrue();
+
+        app.SimulateKey(new ConsoleKeyInfo('\t', ConsoleKey.Tab, false, false, false)); // and the next
+        await Assert.That(app.SecondBarArmed).IsTrue();
+        await Assert.That(CaretRow(app)).IsEqualTo(second);
+
+        ToggleSecondBar(app); // hidden: the caret comes back to the primary, on the row it is drawn on
+        await Assert.That(app.SecondBarShown).IsFalse();
+        await Assert.That(CaretFollowsTheSentinel(app)).IsTrue();
+    }
+
+    /// <summary>A character no other part of the frame draws, so its painted cell is unambiguous.</summary>
+    private const char Sentinel = '~';
+
+    /// <summary>Whether the terminal's caret is in the cell just after the sentinel's painted one.</summary>
+    private static bool CaretFollowsTheSentinel(SharpMUTermApp app)
+    {
+        var (visible, x, y) = app.CaretOnScreen();
+        var (row, column) = FindSentinel(app);
+        return visible && row >= 0 && y == row && x == column + 1;
+    }
+
+    private static int CaretRow(SharpMUTermApp app) => app.CaretOnScreen().Y;
+
+    private static int SentinelRow(SharpMUTermApp app) => FindSentinel(app).Row;
+
+    /// <summary>The cell the sentinel was painted in, decoded from a whole rendered frame.</summary>
+    private static (int Row, int Column) FindSentinel(SharpMUTermApp app)
+    {
+        var grid = FrameGrid.Decode(app.RenderWholeFrame(), Width, Height);
+        for (var row = grid.Count - 1; row >= 0; row--)
+        {
+            var column = grid[row].LastIndexOf(Sentinel);
+            if (column >= 0)
+            {
+                return (row, column);
+            }
+        }
+
+        return (-1, -1);
+    }
 }

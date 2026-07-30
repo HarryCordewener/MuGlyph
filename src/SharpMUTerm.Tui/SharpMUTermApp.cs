@@ -1636,7 +1636,60 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return;
         }
 
-        _ = _active?.SendUserInputAsync(command);
+        // Resolved from the window in front of you, never from _active — see SendTarget. A pane with no
+        // connection has nowhere to send, and that is reported here, at the moment of sending, rather than
+        // by the line quietly going to whichever world was active before you navigated.
+        if (SendTarget() is { } target)
+        {
+            _ = target.SendUserInputAsync(command);
+            return;
+        }
+
+        RefuseCommand(NothingToSendTo(windowId));
+    }
+
+    /// <summary>
+    /// <b>The session ⏎ sends to: the one the focused window belongs to.</b> Resolved by
+    /// <see cref="WindowSession"/> — the session printing into the window, else the character the
+    /// workspace records as owning it, else nothing — and never <c>_active</c>.
+    /// <para>
+    /// This is the same rule <see cref="OnLinkClicked"/> uses for a click, and for the same reason. The
+    /// command line used to send to <c>_active</c>, which <see cref="AdoptSessionOf"/> deliberately leaves
+    /// on the previous world when the window you navigated to has no session of its own. The two halves
+    /// were each defensible and together they were a misdelivery: with a connected Ann in one pane and a
+    /// session-less window in the other, ⌃→ moved the focus, the indicator and the tab marker to the
+    /// second pane, and the next line went to <em>Ann</em> — a world whose pane was not the focused one.
+    /// That is exactly the property the per-window link work exists to guarantee, and the keyboard is the
+    /// last route that did not honour it.
+    /// </para>
+    /// <para>
+    /// Navigation is untouched by this and must stay that way: asking to go somewhere always arrives. It
+    /// is <em>sending</em> that needs a target, so a pane with no connection takes the focus and the caret
+    /// like any other and refuses at ⏎ (<see cref="NothingToSendTo"/>), with the prompt saying so in the
+    /// meantime (<see cref="UpdateInputChrome"/>) rather than naming a world it cannot reach.
+    /// </para>
+    /// </summary>
+    private WorldSession? SendTarget() => WindowSession(ActiveWindowId());
+
+    /// <summary>
+    /// Why a line could not be sent, naming what would open a connection. Three states, because they need
+    /// three different next steps: a window whose recorded owner has no session this run, a window that
+    /// belongs to no connection at all (the web view), and a client with nothing open anywhere — which is
+    /// where the first line someone types lands, and where it used to vanish without a word.
+    /// </summary>
+    private string NothingToSendTo(string windowId)
+    {
+        var window = _workspace.FindWindow(windowId);
+        if (window?.SessionKey is { Length: > 0 } owner)
+        {
+            return $"{owner} has no open session — ⌃P ▸ Switch to it opens one; nothing was sent";
+        }
+
+        // Through Snippet: a window's title can be a world's own text (the web view is titled from the
+        // page it loaded), and the status row is no place for an unbounded string off the wire.
+        return _sessionWindows.Count == 0
+            ? "nothing is connected — ⌃P ▸ Switch to a character; nothing was sent"
+            : $"{Snippet(window?.Title ?? windowId)} belongs to no connection — nothing was sent";
     }
 
     /// <summary>
@@ -2517,13 +2570,40 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private void UpdateInputChrome()
     {
-        var session = _active;
-        var character = session?.Character?.Name ?? (ActiveWorld() is { } aw ? aw.Character : null);
-        var world = session?.World.Name ?? ActiveWorld()?.World.Name;
-        var label = StatusFormatter.CharacterPrompt(character, world);
+        var label = PromptLabel();
         _input.Prompt = PromptMarkup(label, _input.Armed);
         _second.Prompt = PromptMarkup(SecondPromptLabel(label), _second.Armed);
         RefreshStatusBar();
+    }
+
+    /// <summary>
+    /// What the command line calls itself: <b>the character ⏎ will reach</b>, and nothing else. It reads
+    /// <see cref="SendTarget"/> rather than <c>_active</c>, because those two differ in exactly one state
+    /// and it is the state that matters — a focused pane whose window has no session, where the prompt
+    /// used to go on naming the world you had navigated away from while your eyes were on another pane.
+    /// <para>
+    /// Three answers. A window with a session names it. A window with none, on a client that has one
+    /// somewhere, says <c>no connection</c>: the honest thing, since ⏎ from here sends nowhere
+    /// (<see cref="NothingToSendTo"/>), and naming the other world would be a lie the moment the send
+    /// started refusing. A client with nothing open at all keeps the resting prompt it has always had —
+    /// there is no other world for a keystroke to reach, so there is nothing to warn about, and this is
+    /// the arm the snapshot demo (owners, no live sessions) renders through.
+    /// </para>
+    /// </summary>
+    private string PromptLabel()
+    {
+        if (SendTarget() is { } target)
+        {
+            return StatusFormatter.CharacterPrompt(target.Character?.Name, target.World.Name);
+        }
+
+        if (_active is null)
+        {
+            var resting = ActiveWorld();
+            return StatusFormatter.CharacterPrompt(resting?.Character, resting?.World.Name);
+        }
+
+        return "no connection › ";
     }
 
     /// <summary>
@@ -5114,6 +5194,41 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _input.GetLogicalCursorPosition() is not null,
         _second.GetLogicalCursorPosition() is not null);
 
+    /// <summary>
+    /// <b>Where the terminal's caret actually goes</b> — the cell the driver was last told to put it in,
+    /// after a real frame and a real cursor pass.
+    /// <para>
+    /// This exists because <see cref="CaretReported"/> does not answer the question anyone asks. It calls
+    /// the control's own <c>GetLogicalCursorPosition</c>, which is the function a caret bug lives in, so a
+    /// test built on it agrees with the code and disagrees with the screen — and one did, passing for a
+    /// week while the caret sat visibly on the wrong row. What the terminal receives is the driver's
+    /// <c>SetCursorPosition</c>, and that is what this reads.
+    /// </para>
+    /// <para>
+    /// It goes through <c>ProcessOnce</c> rather than <see cref="RenderFrame"/> because
+    /// <c>ConsoleWindowSystem.ForceRender</c> paints and stops: the cursor pass is a separate step of the
+    /// real loop (<c>UpdateDisplay</c> then <c>UpdateCursor</c>) and is <c>internal</c> to the framework,
+    /// so the only way to run it from here is the loop iteration that contains it. Input is drained on the
+    /// way past, which is a no-op on a headless driver with no console attached.
+    /// </para>
+    /// </summary>
+    internal (bool Visible, int X, int Y) CaretOnScreen()
+    {
+        var real = Console.Out;
+        try
+        {
+            Console.SetOut(new StringWriter());
+            _system.ProcessOnce();
+        }
+        finally
+        {
+            Console.SetOut(real);
+        }
+
+        var driver = (HeadlessConsoleDriver)_system.ConsoleDriver;
+        return (driver.CursorVisible, driver.CursorPosition.X, driver.CursorPosition.Y);
+    }
+
     /// <summary>What the command line ⏎ sends from is holding — the armed bar's text.</summary>
     internal string ArmedInputText => ActiveBar().Text;
 
@@ -5622,7 +5737,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private string? DispatchMacro(ConsoleKeyInfo key)
     {
-        if (_active is not { } session || MacroKeys.Descriptor(key) is not { } descriptor)
+        // The focused window's session, not _active: a macro key is a keystroke, and a keystroke may not
+        // reach a world other than the one whose pane is focused (see SendTarget). A pane with no
+        // connection fires no macro and the key falls through the rest of the chain unclaimed.
+        if (SendTarget() is not { } session || MacroKeys.Descriptor(key) is not { } descriptor)
         {
             return null;
         }
@@ -6272,10 +6390,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </para>
     /// <para>
     /// A window that resolves to nothing — the web view, or a window whose owner has no session in this
-    /// run — cannot be given the command line, and the bar cannot be pointed at nothing either. So the
-    /// honest move is to leave it where it is and <em>say so</em>: silence here is exactly the "your
-    /// attention is on one thing and your keystrokes go somewhere else" state, and a notice naming where
-    /// ⏎ still goes is the difference between a redirect and a refusal.
+    /// run — cannot be given the command line, so <c>_active</c> stays where it was and this says so.
+    /// <b>Nothing about that refuses the navigation</b>: the pane takes the focus, the indicator, the tab
+    /// marker and the caret like any other, because asking to go somewhere should always arrive. What it
+    /// refuses is a <em>redirect</em> of the client's active session, which is a different thing again from
+    /// where ⏎ goes — that follows the focused window through <see cref="SendTarget"/> and, here, becomes
+    /// nowhere. The notice therefore says the line has nowhere to go rather than naming another world:
+    /// while this reported "⏎ still sends to Ann" it was describing a real misdelivery accurately instead
+    /// of preventing it.
     /// </para>
     /// <para>
     /// Two cases are quiet because there is genuinely no redirect to report: a window already owned by the
@@ -6299,18 +6421,18 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         var owner = _workspace.FindWindow(windowId)?.SessionKey;
-        if (_active is not { } stays || string.Equals(owner, stays.SessionKey, StringComparison.Ordinal))
+        if (_active is null || string.Equals(owner, _active.SessionKey, StringComparison.Ordinal))
         {
             return;
         }
 
         // Through Snippet, because a window's title can be a *world's* text — the web view is titled from
         // the page it loaded — and the status row is not a place to paste an unbounded string from the wire.
-        var where = $"⏎ still sends to {SessionTitle(stays)}";
         Notice(
             owner is { Length: > 0 }
-                ? $"{owner} has no open session — ⌃P ▸ Switch to it opens one; {where}"
-                : $"{Snippet(_workspace.FindWindow(windowId)?.Title ?? windowId)} belongs to no connection — {where}");
+                ? $"{owner} has no open session — ⌃P ▸ Switch to it opens one; ⏎ sends nowhere from this pane"
+                : $"{Snippet(_workspace.FindWindow(windowId)?.Title ?? windowId)} belongs to no connection — " +
+                  "⏎ sends nowhere from this pane");
     }
 
     /// <summary>

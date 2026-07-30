@@ -176,9 +176,12 @@ public class RailClickTests
         var lines = app.RailLines;
         var row = lines.ToList().FindIndex(l => l.Contains("char:" + Rookery, StringComparison.Ordinal));
         await Assert.That(row).IsGreaterThanOrEqualTo(0);
-        await Assert.That(SharpMUTermApp.MarkupWidth(lines[row])).IsLessThanOrEqualTo(4); // it really is the strip
+        // It really is the strip: a dot, an initial, and the reserved unread field — which is blank here
+        // and still counted, because a badge that cost a cell only when it had something to say resized
+        // the sidebar every time a background world spoke (see RailRenderer.UnreadField).
+        await Assert.That(SharpMUTermApp.MarkupWidth(lines[row])).IsLessThanOrEqualTo(5);
 
-        await Assert.That(app.SimulateRailClick(SharpMUTermApp.MarkupWidth(lines[row]) / 2, row)).IsTrue();
+        await Assert.That(app.SimulateRailClick(1, row)).IsTrue(); // on the initial itself
         await Assert.That(app.ActiveSessionKey).IsEqualTo(Rookery);
     }
 
