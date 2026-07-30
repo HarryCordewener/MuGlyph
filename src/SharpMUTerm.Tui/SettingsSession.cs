@@ -14,11 +14,18 @@ internal enum ScreenAction
     /// <summary>State changed — rebuild the screen from config.</summary>
     Redraw,
 
-    /// <summary>Commit the pending edits and close.</summary>
-    Save,
-
-    /// <summary>Discard the pending edits and close.</summary>
-    Cancel,
+    /// <summary>
+    /// Leave the screen. Nothing is discarded on the way out: every committed edit is already in config
+    /// and already written to disk (see <see cref="ScreenEdits"/>), so closing is navigation rather than
+    /// a transaction boundary. The one thing that isn't settled is a <em>deletion</em>, which the host
+    /// asks about as it closes.
+    /// <para>
+    /// It replaces an action called <c>Cancel</c> that replayed an undo log over the whole screen, which
+    /// is the bug: the header offered <c>F5/Esc close</c>, and "close" silently meant "throw away
+    /// everything you just typed".
+    /// </para>
+    /// </summary>
+    Close,
 }
 
 /// <summary>
@@ -38,15 +45,28 @@ internal enum ScreenAction
 /// The keys, in one place: ↑↓ move a row (and, where a screen stacks two panes in one column, carry on
 /// into the next one) and ←→ move to the pane drawn beside this one; ⇥/⇧⇥ cycle the panes in the order
 /// they are drawn, which is the only movement that wraps and so the only one guaranteed to reach a pane
-/// standing alone in its column; Home/End jump to a pane's first and last row — End is how a pane's
-/// trailing buttons are reached without walking the selection to the end of its list; Delete on
-/// a list row runs that pane's remove button, so the common case never needs End at all; ⏎
-/// activates the focused row when it has something to activate (a field → open an edit, a button →
-/// run it) and otherwise saves and closes; ⌃S saves from anywhere; Esc cancels the screen,
-/// except while an edit is open, where it abandons the edit and leaves the screen up. Inside an edit,
-/// typing inserts, Backspace/Delete remove, ←→/Home/End move the caret, ↑↓ move through the drawn
-/// candidate list (narrowing it is what typing does), ⇥ commits and steps to the row's next field, ⏎
-/// commits, and Esc reverts.
+/// standing alone in its column; Home/End jump to a pane's first and last row; Delete on a list row runs
+/// that pane's remove button, which is the <em>only</em> way to remove one — the drawn removal row is not
+/// a cursor stop (see <see cref="ScreenModel.Sizes"/>); ⏎ activates the focused row when it has something
+/// to activate (a field → open an edit, a button → run it) and otherwise closes the screen; Esc closes
+/// the screen. Inside an edit, typing inserts, Backspace/Delete remove, ←→/Home/End move the caret, ↑↓
+/// move through the drawn candidate list (narrowing it is what typing does), ⇥ commits and steps to the
+/// row's next field, ⏎ commits, and Esc reverts.
+/// </para>
+/// <para>
+/// <b>Esc is layered, and the layering is a rule about scope rather than two special cases:</b> it backs
+/// out of one level of nesting per press, and it discards only work that has not been confirmed. Inside a
+/// field it abandons the buffer — which config never saw — and leaves the cursor on the row. On the row it
+/// closes the screen, reverting nothing, because everything still on the screen was confirmed by the ⏎
+/// that committed it. The one exception is a deletion, whose subject cannot be retyped, and the host asks
+/// about those as it closes. Written out at length in <see cref="ScreenEdits"/>; both halves look
+/// arbitrary on their own and obvious together, which is why the rule is written down rather than
+/// inferred.
+/// </para>
+/// <para>
+/// There is no save key and no ⌃S. Persistence is per committed change (see <see cref="ScreenEdits"/>), so
+/// a chord claiming to save would be claiming to do something already done — and one that quietly closed
+/// the screen instead would be worse than not having it.
 /// </para>
 /// <para>
 /// The arrows therefore mean two different things, and which one is decided by exactly one bit of
@@ -72,18 +92,26 @@ internal sealed class SettingsSession
     /// in the middle of constructing. How many panes the screen has is read off a first projection, so
     /// the renderer stays the single source of truth for the screen's shape.
     /// </summary>
-    internal SettingsSession(Func<ScreenSelection, ScreenModel> model)
+    /// <param name="save">
+    /// Persists the configuration, run after every accepted change rather than on the way out — see
+    /// <see cref="ScreenEdits"/> for why that is where it belongs. Null in the tests that only exercise
+    /// navigation.
+    /// </param>
+    internal SettingsSession(Func<ScreenSelection, ScreenModel> model, Action? save = null)
     {
         ArgumentNullException.ThrowIfNull(model);
         _model = model;
+        Edits = new ScreenEdits(save);
         Selection = new ScreenSelection(model(new ScreenSelection(1)).PaneCount);
     }
 
     /// <summary>Where the keyboard is. Seeded by the screen before it first opens.</summary>
     internal ScreenSelection Selection { get; }
 
-    /// <summary>The pending changes Esc undoes and ⏎ keeps.</summary>
-    internal ScreenEdits Edits { get; } = new();
+    /// <summary>
+    /// The screen's one path into config, and the log of the deletions its host reviews on close.
+    /// </summary>
+    internal ScreenEdits Edits { get; }
 
     /// <summary>Whether a field edit is open — the screens' one modal state.</summary>
     internal bool IsEditing => _edit is not null;
@@ -124,7 +152,23 @@ internal sealed class SettingsSession
                 field?.Masked ?? false)
             : (ScreenFieldEdit?)null;
 
-        return new ScreenFocus(Selection.Pane, Selection.Index, edit);
+        return new ScreenFocus(Selection.Pane, Selection.Index, edit, Enter(model));
+    }
+
+    /// <summary>
+    /// What ⏎ would do right now, read off the focused row — the same question <see cref="Activate"/>
+    /// answers, asked by the action bar so its chip can say it. Kept beside that method so the two
+    /// cannot drift: if one grows a case, the other has to.
+    /// </summary>
+    private ScreenEnter Enter(ScreenModel model)
+    {
+        var row = model.RowAt(Selection.Pane, Selection.Index);
+        if (row.Button is not null)
+        {
+            return ScreenEnter.Add;
+        }
+
+        return row.FieldCount > 0 ? ScreenEnter.Edit : ScreenEnter.Close;
     }
 
     /// <summary>
@@ -156,11 +200,8 @@ internal sealed class SettingsSession
 
         switch (key.Key)
         {
-            case ConsoleKey.S when key.Modifiers.HasFlag(ConsoleModifiers.Control):
-                return ScreenAction.Save;
-
             case ConsoleKey.Escape:
-                return ScreenAction.Cancel;
+                return ScreenAction.Close;
 
             case ConsoleKey.Enter:
                 return Activate(model);
@@ -200,15 +241,20 @@ internal sealed class SettingsSession
     }
 
     /// <summary>
-    /// Delete on one of a pane's list rows runs that pane's own remove button — the same command,
-    /// the same undo, the same conditions. It exists because the drawn <c>[[- del]]</c> row sits past
-    /// the end of the list, so reaching it with ↑↓ walks the cursor over every row on the way; End
-    /// steps over them without dragging the selection along, but End is a key nothing on screen names.
-    /// Delete acts on the row the cursor is already on, which is the row the user is looking at, and
-    /// the header hint says so because <see cref="ScreenModel.HasRemovableRow"/> derives it.
+    /// Delete on one of a pane's list rows runs that pane's own remove button, and is now the only way
+    /// to run it: the drawn removal row sits past the end of the list and is no longer a cursor stop,
+    /// because reaching it with ↑↓ walked the selection to the last item and so could only ever delete
+    /// that one (<see cref="ScreenModel.Sizes"/>). Delete acts on the row the cursor is already on,
+    /// which is the row the user is looking at, and the header hint says so because
+    /// <see cref="ScreenModel.HasRemovableRow"/> derives it.
     /// <para>
-    /// It deliberately does nothing on a button row: the cursor there already has ⏎, and the row it
-    /// would delete is somewhere else on screen.
+    /// It deliberately does nothing on a button row: the cursor there is on <c>[[+ …]]</c>, and the row
+    /// it would delete is somewhere else on screen.
+    /// </para>
+    /// <para>
+    /// The deletion happens at once — there is no per-press confirmation — and is recorded in
+    /// <see cref="Edits"/> so the screen can ask about the batch of them as it closes. Three deletions
+    /// are one question, not three.
     /// </para>
     /// </summary>
     private ScreenAction Remove(ScreenModel model)
@@ -277,7 +323,11 @@ internal sealed class SettingsSession
 
         if (!row.IsActivatable)
         {
-            return ScreenAction.Save;
+            // ⏎ on a row with nothing to open closes the screen, the way it always has. What changed is
+            // what closing means: it used to be "commit and close" against a screen that would otherwise
+            // have discarded everything, and it is now the same thing Esc does, because there is no
+            // longer a state in which those two answers differ.
+            return ScreenAction.Close;
         }
 
         Open(model, 0);
@@ -317,18 +367,17 @@ internal sealed class SettingsSession
         switch (key.Key)
         {
             case ConsoleKey.Escape:
+                // The inner layer of Esc, and the only place on these screens that still discards
+                // anything: the buffer is dropped, the field closes, and the committed value it was
+                // opened on is untouched because config never saw a keystroke of it. One more Esc, now
+                // on the row, closes the screen — and reverts nothing, because by then everything left
+                // is confirmed. See the scope rule on this type.
                 _edit = null;
                 return ScreenAction.Redraw;
 
             case ConsoleKey.Enter:
                 Commit(field);
                 return ScreenAction.Redraw;
-
-            case ConsoleKey.S when key.Modifiers.HasFlag(ConsoleModifiers.Control):
-                // ⌃S saves from anywhere, but never by discarding what is on screen: the open field is
-                // committed first, and a value that will not validate stops the save rather than being
-                // silently dropped.
-                return Commit(field) ? ScreenAction.Save : ScreenAction.Redraw;
 
             case ConsoleKey.Tab:
                 return Step(model, field, key.Modifiers.HasFlag(ConsoleModifiers.Shift) ? -1 : 1);

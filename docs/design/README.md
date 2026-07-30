@@ -180,20 +180,30 @@ On a narrow terminal it docks to the bottom; otherwise it floats near the top.
 ### 3. Worlds & Characters (F5) — full screen
 
 Not a dialog. Worlds list on the left (name, address, character count, live count) with
-`[+ world]` / `[- del]`. Right side, top to bottom:
+`[+ world]` and, under it, a row naming what `Del` would take (`Del  removes Aetherfall`). Right side,
+top to bottom:
 
 - **Header**: world name, address, TLS state, encoding.
 - **`├ WORLD`**: name, host, port, security, encoding, keepalive — right-aligned labels,
   bordered value cells.
 - **`├ CHARACTERS`**: a table — name, state (`● connected` / `○ offline`), login mode,
-  assigned trigger sets — with `[+ add character] [⧉ duplicate] [- remove]`. Empty state:
+  assigned trigger sets — with `[+ add character] [⧉ duplicate]` and the same `Del` row. Empty state:
   *"no characters — this world has nothing to connect with."*
 - **`└ CHARACTER · <name>`**: two columns. Left: name, password (masked, *this session only —
   never saved*), the connect-line template (`connect %CHARACTER% %PASSWORD%`), on-connect,
   auto-login, session state, log format + folder. Right: the trigger-set checklist — each row is
   `[x] ▪ Comms — channel + page routing    2 rules`. Toggling assigns/unassigns live.
 
-Footer: `Cancel` / `Save`.
+Footer: `[Esc] Close` and, on the right, whatever `⏎` does on the row the cursor is on (`Edit`, `Add`,
+or `Done`).
+
+**Editing is applied immediately, and closing keeps it.** A committed value — `⏎` on a field, `Space` on a
+checkbox, a `[+ …]` press — is written to `config.json` as it is made, so `Esc` and the screen's own F-key
+are navigation and not a transaction: neither discards anything. `Esc` is layered, backing out one level
+per press: inside a field it abandons the buffer (which config never saw) and leaves the cursor on the
+row; on the row it closes the screen. The one exception is a **deletion**, whose subject cannot be
+retyped: those are logged, and closing a screen that made any asks once, naming each of them, with *keep*
+as the default. There is no save key and no `⌃S` — see `ScreenEdits` for the whole rule.
 
 ### 4. Triggers & spawn routing (F2)
 

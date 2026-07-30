@@ -322,8 +322,9 @@ public class ScreenPasswordFieldTests
     }
 
     /// <summary>
-    /// Esc reverts it like any other field — the undo log holds the old value, not the new one — and
-    /// blanking the field is how a password is forgotten before the process is.
+    /// Esc inside the field abandons the buffer like any other field — a half-typed secret never reaches
+    /// config — a committed one is kept, and blanking the field is how a password is forgotten before the
+    /// process is.
     /// </summary>
     [Test]
     public async Task EscapeRevertsThePasswordAndBlankingItForgetsIt()
@@ -341,11 +342,30 @@ public class ScreenPasswordFieldTests
             session.Handle(Char(c));
         }
 
+        // Esc *before* ⏎ is what abandons a half-typed secret — the buffer never reaches config. Once ⏎
+        // has taken it, it is the password, and leaving the screen keeps it: the alternative is a client
+        // that silently reconnects with the old credential.
+        await Assert.That(session.Focus().Edit).IsNotNull();
+        session.Handle(Key(ConsoleKey.Escape));
+        await Assert.That(session.Focus().Edit).IsNull();
+        await Assert.That(character.Password).IsEqualTo(Secret);
+
+        // Re-open it the way the keyboard does — ⏎ opens the row's first field (the name), ⇥ steps to the
+        // password — and commit this time.
+        session.Handle(Key(ConsoleKey.Enter));
+        session.Handle(Key(ConsoleKey.Tab));
+        await Assert.That(session.Focus().Edit!.Value.Field).IsEqualTo(WorldsScreenRenderer.PasswordField);
+
+        foreach (var c in "-extra")
+        {
+            session.Handle(Char(c));
+        }
+
         session.Handle(Key(ConsoleKey.Enter));
         await Assert.That(character.Password).IsEqualTo(Secret + "-extra");
 
         session.Edits.Revert();
-        await Assert.That(character.Password).IsEqualTo(Secret);
+        await Assert.That(character.Password).IsEqualTo(Secret + "-extra");
 
         // Blanked: null, not "", so "no password" has one spelling — and the login line drops the token's
         // space with it rather than sending a trailing one.

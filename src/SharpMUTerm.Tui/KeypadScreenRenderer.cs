@@ -95,8 +95,6 @@ internal static class KeypadScreenRenderer
     /// <summary>The label the binding list's add button carries; it names the key it will claim.</summary>
     internal const string AddBindingLabel = "+ binding";
 
-    internal const string RemoveBindingLabel = "- del";
-
     /// <summary>What a brand-new binding is called and sends, before it is edited.</summary>
     private const string NewBindingName = "New Binding";
 
@@ -286,7 +284,7 @@ internal static class KeypadScreenRenderer
     /// The binding list's buttons. Adding claims the first unbound numpad digit and *says which*
     /// (<c>[[+ binding]] Num3</c>), so a new binding always lands on a key the row can name. When every
     /// numpad digit is spoken for there is no free key to claim, so the button isn't drawn at all — the
-    /// same rule that keeps <c>[[- del]]</c> off a pane with nothing selected.
+    /// same rule that keeps a pane with nothing selected from offering a removal.
     /// <para>
     /// The numpad is a <em>placeholder</em> now, not a working key: no numpad chord reaches this host
     /// (see <see cref="MacroKeys"/>), so a fresh binding is drawn with the <c>▲</c> caveat every other
@@ -326,7 +324,7 @@ internal static class KeypadScreenRenderer
         {
             var source = slot.Items[slot.Index];
             rows.Add(ScreenRow.Of(ScreenButton.Remove(
-                RemoveBindingLabel, slot.Items, slot.Index, slot.Offset, Identify(source))));
+                slot.Items, slot.Index, slot.Offset, Identify(source), () => $"binding {Identify(source)}")));
         }
 
         return rows;
@@ -355,7 +353,7 @@ internal static class KeypadScreenRenderer
 
     /// <summary>
     /// What to call a binding on screen: its name, falling back to its key. A macro that has never been
-    /// named would otherwise leave <c>[[- del]]</c> naming nothing at all, which is the one thing a
+    /// named would otherwise leave the <c>Del</c> row naming nothing at all, which is the one thing a
     /// destructive row may not do.
     /// </summary>
     private static string Identify(Macro macro) =>
@@ -378,7 +376,7 @@ internal static class KeypadScreenRenderer
     /// <param name="focus">Where the keyboard is, used when no selection is handed in.</param>
     /// <param name="selected">
     /// The anchored selection, or -1 to fall back to the cursor. The list pane now ends in buttons, so
-    /// the cursor can sit past the list while the selection — and the <c>[[- del]]</c> row's target —
+    /// the cursor can sit past the list while the selection — and the <c>Del</c> row's target —
     /// stays on the binding the screen is showing; the footer has to report that one, not the last.
     /// </param>
     internal static string FooterLine(

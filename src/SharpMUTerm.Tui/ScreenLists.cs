@@ -113,12 +113,10 @@ internal static class ScreenLists
     /// the empty ones, which a flattened pane cannot show.
     /// </para>
     /// <para>
-    /// Writing it moves the item: out of its current set's list, onto the end of the target's. The
-    /// snapshot therefore captures the list <em>and the index</em>, so Esc puts the item back exactly
-    /// where it came from rather than on the end of it — the same rule a deletion's undo follows, for
-    /// the same reason (the pane's order is what the screen navigates by). And because the pane is
-    /// flattened across every set, the row moves too, so the field carries a
-    /// <see cref="ScreenField.Follow"/> that takes the cursor with it.
+    /// Writing it moves the item: out of its current set's list, onto the end of the target's. It is a
+    /// move and not a deletion — nothing is destroyed, so it is a committed edit like any other and is
+    /// kept on close. Because the pane is flattened across every set the row moves too, so the field
+    /// carries a <see cref="ScreenField.Follow"/> that takes the cursor with it.
     /// </para>
     /// </summary>
     internal static ScreenField Owner<T>(IReadOnlyList<TriggerSet> sets, Func<TriggerSet, List<T>> items, T item)
@@ -137,7 +135,6 @@ internal static class ScreenLists
                 ? $"{OwnerLabel} must be one of: {string.Join(", ", names)}"
                 : null,
             value => Move(sets, items, item, value),
-            () => Replace(sets, items, item),
             names,
             ClosedChoices: true,
             Follow: () => Flattened(sets, items, item));
@@ -199,31 +196,6 @@ internal static class ScreenLists
         var from = items(owner);
         from.RemoveAt(IndexOf(from, item));
         items(target).Add(item);
-    }
-
-    /// <summary>Captures where an item currently sits, and returns the action that puts it back there.</summary>
-    private static Action Replace<T>(
-        IReadOnlyList<TriggerSet> sets, Func<TriggerSet, List<T>> items, T item)
-        where T : class
-    {
-        if (OwnerOf(sets, items, item) is not { } owner)
-        {
-            return () => { };
-        }
-
-        var list = items(owner);
-        var index = IndexOf(list, item);
-
-        return () =>
-        {
-            if (OwnerOf(sets, items, item) is { } current)
-            {
-                var held = items(current);
-                held.RemoveAt(IndexOf(held, item));
-            }
-
-            list.Insert(Math.Clamp(index, 0, list.Count), item);
-        };
     }
 
     /// <summary>

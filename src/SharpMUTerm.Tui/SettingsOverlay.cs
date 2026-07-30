@@ -28,20 +28,21 @@ internal readonly record struct ScreenBinding(SettingsSession Session, Func<IWin
 internal sealed class SettingsOverlay
 {
     private readonly ConsoleWindowSystem _system;
-    private readonly Action _save;
+    private readonly EditReviewOverlay _review;
 
     private Window? _window;
     private ConsoleKey _openKey;
     private ScreenBinding? _binding;
 
     /// <summary>
-    /// <paramref name="save"/> persists the configuration the screens edit in place — the ⏎ Save
-    /// action on every screen's action bar.
+    /// The overlay no longer takes a save action. Persistence moved to the point of change: each screen's
+    /// <see cref="ScreenEdits"/> writes the configuration out as it accepts one, so there is no moment on
+    /// the way out at which the host would have anything left to save. See <see cref="ScreenEdits"/>.
     /// </summary>
-    public SettingsOverlay(ConsoleWindowSystem system, Action save)
+    public SettingsOverlay(ConsoleWindowSystem system)
     {
         _system = system;
-        _save = save;
+        _review = new EditReviewOverlay(system);
     }
 
     /// <summary>The F-key of the currently open screen, or null when closed.</summary>
@@ -49,15 +50,19 @@ internal sealed class SettingsOverlay
 
     public bool IsOpen => _window is not null;
 
-    /// <summary>
-    /// How many edits the open screen is holding that were never saved — zero when none is open. Read by
-    /// the quit confirmation, which is the one place something outside a screen can end them.
-    /// </summary>
-    public int PendingEdits => _binding?.Session.Edits.Count ?? 0;
+    /// <summary>The deletion review, put up as a screen holding deletions closes.</summary>
+    internal EditReviewOverlay Review => _review;
 
     /// <summary>
-    /// Opens a screen, or closes it when its own F-key is pressed again. Closing this way discards
-    /// pending edits, exactly like Esc — the F-key is a toggle, not a commit.
+    /// Opens a screen, or closes it when its own F-key is pressed again.
+    /// <para>
+    /// <b>Closing this way keeps everything</b>, exactly as Esc does. The F-key that opened a panel reads
+    /// as a toggle and "toggling a panel shut" is not a cancel gesture — but the two keys are given one
+    /// meaning rather than two, because a screen where <c>Esc</c> and <c>F5</c> closed on different terms
+    /// would be a trap the labels could describe and nobody would read in time. Under the current model
+    /// there is nothing for them to differ about: every committed edit is already saved, and both keys
+    /// hand any pending deletions to the same review.
+    /// </para>
     /// </summary>
     public void Toggle(ConsoleKey key, Func<ScreenBinding> binding)
     {
@@ -66,7 +71,7 @@ internal sealed class SettingsOverlay
         if (_window is not null)
         {
             var reopening = _openKey != key;
-            Cancel();
+            CloseAndReview();
             if (!reopening)
             {
                 return;
@@ -183,14 +188,8 @@ internal sealed class SettingsOverlay
     {
         switch (action)
         {
-            case ScreenAction.Cancel:
-                Cancel();
-                return true;
-
-            case ScreenAction.Save:
-                binding.Session.Edits.Commit();
-                _save();
-                Close();
+            case ScreenAction.Close:
+                CloseAndReview();
                 return true;
 
             case ScreenAction.Redraw:
@@ -223,11 +222,42 @@ internal sealed class SettingsOverlay
         window.Invalidate(redrawAll: true);
     }
 
-    /// <summary>Discards the screen's pending edits and closes it — Esc, and the F-key toggle.</summary>
-    private void Cancel()
+    /// <summary>
+    /// Closes the screen, keeping everything it changed — and, when it deleted something, asks about
+    /// that on the way out.
+    /// <para>
+    /// This is the whole of the "my edit didn't stick" fix. It used to replay the screen's undo log,
+    /// so Esc and the F-key both silently threw away every field, checkbox and button press since the
+    /// screen opened, while the header advertised them as <c>close</c>. Now they close: the values were
+    /// applied and written when they were committed, and leaving is navigation.
+    /// </para>
+    /// <para>
+    /// A deletion is the exception, because its subject cannot be retyped. Those are logged
+    /// (<see cref="ScreenEdits"/>) and reviewed here, once, as a batch. <b>A screen that deleted nothing
+    /// closes instantly</b> — which is nearly every close — because a prompt that appeared every time is
+    /// one people learn to dismiss without reading.
+    /// </para>
+    /// <para>
+    /// An <em>open field</em> goes with the window, buffer and all. That is the scope rule extended one
+    /// step — leaving discards what was never confirmed — and it is the same answer the inner Esc gives,
+    /// so the two cannot disagree. Committing it instead was considered and is worse: it would let the
+    /// panel's toggle key write a value the user had not finished typing (<c>elsewh</c> as a host,
+    /// persisted) on the very screen whose complaint was about values changing without being asked for.
+    /// </para>
+    /// <para>
+    /// The screen goes first and the question follows it, rather than the question opening on top: see
+    /// <see cref="EditReviewOverlay"/> for why that ordering is the one this project can actually verify.
+    /// </para>
+    /// </summary>
+    private void CloseAndReview()
     {
-        _binding?.Session.Edits.Revert();
+        var edits = _binding?.Session.Edits;
         Close();
+
+        if (edits is { HasDeletions: true })
+        {
+            _review.Open(edits.Deletions, edits.Commit, edits.Revert);
+        }
     }
 
     private void Close()

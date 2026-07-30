@@ -38,6 +38,48 @@ public class CommandSurfaceSettingsTests
         app.BuildCatalog().Where(c => c.Group == CommandGroup.Settings).ToList();
 
     /// <summary>
+    /// The app's own save action reaches the screens. Persistence moved to the point of change — a screen
+    /// writes each committed value out as it accepts it (see <see cref="ScreenEdits"/>) — so this is the
+    /// seam that has to be wired, and it is exactly one hop: the app hands
+    /// <c>SaveConfiguration</c> to every <see cref="SettingsSession"/> it builds.
+    /// </summary>
+    [Test]
+    public async Task ACommittedSettingsEditIsPersistedThroughTheAppsSaveAction()
+    {
+        Console.SetIn(TextReader.Null);
+        var saves = 0;
+        var app = new SharpMUTermApp(
+            DemoScene.Build(),
+            Headless,
+            new HeadlessConsoleDriver(Width, Height),
+            save: _ => saves++);
+
+        app.DispatchCommand("screen:textansi"); // F7: every row a checkbox
+        app.SimulateSettingsKey(new ConsoleKeyInfo(' ', ConsoleKey.Spacebar, false, false, false));
+
+        await Assert.That(saves).IsGreaterThan(0);
+    }
+
+    /// <summary>
+    /// And an app with <em>no</em> save action writes nothing — which is what every test and every
+    /// snapshot is, and it is not a detail. A <c>--demo-config</c> frame that drives a key into a field
+    /// would otherwise persist the demo worlds over the developer's own configuration, and the
+    /// <c>-edit</c> views drive those keys by design.
+    /// </summary>
+    [Test]
+    public async Task AnAppWithNoSaveActionPersistsNothing()
+    {
+        var app = App();
+
+        app.DispatchCommand("screen:textansi");
+        app.SimulateSettingsKey(new ConsoleKeyInfo(' ', ConsoleKey.Spacebar, false, false, false));
+
+        // Nothing threw and nothing was written: the only route to disk is the action the entry point
+        // supplies, and this app was handed none.
+        await Assert.That(app.OpenSettingsKey).IsEqualTo(ConsoleKey.F7);
+    }
+
+    /// <summary>
     /// The one the maintainer asked for: F5 is reachable from ⌃P. Asserted by title <em>and</em> id,
     /// because the id is what dispatch acts on and the title is what a search has to match.
     /// </summary>

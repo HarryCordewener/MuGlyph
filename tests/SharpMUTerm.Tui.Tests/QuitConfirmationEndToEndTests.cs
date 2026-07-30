@@ -158,12 +158,14 @@ public class QuitConfirmationEndToEndTests
     }
 
     /// <summary>
-    /// The settings screens are one of the things a quit ends: an open screen with unsaved edits is
-    /// named, with its count, because Esc-ing out of the client discards them exactly like Esc-ing out
-    /// of the screen would.
+    /// An open settings screen is no longer one of the things a quit ends. It used to be named with a
+    /// count — "Text &amp; ANSI is open — 1 unsaved edit" — because Esc-ing out of the client discarded
+    /// those edits exactly as Esc-ing out of the screen did. Neither key discards anything now: a
+    /// committed change is written the moment it is committed, so there is nothing left to warn about and
+    /// the prompt says what is actually true.
     /// </summary>
     [Test]
-    public async Task UnsavedSettingsEditsAreNamed()
+    public async Task AnOpenSettingsScreenIsNotSomethingQuittingCosts()
     {
         var app = App();
         app.DispatchCommand("screen:textansi"); // F7: an options list, every row a checkbox
@@ -171,6 +173,7 @@ public class QuitConfirmationEndToEndTests
 
         app.SimulateKey(CtrlQ());
 
-        await Assert.That(Prompt(app)).Contains("Text & ANSI is open — 1 unsaved edit");
+        await Assert.That(Prompt(app)).DoesNotContain("unsaved");
+        await Assert.That(Prompt(app)).DoesNotContain("Text & ANSI");
     }
 }

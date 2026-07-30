@@ -78,6 +78,47 @@ public class ScreenHintTests
     }
 
     /// <summary>
+    /// The wording rule, which is the other half of the honesty rule these screens are held to: it is
+    /// not enough for a key to be advertised only where it works — the <em>word</em> has to be what the
+    /// key does. Every screen's header offers Esc as <c>close</c>, and closing must therefore not be a
+    /// discard. It was: Esc replayed the screen's undo log, so a user who read the header and pressed the
+    /// key it named lost everything they had typed, on all eight screens at once.
+    /// <para>
+    /// So the vocabulary of discarding — <c>cancel</c>, <c>discard</c>, <c>revert</c> — is banned from a
+    /// navigating header outright. It is not banned mid-edit, where Esc really does abandon a buffer;
+    /// that is the same word being true at a different scope, and
+    /// <see cref="TheMidEditHintsStillPromiseARevert"/> holds it to it.
+    /// </para>
+    /// </summary>
+    [Test]
+    [Arguments("cancel")]
+    [Arguments("discard")]
+    [Arguments("revert")]
+    public async Task ANavigatingHeaderNeverCallsClosingADiscard(string word)
+    {
+        foreach (var (name, header, _) in EveryScreen())
+        {
+            await Assert.That(header).Contains("close").Because(name);
+            await Assert.That(header.Contains(word, StringComparison.OrdinalIgnoreCase)).IsFalse().Because(name);
+        }
+    }
+
+    /// <summary>
+    /// And the word is still available where it is true. Inside a field Esc abandons the buffer and
+    /// leaves the committed value alone, so the mid-edit hints say <c>revert</c> and mean it — the rule
+    /// above is about scope, not about a forbidden word.
+    /// </summary>
+    [Test]
+    public async Task TheMidEditHintsStillPromiseARevert()
+    {
+        var sets = Sets();
+        var model = TriggersScreenRenderer.Model(sets, 0);
+        var editing = new ScreenFocus(0, 0, new ScreenFieldEdit(0, "Tell", 4, null, RowFields: 2));
+
+        await Assert.That(TriggersScreenRenderer.HeaderLine(0, model, editing)).Contains("Esc revert");
+    }
+
+    /// <summary>
     /// While a field is open the arrows belong to the buffer, so the navigation hints go with the rest
     /// of the screen's verbs — leaving ←→ on screen there would name a key that moves a caret.
     /// </summary>

@@ -333,11 +333,13 @@ public class MacroKeyCaptureTests
     }
 
     /// <summary>
-    /// The undo log covers a rebinding like any other edit: Esc on the screen puts the old key back, so
-    /// a capture is no more permanent than typing into a well.
+    /// A captured chord is a committed edit like a typed value: the keystroke that lands it <em>is</em> the
+    /// ⏎, so the binding is kept and closing the screen does not put the old key back. Esc while the
+    /// capture is still armed is the escape hatch, and it is the one asserted in
+    /// <see cref="EscapeAlwaysLeavesACaptureAndBindsNothing"/> — the same scope rule as every other field.
     /// </summary>
     [Test]
-    public async Task CancellingTheScreenPutsTheOldKeyBack()
+    public async Task ACapturedChordIsKeptWhenTheScreenCloses()
     {
         var sets = Sets();
         var session = Session(sets);
@@ -345,9 +347,10 @@ public class MacroKeyCaptureTests
         session.Handle(Chord(ConsoleKey.F11));
         await Assert.That(sets[0].Macros[0].Key).IsEqualTo("F11");
 
+        await Assert.That(session.Handle(Chord(ConsoleKey.Escape))).IsEqualTo(ScreenAction.Close);
         session.Edits.Revert();
 
-        await Assert.That(sets[0].Macros[0].Key).IsEqualTo("Num5");
+        await Assert.That(sets[0].Macros[0].Key).IsEqualTo("F11");
     }
 
     /// <summary>

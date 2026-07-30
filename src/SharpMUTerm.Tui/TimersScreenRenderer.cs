@@ -63,8 +63,6 @@ internal static class TimersScreenRenderer
     /// <summary>The labels the timer list's buttons carry, in the order they are drawn.</summary>
     internal const string AddTimerLabel = "+ timer";
 
-    internal const string RemoveTimerLabel = "- del";
-
     /// <summary>
     /// What a brand-new timer is called, waits and sends. It is created <b>disabled</b>, alone among
     /// the four list screens: a timer is the only thing here that acts without being provoked, so a new
@@ -201,8 +199,9 @@ internal static class TimersScreenRenderer
 
         if (ScreenLists.Locate(sets, s => s.Timers, selected) is { } slot)
         {
+            var timer = slot.Items[slot.Index];
             rows.Add(ScreenRow.Of(ScreenButton.Remove(
-                RemoveTimerLabel, slot.Items, slot.Index, slot.Offset, slot.Items[slot.Index].Name)));
+                slot.Items, slot.Index, slot.Offset, timer.Name, () => $"timer {timer.Name}")));
         }
 
         return rows;

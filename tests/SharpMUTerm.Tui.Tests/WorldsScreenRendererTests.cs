@@ -208,7 +208,11 @@ public class WorldsScreenRendererTests
         var column = WorldsScreenRenderer.DetailColumn(
             Worlds(), TriggerSets(), selectedWorld: 0, selectedCharacter: 0, ScreenPalette.Accent);
 
-        var corvid = column.Single(l => l.Contains("Corvid") && !l.Contains("[["));
+        // Not the [⧉ duplicate] chip, and not the Del row that names the same character as its target.
+        var corvid = column.Single(l =>
+            l.Contains("Corvid")
+            && !l.Contains("[[")
+            && !l.Contains(ScreenChrome.RemovesWord));
         await Assert.That(corvid).Contains("▸");
         await Assert.That(column.Any(l => l.Contains("Rookery"))).IsTrue();
 

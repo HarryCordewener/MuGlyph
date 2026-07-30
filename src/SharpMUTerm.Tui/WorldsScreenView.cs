@@ -59,8 +59,8 @@ internal static class WorldsScreenView
         var rows = height <= 0 ? 0 : Math.Max(1, height - 1 - band);
 
         // Body: WORLDS list │ detail, as two real columns.
-        var worldsCol = ScreenChrome.Stretch(
-            new MarkupControl(WorldsScreenRenderer.WorldsColumn(worlds, selectedWorld, focus).ToList()));
+        var worldsCol = ScreenChrome.Stretch(new MarkupControl(
+            WorldsScreenRenderer.WorldsColumn(worlds, selectedWorld, focus, rows).ToList()));
         var detailCol = ScreenChrome.Stretch(new MarkupControl(
             WorldsScreenRenderer
                 .DetailColumn(worlds, triggerSets, selectedWorld, selectedCharacter, accent, focus, rows)

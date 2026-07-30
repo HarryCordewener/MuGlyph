@@ -67,8 +67,10 @@ public class OptionsScreenRendererTests
         await Assert.That(lines[0]).DoesNotContain("‹ back");
         await Assert.That(lines[0]).Contains("Input");
         await Assert.That(lines[0]).Contains("F8");
-        await Assert.That(lines[^1]).Contains("Cancel");
-        await Assert.That(lines[^1]).Contains("Save");
+        // The action bar, in the words the keys now deserve: Esc closes and keeps, and ⏎ on a row
+        // with nothing to open leaves. It read "Cancel" / "Save" while closing discarded the screen.
+        await Assert.That(lines[^1]).Contains("Close");
+        await Assert.That(lines[^1]).Contains("Done");
     }
 
     [Test]

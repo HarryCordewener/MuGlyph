@@ -115,22 +115,25 @@ public class ScreenNameTests
             .IsEquivalentTo(new[] { "name" });
     }
 
+    /// <summary>
+    /// A committed name lands on the item and stays there, on every screen. It used to be put back by the
+    /// screen's revert; a rename is a confirmed edit, so nothing on the way out undoes it.
+    /// </summary>
     [Test]
-    public async Task WritingANameLandsOnTheItemAndCancelPutsTheOldOneBack()
+    public async Task WritingANameLandsOnTheItemAndIsKept()
     {
         var sets = Sets();
         var worlds = Worlds();
 
         foreach (var (screen, field, read) in NameFields(sets, worlds))
         {
-            var before = read();
             var edits = new ScreenEdits();
 
             await Assert.That(edits.Apply(field, "Renamed")).IsNull().Because(screen);
             await Assert.That(read()).IsEqualTo("Renamed").Because(screen);
 
             edits.Revert();
-            await Assert.That(read()).IsEqualTo(before).Because(screen);
+            await Assert.That(read()).IsEqualTo("Renamed").Because(screen);
         }
     }
 
@@ -214,9 +217,10 @@ public class ScreenNameTests
         await Assert.That(sets[0].Triggers[0].Name).IsEqualTo("Whisper");
         await Assert.That(TriggersScreenRenderer.RulesColumn(sets, 0).Any(l => l.Contains("Whisper"))).IsTrue();
 
-        // And Esc on the screen unmakes it, like any other committed field.
+        // And leaving the screen keeps it, like any other committed field: ⏎ was the confirmation.
+        await Assert.That(session.Handle(Key(ConsoleKey.Escape))).IsEqualTo(ScreenAction.Close);
         session.Edits.Revert();
-        await Assert.That(sets[0].Triggers[0].Name).IsEqualTo("Tell");
+        await Assert.That(sets[0].Triggers[0].Name).IsEqualTo("Whisper");
     }
 
     /// <summary>

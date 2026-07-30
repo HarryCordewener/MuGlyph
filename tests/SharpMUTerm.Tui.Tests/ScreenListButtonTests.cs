@@ -58,6 +58,13 @@ public class ScreenListButtonTests
         throw new InvalidOperationException($"no button labelled '{label}' in pane {pane}");
     }
 
+    /// <summary>
+    /// A pane's removal, asked for the way <see cref="SettingsSession"/> asks: removals carry no label of
+    /// their own now (they are drawn as the key that runs them), so the model is what you look one up in.
+    /// </summary>
+    private static ScreenButton Removal(ScreenModel model, int pane) =>
+        model.RemoveIn(pane) ?? throw new InvalidOperationException($"pane {pane} offers no removal");
+
     [Test]
     public async Task EveryListPaneEndsInItsOwnButtons()
     {
@@ -68,29 +75,37 @@ public class ScreenListButtonTests
         await Assert.That(triggers.ButtonAt(0, 3)!.Value.Label).IsEqualTo(TriggersScreenRenderer.AddTriggerLabel);
         await Assert.That(triggers.ButtonAt(0, 4)!.Value.Label)
             .IsEqualTo(TriggersScreenRenderer.DuplicateTriggerLabel);
-        await Assert.That(triggers.ButtonAt(0, 5)!.Value.Label).IsEqualTo(TriggersScreenRenderer.RemoveTriggerLabel);
+        await Assert.That(triggers.ButtonAt(0, 5)!.Value.Label).IsEqualTo(ScreenButton.RemoveKeyLabel);
+
+        // Drawn, but not a cursor stop: 3 rules + add + duplicate are the stops, and the removal past
+        // them is reached by Delete on a rule instead (see ScreenModel.Sizes).
+        await Assert.That(triggers.Sizes[0]).IsEqualTo(5);
+        await Assert.That(triggers.RowCount(0)).IsEqualTo(6);
 
         var aliases = AliasesScreenRenderer.Model(sets, 0);
         await Assert.That(aliases.ListSizes[0]).IsEqualTo(2);
         await Assert.That(aliases.ButtonAt(0, 2)!.Value.Label).IsEqualTo(AliasesScreenRenderer.AddAliasLabel);
         await Assert.That(aliases.ButtonAt(0, 3)!.Value.Label).IsEqualTo(AliasesScreenRenderer.DuplicateAliasLabel);
-        await Assert.That(aliases.ButtonAt(0, 4)!.Value.Label).IsEqualTo(AliasesScreenRenderer.RemoveAliasLabel);
+        await Assert.That(aliases.ButtonAt(0, 4)!.Value.Label).IsEqualTo(ScreenButton.RemoveKeyLabel);
+        await Assert.That(aliases.Sizes[0]).IsEqualTo(4);
 
         // F6 has no duplicate: a timer is an interval and a command, and both are what you would change
         // in the copy — so the button would save nobody anything while still being a cursor stop.
         var timers = TimersScreenRenderer.Model(sets, 0);
         await Assert.That(timers.ListSizes[0]).IsEqualTo(2);
         await Assert.That(timers.ButtonAt(0, 2)!.Value.Label).IsEqualTo(TimersScreenRenderer.AddTimerLabel);
-        await Assert.That(timers.ButtonAt(0, 3)!.Value.Label).IsEqualTo(TimersScreenRenderer.RemoveTimerLabel);
+        await Assert.That(timers.ButtonAt(0, 3)!.Value.Label).IsEqualTo(ScreenButton.RemoveKeyLabel);
         await Assert.That(timers.ButtonAt(0, 4)).IsNull();
+        await Assert.That(timers.Sizes[0]).IsEqualTo(3);
 
         // Nor does F4: a copied binding would land on the key its original already holds, and the
         // second macro on a key never fires.
         var keypad = KeypadScreenRenderer.Model(sets[0].Macros, sets, 0);
         await Assert.That(keypad.ListSizes[0]).IsEqualTo(1);
         await Assert.That(keypad.ButtonAt(0, 1)!.Value.Label).IsEqualTo(KeypadScreenRenderer.AddBindingLabel);
-        await Assert.That(keypad.ButtonAt(0, 2)!.Value.Label).IsEqualTo(KeypadScreenRenderer.RemoveBindingLabel);
+        await Assert.That(keypad.ButtonAt(0, 2)!.Value.Label).IsEqualTo(ScreenButton.RemoveKeyLabel);
         await Assert.That(keypad.ButtonAt(0, 3)).IsNull();
+        await Assert.That(keypad.Sizes[0]).IsEqualTo(2);
     }
 
     /// <summary>
@@ -149,8 +164,10 @@ public class ScreenListButtonTests
         await Assert.That(sets[0].Triggers).Count().IsEqualTo(2);
         await Assert.That(select).IsEqualTo(3);
 
+        // Kept — an addition destroys nothing — so the second half of this test starts from three rules
+        // across the two sets rather than from two.
         edits.Revert();
-        await Assert.That(sets[1].Triggers.Select(t => t.Name)).IsEquivalentTo(new[] { "Offer" });
+        await Assert.That(sets[1].Triggers.Select(t => t.Name)).IsEquivalentTo(new[] { "Offer", "New Trigger" });
 
         // And with the first set's rule selected it goes there, taking pane row 2 — after that set's
         // own rules and before the second set's.
@@ -214,17 +231,16 @@ public class ScreenListButtonTests
         var edits = new ScreenEdits();
 
         // Flattened row 0 is the first set's first rule.
-        edits.Apply(ButtonNamed(TriggersScreenRenderer.Model(sets, 0), 0, TriggersScreenRenderer.RemoveTriggerLabel));
+        edits.Apply(Removal(TriggersScreenRenderer.Model(sets, 0), 0));
         await Assert.That(sets[0].Triggers.Select(t => t.Name)).IsEquivalentTo(new[] { "Spam" });
 
-        edits.Apply(ButtonNamed(AliasesScreenRenderer.Model(sets, 1), 0, AliasesScreenRenderer.RemoveAliasLabel));
+        edits.Apply(Removal(AliasesScreenRenderer.Model(sets, 1), 0));
         await Assert.That(sets[1].Aliases).IsEmpty();
 
-        edits.Apply(ButtonNamed(TimersScreenRenderer.Model(sets, 0), 0, TimersScreenRenderer.RemoveTimerLabel));
+        edits.Apply(Removal(TimersScreenRenderer.Model(sets, 0), 0));
         await Assert.That(sets[0].Timers).IsEmpty();
 
-        edits.Apply(ButtonNamed(
-            KeypadScreenRenderer.Model(sets[0].Macros, sets, 0), 0, KeypadScreenRenderer.RemoveBindingLabel));
+        edits.Apply(Removal(KeypadScreenRenderer.Model(sets[0].Macros, sets, 0), 0));
         await Assert.That(sets[0].Macros).IsEmpty();
 
         edits.Revert();
@@ -246,8 +262,7 @@ public class ScreenListButtonTests
         var sets = Sets();
         var edits = new ScreenEdits();
 
-        var select = edits.Apply(ButtonNamed(
-            TriggersScreenRenderer.Model(sets, 1), 0, TriggersScreenRenderer.RemoveTriggerLabel));
+        var select = edits.Apply(Removal(TriggersScreenRenderer.Model(sets, 1), 0));
 
         await Assert.That(select).IsEqualTo(1);
         await Assert.That(sets.SelectMany(s => s.Triggers).Select(t => t.Name))
@@ -281,8 +296,9 @@ public class ScreenListButtonTests
         copy.Actions.Gag = false;
         await Assert.That(original.Actions.Gag).IsTrue();
 
+        // Committed, and therefore kept: the review's undo only reaches deletions.
         edits.Revert();
-        await Assert.That(sets[0].Triggers).Count().IsEqualTo(2);
+        await Assert.That(sets[0].Triggers).Count().IsEqualTo(3);
     }
 
     [Test]
@@ -302,8 +318,9 @@ public class ScreenListButtonTests
         copy.Pattern = "^gg$";
         await Assert.That(original.Pattern).IsEqualTo("^gr$");
 
+        // Committed, and therefore kept: the review's undo only reaches deletions.
         edits.Revert();
-        await Assert.That(sets[0].Aliases).Count().IsEqualTo(1);
+        await Assert.That(sets[0].Aliases).Count().IsEqualTo(2);
     }
 
     /// <summary>
@@ -371,35 +388,42 @@ public class ScreenListButtonTests
         var model = KeypadScreenRenderer.Model(sets[0].Macros, sets, 0);
         var bindings = MacroKeys.Bindable.Count;
 
-        await Assert.That(model.Sizes[0]).IsEqualTo(bindings + 1); // the bindings + [- del], nothing else
-        await Assert.That(model.ButtonAt(0, bindings)!.Value.Label)
-            .IsEqualTo(KeypadScreenRenderer.RemoveBindingLabel);
+        // The bindings and nothing else the cursor can reach: the add button is gone because there is no
+        // free chord left to claim, and the removal past them is drawn but not a stop (was bindings + 1).
+        await Assert.That(model.Sizes[0]).IsEqualTo(bindings);
+        await Assert.That(model.RowCount(0)).IsEqualTo(bindings + 1);
+        await Assert.That(model.ButtonAt(0, bindings)!.Value.Label).IsEqualTo(ScreenButton.RemoveKeyLabel);
         await Assert.That(model.ButtonAt(0, bindings + 1)).IsNull();
     }
 
     /// <summary>
-    /// A destructive button names the row it would act on, because the cursor has to leave the list to
-    /// reach it and a delete whose target is off-screen is exactly the surprise these screens must not
-    /// spring. An add button names no victim — except F4's, which names the key it will claim.
+    /// A removal still names the row it would act on — a destructive key whose target is off-screen is
+    /// exactly the surprise these screens must not spring — but it names the <em>key</em> rather than
+    /// posing as a chip: <c>Del  removes Spam</c>. It stopped being a cursor stop, so brackets there
+    /// would advertise a press the keyboard can no longer make. The building buttons keep their chips,
+    /// and F4's still names the chord it will claim.
     /// </summary>
     [Test]
-    public async Task ATargetedButtonNamesTheRowItWouldActOn()
+    public async Task ARemovalRowNamesTheKeyAndTheRowItWouldTake()
     {
         var sets = Sets();
 
+        bool Removes(IEnumerable<string> column, string target) => column.Any(l =>
+            l.Contains(ScreenButton.RemoveKeyLabel, StringComparison.Ordinal)
+            && l.Contains(ScreenChrome.RemovesWord, StringComparison.Ordinal)
+            && l.Contains(target, StringComparison.Ordinal));
+
         var rules = TriggersScreenRenderer.RulesColumn(sets, 1);
-        await Assert.That(rules.Any(l => l.Contains("[[- del]]") && l.Contains("Spam"))).IsTrue();
+        await Assert.That(Removes(rules, "Spam")).IsTrue();
+        await Assert.That(rules.Any(l => l.Contains("[[- del]]"))).IsFalse();
         await Assert.That(rules.Any(l => l.Contains("[[⧉ duplicate]]") && l.Contains("Spam"))).IsTrue();
         await Assert.That(rules.Any(l => l.Contains("[[+ trigger]]") && l.Contains("Spam"))).IsFalse();
 
-        var aliases = AliasesScreenRenderer.ListColumn(sets, 0);
-        await Assert.That(aliases.Any(l => l.Contains("[[- del]]") && l.Contains("gr"))).IsTrue();
-
-        var timers = TimersScreenRenderer.ListColumn(sets, 0);
-        await Assert.That(timers.Any(l => l.Contains("[[- del]]") && l.Contains("ping"))).IsTrue();
+        await Assert.That(Removes(AliasesScreenRenderer.ListColumn(sets, 0), "gr")).IsTrue();
+        await Assert.That(Removes(TimersScreenRenderer.ListColumn(sets, 0), "ping")).IsTrue();
 
         var bindings = KeypadScreenRenderer.HotkeysColumn(sets[0].Macros, null, sets, 0);
-        await Assert.That(bindings.Any(l => l.Contains("[[- del]]") && l.Contains("Look"))).IsTrue();
+        await Assert.That(Removes(bindings, "Look")).IsTrue();
         await Assert.That(bindings.Any(l => l.Contains("[[+ binding]]") && l.Contains(MacroKeys.Bindable[0])))
             .IsTrue();
     }
@@ -437,9 +461,12 @@ public class ScreenListButtonTests
         await Assert.That(session.Focus().Edit!.Value.Text).IsEqualTo("New Trigger");
         await Assert.That(session.Focus().Edit!.Value.Field).IsEqualTo(TriggersScreenRenderer.NameField);
 
+        // Esc abandons the buffer; a second Esc closes the screen and keeps the rule, because adding one
+        // destroyed nothing. Deleting it is how you change your mind.
         session.Handle(Key(ConsoleKey.Escape));
-        await Assert.That(session.Handle(Key(ConsoleKey.Escape))).IsEqualTo(ScreenAction.Cancel);
+        await Assert.That(session.Handle(Key(ConsoleKey.Escape))).IsEqualTo(ScreenAction.Close);
         session.Edits.Revert();
-        await Assert.That(sets[1].Triggers.Select(t => t.Name)).IsEquivalentTo(new[] { "Offer" });
+        await Assert.That(sets[1].Triggers.Select(t => t.Name))
+            .IsEquivalentTo(new[] { "Offer", "New Trigger" });
     }
 }

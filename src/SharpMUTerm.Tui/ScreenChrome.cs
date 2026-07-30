@@ -9,8 +9,9 @@ namespace SharpMUTerm.Tui;
 /// <summary>
 /// The chrome every full-screen settings screen (F2–F9) shares: the keyboard-hint and action-bar
 /// fragments its renderer writes, and the band / rule / inset panels its view composes. The screens
-/// differ in their body, not their frame, so the frame lives here — a header band, a Cancel/Save
-/// action bar, and the hairlines between columns look and behave the same on all of them.
+/// differ in their body, not their frame, so the frame lives here — a header band, an action bar naming
+/// what Esc and ⏎ do <em>right now</em>, and the hairlines between columns look and behave the same on
+/// all of them.
 /// </summary>
 internal static class ScreenChrome
 {
@@ -72,10 +73,11 @@ internal static class ScreenChrome
     internal const string EditHint = " · ⏎ edit";
 
     /// <summary>
-    /// What a screen adds to its hints when — and only when — a pane offers a way to remove a row. It
-    /// exists because reaching a <c>[[- del]]</c> row with ↑↓ means walking the cursor past the whole
-    /// list, and the only key that stepped over it (End) was advertised nowhere. Delete acts on the row
-    /// the cursor is already on, which is the row the eye is on, and this is where the screen says so.
+    /// What a screen adds to its hints when — and only when — a pane offers a way to remove a row. Delete
+    /// is now the <em>only</em> way to run a removal: reaching the drawn row with ↑↓ meant walking the
+    /// cursor past the whole list, which dragged the selection to its last item, so that row is no longer a
+    /// cursor stop at all (<see cref="ScreenModel.Sizes"/>). Delete acts on the row the cursor is already
+    /// on, which is the row the eye is on, and this is where the screen says so.
     /// </summary>
     internal const string DeleteHint = " · Del remove";
 
@@ -105,11 +107,26 @@ internal static class ScreenChrome
     /// </summary>
     internal const string ChoiceHint = " · ↑↓ pick from list";
 
-    /// <summary>What the footer's Esc chip does while the screen is navigating.</summary>
-    internal const string CancelAction = "[[Esc]] Cancel";
+    /// <summary>
+    /// What the footer's Esc chip does while the screen is navigating. It said <c>Cancel</c> until the
+    /// key stopped cancelling: closing keeps every committed edit, so the footer now agrees with the
+    /// header's <c>Esc close</c> instead of contradicting it in the one place a user looks for the
+    /// consequences of a key. <see cref="ScreenFooterTests"/> pins the two against each other.
+    /// </summary>
+    internal const string CloseAction = "[[Esc]] Close";
 
-    /// <summary>What the footer's ⏎ chip does while the screen is navigating.</summary>
-    internal const string SaveAction = "[[⏎]] Save";
+    /// <summary>What the footer's ⏎ chip says on a row that has values to open.</summary>
+    internal const string EditAction = "[[⏎]] Edit";
+
+    /// <summary>And on one of a pane's building buttons, which is the other row ⏎ acts on.</summary>
+    internal const string AddAction = "[[⏎]] Add";
+
+    /// <summary>
+    /// And on a row that is neither, where ⏎ leaves the screen. It says <c>Done</c> rather than
+    /// <c>Save</c> because there is nothing left to save — every committed value is already on disk (see
+    /// <see cref="ScreenEdits"/>) — and a chip promising a save would be promising work that is finished.
+    /// </summary>
+    internal const string DoneAction = "[[⏎]] Done";
 
     /// <summary>What the footer's Esc chip does while a field edit is open.</summary>
     internal const string RevertAction = "[[Esc]] Revert";
@@ -139,12 +156,25 @@ internal static class ScreenChrome
     {
         var editing = focus?.Edit is not null;
         var capturing = focus?.Edit is { Capture: true };
-        var escape = editing ? RevertAction : CancelAction;
-        var enter = capturing ? BindAction : editing ? CommitAction : SaveAction;
+        var escape = editing ? RevertAction : CloseAction;
+        var enter = capturing ? BindAction : editing ? CommitAction : Enter(focus);
 
         return $"[{ScreenPalette.Label}] {escape} [/]  "
             + $"[{ScreenPalette.Ink} on {accent ?? ScreenPalette.Accent}] {enter} [/] ";
     }
+
+    /// <summary>
+    /// What the ⏎ chip reads while the screen is navigating: whatever ⏎ does on the row the cursor is
+    /// actually on (<see cref="ScreenEnter"/>). A caller with no focus at all — the width-agnostic
+    /// <c>Render</c> the unit tests go through — gets the row-less answer, which is what ⏎ does when
+    /// there is no row to act on.
+    /// </summary>
+    private static string Enter(ScreenFocus? focus) => focus?.Enter switch
+    {
+        ScreenEnter.Edit => EditAction,
+        ScreenEnter.Add => AddAction,
+        _ => DoneAction,
+    };
 
     /// <summary>
     /// Draws a row as the keyboard cursor: the row's own markup on a cursor band padded out to
@@ -639,10 +669,14 @@ internal static class ScreenChrome
     /// cursor lands on and the command ⏎ runs cannot drift apart — and every screen paints them the
     /// same, which is the whole reason this lives here rather than in five renderers.
     /// <para>
-    /// A button that builds gets the accent and stands alone; one that acts on the selected row is drawn
-    /// in the label ink and *names its victim* (<c>[[- del]] Aetherfall</c>), because the cursor has to
-    /// leave the list to reach the button and a destructive key whose target is off-screen is exactly
-    /// the surprise these screens must not spring.
+    /// The two kinds are drawn differently because they are no longer the same kind of thing. A button
+    /// that <b>builds</b> is a chip in the accent — a place the cursor goes and ⏎ presses, which is what
+    /// brackets mean everywhere else on these screens. A <b>removal</b> is not a cursor stop at all any
+    /// more (<see cref="ScreenModel.Sizes"/> explains why), so drawing it as a chip would be an
+    /// affordance for something the keyboard cannot reach. It is drawn as what it now is: a reading of
+    /// what Delete would take, naming the key and its victim — <c>Del  removes Aetherfall</c>. The row
+    /// still earns its place, because the target is the one thing a destructive key must not leave
+    /// off-screen.
     /// </para>
     /// </summary>
     /// <param name="buttons">The pane's button rows, in the order the model appends them.</param>
@@ -663,18 +697,34 @@ internal static class ScreenChrome
                 continue;
             }
 
-            var ink = button.Kind == ScreenButtonKind.Add ? ScreenPalette.Accent : ScreenPalette.Label;
-            var row = $"[{ink}][[{MarkupText.Escape(button.Label)}]][/]";
-            if (button.Target is { } target)
-            {
-                row += $" [{ScreenPalette.Value}]{MarkupText.Escape(target)}[/]";
-            }
-
-            lines.Add(Cursor(row, cursor.IsOn(pane, firstIndex + i), width));
+            lines.Add(button.Kind == ScreenButtonKind.Remove
+                ? RemovalRow(button)
+                : Cursor(AddRow(button), cursor.IsOn(pane, firstIndex + i), width));
         }
 
         return lines;
     }
+
+    /// <summary>A building button: a pressable chip in the accent, naming its source when it has one.</summary>
+    private static string AddRow(ScreenButton button)
+    {
+        var row = $"[{ScreenPalette.Accent}][[{MarkupText.Escape(button.Label)}]][/]";
+        return button.Target is { } target
+            ? row + $" [{ScreenPalette.Value}]{MarkupText.Escape(target)}[/]"
+            : row;
+    }
+
+    /// <summary>
+    /// What Delete would take, as a row. Never drawn with a cursor bar, because the cursor cannot get
+    /// there — that is the whole fix for "only the last world can be deleted".
+    /// </summary>
+    private static string RemovalRow(ScreenButton button) =>
+        $"[{ScreenPalette.Accent}]{MarkupText.Escape(button.Label)}[/]"
+        + $"  [{ScreenPalette.Label}]{RemovesWord}[/] "
+        + $"[{ScreenPalette.Value}]{MarkupText.Escape(button.Target ?? string.Empty)}[/]";
+
+    /// <summary>The verb on a removal row, between the key and what it would take.</summary>
+    internal const string RemovesWord = "removes";
 
     /// <summary>
     /// Where the cursor is within one of a screen's lists — <c>trigger 1/4</c>, <c>world 2/2</c>. Every

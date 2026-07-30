@@ -74,16 +74,53 @@ public class ScreenFooterTests
         };
     }
 
+    /// <summary>
+    /// While the screen is navigating, Esc <b>closes</b> — and the footer says so. It said <c>Cancel</c>
+    /// until the key stopped cancelling: closing keeps every committed edit now, and a chip promising to
+    /// cancel is how a user comes to believe that leaving a screen is safe to do with unsaved work and
+    /// that F5 will hand it back. The ⏎ chip is checked separately, because what ⏎ does depends on the
+    /// row.
+    /// </summary>
     [Test]
-    public async Task FooterActions_NameSaveAndCancelWhileTheScreenIsNavigating()
+    public async Task FooterActions_SayCloseWhileTheScreenIsNavigating()
     {
         foreach (var (name, navigating, _) in Footers())
         {
-            await Assert.That(navigating).Contains(ScreenChrome.SaveAction).Because(name);
-            await Assert.That(navigating).Contains(ScreenChrome.CancelAction).Because(name);
+            await Assert.That(navigating).Contains(ScreenChrome.CloseAction).Because(name);
             await Assert.That(navigating).DoesNotContain(ScreenChrome.CommitAction).Because(name);
             await Assert.That(navigating).DoesNotContain(ScreenChrome.RevertAction).Because(name);
+            await Assert.That(navigating).DoesNotContain("Cancel").Because(name);
+            await Assert.That(navigating).DoesNotContain("Save").Because(name);
         }
+    }
+
+    /// <summary>
+    /// And the ⏎ chip names what ⏎ would do <em>on the row the cursor is on</em>, which is the same
+    /// honesty rule the header's hints follow. It used to read <c>[[⏎]] Save</c> on every row of every
+    /// screen; on a world's row ⏎ opens an editor and on <c>[[+ world]]</c> it adds a world, so the chip
+    /// was wrong nearly everywhere it was drawn — and wrong in the one direction that matters, since
+    /// "Save" is a promise about the user's work.
+    /// </summary>
+    [Test]
+    public async Task FooterActions_NameWhatEnterDoesOnTheFocusedRow()
+    {
+        var worlds = Worlds();
+        var accent = WorldsScreenRenderer.AccentFor(worlds, 0);
+
+        string Footer(ScreenFocus focus) => WorldsScreenRenderer.FooterLine(worlds, 0, 0, accent, 80, focus);
+
+        // A world's row: ⏎ opens its name.
+        await Assert.That(Footer(new ScreenFocus(0, 0, Enter: ScreenEnter.Edit)))
+            .Contains(ScreenChrome.EditAction);
+
+        // [+ world]: ⏎ runs it.
+        await Assert.That(Footer(new ScreenFocus(0, 2, Enter: ScreenEnter.Add)))
+            .Contains(ScreenChrome.AddAction);
+
+        // A security checkbox: nothing to open, so ⏎ leaves — and says "Done", not "Save", because
+        // every committed value is already on disk.
+        await Assert.That(Footer(new ScreenFocus(3, 0)))
+            .Contains(ScreenChrome.DoneAction);
     }
 
     /// <summary>
@@ -98,8 +135,8 @@ public class ScreenFooterTests
         {
             await Assert.That(mid).Contains(ScreenChrome.CommitAction).Because(name);
             await Assert.That(mid).Contains(ScreenChrome.RevertAction).Because(name);
-            await Assert.That(mid).DoesNotContain(ScreenChrome.SaveAction).Because(name);
-            await Assert.That(mid).DoesNotContain(ScreenChrome.CancelAction).Because(name);
+            await Assert.That(mid).DoesNotContain(ScreenChrome.CloseAction).Because(name);
+            await Assert.That(mid).DoesNotContain(ScreenChrome.DoneAction).Because(name);
         }
     }
 
@@ -139,7 +176,7 @@ public class ScreenFooterTests
 
         await Assert.That(accented).Contains("#ff00ff");
         await Assert.That(accented).Contains(ScreenChrome.CommitAction);
-        await Assert.That(accented).DoesNotContain(ScreenChrome.SaveAction);
+        await Assert.That(accented).DoesNotContain(ScreenChrome.DoneAction);
     }
 
     /// <summary>

@@ -4,6 +4,19 @@ namespace SharpMUTerm.Tui.Tests;
 
 public class SettingsSessionTests
 {
+
+    /// <summary>
+    /// Where the cursor is, and whether a field is open on it — the whole of what a navigation assertion
+    /// is about. Compared as a tuple rather than as a whole <see cref="ScreenFocus"/> because the focus
+    /// also carries a <em>derived</em> reading of what ⏎ would do on the row
+    /// (<see cref="ScreenEnter"/>, for the action bar's chip), and a movement test restating that would be
+    /// pinning a label from the wrong place.
+    /// </summary>
+    private static (int Pane, int Index, bool Editing) Cursor(SettingsSession session)
+    {
+        var focus = session.Focus();
+        return (focus.Pane, focus.Index, focus.IsEditing);
+    }
     private static ConsoleKeyInfo Key(ConsoleKey key, ConsoleModifiers modifiers = default) =>
         new('\0', key, modifiers.HasFlag(ConsoleModifiers.Shift), false, false);
 
@@ -35,7 +48,7 @@ public class SettingsSessionTests
         var session = new Scene().Session();
 
         await Assert.That(session.Handle(Key(ConsoleKey.DownArrow))).IsEqualTo(ScreenAction.Redraw);
-        await Assert.That(session.Focus()).IsEqualTo(new ScreenFocus(0, 1));
+        await Assert.That(Cursor(session)).IsEqualTo((0, 1, false));
     }
 
     [Test]
@@ -44,7 +57,7 @@ public class SettingsSessionTests
         var session = new Scene().Session();
 
         await Assert.That(session.Handle(Key(ConsoleKey.UpArrow))).IsEqualTo(ScreenAction.Consumed);
-        await Assert.That(session.Focus()).IsEqualTo(new ScreenFocus(0, 0));
+        await Assert.That(Cursor(session)).IsEqualTo((0, 0, false));
     }
 
     [Test]
@@ -53,10 +66,10 @@ public class SettingsSessionTests
         var session = new Scene().Session();
 
         await Assert.That(session.Handle(Key(ConsoleKey.Tab))).IsEqualTo(ScreenAction.Redraw);
-        await Assert.That(session.Focus()).IsEqualTo(new ScreenFocus(1, 0));
+        await Assert.That(Cursor(session)).IsEqualTo((1, 0, false));
 
         session.Handle(Key(ConsoleKey.Tab, ConsoleModifiers.Shift));
-        await Assert.That(session.Focus()).IsEqualTo(new ScreenFocus(0, 0));
+        await Assert.That(Cursor(session)).IsEqualTo((0, 0, false));
     }
 
     [Test]
@@ -70,7 +83,11 @@ public class SettingsSessionTests
 
         await Assert.That(scene.List[1]).IsTrue();
         await Assert.That(scene.List[0]).IsFalse();
-        await Assert.That(session.Edits.IsDirty).IsTrue();
+
+        // A flipped checkbox is committed on the spot and raises nothing for the closing review: it is
+        // kept whatever the user does next. This replaced an IsDirty assertion, from when Esc would have
+        // put it back.
+        await Assert.That(session.Edits.HasDeletions).IsFalse();
     }
 
     [Test]
@@ -79,16 +96,37 @@ public class SettingsSessionTests
         var session = new SettingsSession(_ => new ScreenModel(ScreenModel.Stops(2)));
 
         await Assert.That(session.Handle(Key(ConsoleKey.Spacebar))).IsEqualTo(ScreenAction.Consumed);
-        await Assert.That(session.Edits.IsDirty).IsFalse();
+        await Assert.That(session.Edits.HasDeletions).IsFalse();
     }
 
+    /// <summary>
+    /// Both keys close the screen, and neither discards anything. ⏎ used to mean <c>Save</c> — a distinct
+    /// action that committed the screen's undo log before closing — and Esc used to mean <c>Cancel</c>,
+    /// which replayed it. There is nothing left for the two to differ about: every committed change is
+    /// already in config and on disk, so the two keys are one answer under two names.
+    /// </summary>
     [Test]
-    public async Task Enter_Saves_AndEscape_Cancels()
+    public async Task EnterOnAPlainRowAndEscapeBothClose()
     {
         var session = new Scene().Session();
 
-        await Assert.That(session.Handle(Key(ConsoleKey.Enter))).IsEqualTo(ScreenAction.Save);
-        await Assert.That(session.Handle(Key(ConsoleKey.Escape))).IsEqualTo(ScreenAction.Cancel);
+        await Assert.That(session.Handle(Key(ConsoleKey.Enter))).IsEqualTo(ScreenAction.Close);
+        await Assert.That(session.Handle(Key(ConsoleKey.Escape))).IsEqualTo(ScreenAction.Close);
+    }
+
+    /// <summary>
+    /// And ⌃S is gone. It meant "commit and close" on a screen that could otherwise discard; with every
+    /// change already written the moment it is committed, a save chord would be claiming work that is
+    /// finished — and one that quietly closed the screen instead would be a worse answer than none. The
+    /// key is left for the framework.
+    /// </summary>
+    [Test]
+    public async Task ThereIsNoSaveChord()
+    {
+        var session = new Scene().Session();
+
+        await Assert.That(session.Handle(Key(ConsoleKey.S, ConsoleModifiers.Control)))
+            .IsEqualTo(ScreenAction.None);
     }
 
     [Test]
@@ -99,8 +137,14 @@ public class SettingsSessionTests
         await Assert.That(session.Handle(Key(ConsoleKey.F1))).IsEqualTo(ScreenAction.None);
     }
 
+    /// <summary>
+    /// <b>Bug: "when I change the address of a world, it does not stick."</b> Whatever the screen does on
+    /// the way out, the checkboxes the user pressed stay pressed. This test asserted the exact opposite
+    /// until now — that Revert undid every toggle the screen had applied — and Esc, the F-key and ⌃Q's
+    /// prompt all ran that revert while the header called the keys <c>close</c>.
+    /// </summary>
     [Test]
-    public async Task RevertingTheEditsUndoesEveryToggleTheScreenApplied()
+    public async Task ClosingTheScreenKeepsEveryToggleItApplied()
     {
         var scene = new Scene();
         scene.List[0] = true;
@@ -112,10 +156,12 @@ public class SettingsSessionTests
         await Assert.That(scene.List[0]).IsFalse();
         await Assert.That(scene.Editor[0]).IsTrue();
 
-        session.Edits.Revert();
+        await Assert.That(session.Handle(Key(ConsoleKey.Escape))).IsEqualTo(ScreenAction.Close);
+        await Assert.That(session.Edits.HasDeletions).IsFalse();
+        session.Edits.Revert(); // the review's "put them back", which has nothing to put back
 
-        await Assert.That(scene.List[0]).IsTrue();
-        await Assert.That(scene.Editor[0]).IsFalse();
+        await Assert.That(scene.List[0]).IsFalse();
+        await Assert.That(scene.Editor[0]).IsTrue();
     }
 
     [Test]
@@ -140,6 +186,6 @@ public class SettingsSessionTests
 
         session.Handle(Key(ConsoleKey.DownArrow));
         await Assert.That(session.Handle(Key(ConsoleKey.Tab))).IsEqualTo(ScreenAction.Redraw);
-        await Assert.That(session.Focus()).IsEqualTo(new ScreenFocus(1, 0));
+        await Assert.That(Cursor(session)).IsEqualTo((1, 0, false));
     }
 }

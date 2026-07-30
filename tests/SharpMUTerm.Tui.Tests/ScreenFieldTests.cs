@@ -168,11 +168,16 @@ public class ScreenFieldTests
         await Assert.That(substitution).IsEqualTo(@"say a\b");
     }
 
+    /// <summary>
+    /// A committed value is the typed value, not the text it was edited as: a port becomes an
+    /// <c>int</c> and a log format becomes the enum. It is kept — a field has no undo, because it needs
+    /// none: the buffer is the escape hatch, and Esc drops it before it ever reaches config (see
+    /// <see cref="ScreenEdits"/>). This test replaced one asserting that Revert put both back, which was
+    /// the behaviour behind "I changed the address and it went back to the old setting".
+    /// </summary>
     [Test]
-    public async Task Snapshot_RestoresTheTypedValue_NotTheTextItWasShownAs()
+    public async Task ACommittedValueIsTheTypedValueAndSurvivesTheScreen()
     {
-        // The point of the Snapshot indirection: undoing a port restores an int, and undoing a log
-        // format restores the enum — neither goes back through the buffer they were edited in.
         var port = 4000;
         var format = LogFormat.Html;
         var edits = new ScreenEdits();
@@ -182,21 +187,23 @@ public class ScreenFieldTests
         await Assert.That(port).IsEqualTo(4201);
         await Assert.That(format).IsEqualTo(LogFormat.None);
 
-        edits.Revert();
+        edits.Revert(); // whatever the screen does on the way out, a committed field is not undone
 
-        await Assert.That(port).IsEqualTo(4000);
-        await Assert.That(format).IsEqualTo(LogFormat.Html);
+        await Assert.That(port).IsEqualTo(4201);
+        await Assert.That(format).IsEqualTo(LogFormat.None);
     }
 
     [Test]
-    public async Task ARejectedValueRecordsNothingToUndo()
+    public async Task ARejectedValueChangesNothing()
     {
         var port = 4000;
-        var edits = new ScreenEdits();
+        var saves = 0;
+        var edits = new ScreenEdits(() => saves++);
 
         edits.Apply(ScreenField.Integer("port", () => port, v => port = v, 1, 65535), "nope");
 
-        await Assert.That(edits.IsDirty).IsFalse();
-        await Assert.That(edits.Count).IsEqualTo(0);
+        await Assert.That(port).IsEqualTo(4000);
+        await Assert.That(saves).IsEqualTo(0);
+        await Assert.That(edits.HasDeletions).IsFalse();
     }
 }

@@ -200,7 +200,7 @@ public class SettingsPasteTests
         var session = scene.Session();
         var system = new ConsoleWindowSystem(
             new HeadlessConsoleDriver(120, 34), new ConsoleWindowSystemOptions());
-        var overlay = new SettingsOverlay(system, () => { });
+        var overlay = new SettingsOverlay(system);
 
         overlay.OpenForSnapshot(
             ConsoleKey.F5, new ScreenBinding(session, () => new MarkupControl(new List<string> { "screen" })));
@@ -232,7 +232,7 @@ public class SettingsPasteTests
         }));
         var system = new ConsoleWindowSystem(
             new HeadlessConsoleDriver(120, 34), new ConsoleWindowSystemOptions());
-        var overlay = new SettingsOverlay(system, () => { });
+        var overlay = new SettingsOverlay(system);
 
         overlay.OpenForSnapshot(
             ConsoleKey.F2, new ScreenBinding(session, () => new MarkupControl(new List<string> { "screen" })));

@@ -17,6 +17,19 @@ namespace SharpMUTerm.Tui.Tests;
 /// </summary>
 public class ScreenPaneNavigationTests
 {
+
+    /// <summary>
+    /// Where the cursor is, and whether a field is open on it — the whole of what a navigation assertion
+    /// is about. Compared as a tuple rather than as a whole <see cref="ScreenFocus"/> because the focus
+    /// also carries a <em>derived</em> reading of what ⏎ would do on the row
+    /// (<see cref="ScreenEnter"/>, for the action bar's chip), and a movement test restating that would be
+    /// pinning a label from the wrong place.
+    /// </summary>
+    private static (int Pane, int Index, bool Editing) Cursor(SettingsSession session)
+    {
+        var focus = session.Focus();
+        return (focus.Pane, focus.Index, focus.IsEditing);
+    }
     private static ConsoleKeyInfo Key(ConsoleKey key, ConsoleModifiers modifiers = default) =>
         new('\0', key, modifiers.HasFlag(ConsoleModifiers.Shift), false, false);
 
@@ -199,10 +212,10 @@ public class ScreenPaneNavigationTests
         session.Handle(Key(ConsoleKey.DownArrow));
         session.Handle(Key(ConsoleKey.RightArrow));
         session.Handle(Key(ConsoleKey.DownArrow));
-        await Assert.That(session.Focus()).IsEqualTo(new ScreenFocus(1, 1));
+        await Assert.That(Cursor(session)).IsEqualTo((1, 1, false));
 
         session.Handle(Key(ConsoleKey.LeftArrow));
-        await Assert.That(session.Focus()).IsEqualTo(new ScreenFocus(0, 1));
+        await Assert.That(Cursor(session)).IsEqualTo((0, 1, false));
     }
 
     // ---- ↑↓ spilling down a stacked column ---------------------------------------------------------
@@ -221,25 +234,27 @@ public class ScreenPaneNavigationTests
 
         // Two checkboxes, then the character list.
         session.Handle(Key(ConsoleKey.DownArrow));
-        await Assert.That(session.Focus()).IsEqualTo(new ScreenFocus(WorldsScreenRenderer.SecurityPane, 1));
+        await Assert.That(Cursor(session)).IsEqualTo((WorldsScreenRenderer.SecurityPane, 1, false));
 
         await Assert.That(session.Handle(Key(ConsoleKey.DownArrow))).IsEqualTo(ScreenAction.Redraw);
-        await Assert.That(session.Focus()).IsEqualTo(new ScreenFocus(WorldsScreenRenderer.CharactersPane, 0));
+        await Assert.That(Cursor(session)).IsEqualTo((WorldsScreenRenderer.CharactersPane, 0, false));
 
-        // Two characters and three buttons, then the trigger sets at the foot of the screen.
-        for (var hop = 0; hop < 4; hop++)
+        // Two characters and two reachable buttons — [+ add character] and [⧉ duplicate]; the Del row past
+        // them is drawn and is not a stop — then the trigger sets at the foot of the screen. It was three
+        // buttons before that row left the walk.
+        for (var hop = 0; hop < 3; hop++)
         {
             session.Handle(Key(ConsoleKey.DownArrow));
         }
 
         await Assert.That(session.Focus().Pane).IsEqualTo(WorldsScreenRenderer.CharactersPane);
         session.Handle(Key(ConsoleKey.DownArrow));
-        await Assert.That(session.Focus()).IsEqualTo(new ScreenFocus(WorldsScreenRenderer.TriggerSetsPane, 0));
+        await Assert.That(Cursor(session)).IsEqualTo((WorldsScreenRenderer.TriggerSetsPane, 0, false));
 
         // ↑ comes back up the same way, onto the row it left from rather than the top of that pane.
         session.Handle(Key(ConsoleKey.UpArrow));
         await Assert.That(session.Focus().Pane).IsEqualTo(WorldsScreenRenderer.CharactersPane);
-        await Assert.That(session.Focus().Index).IsEqualTo(4);
+        await Assert.That(session.Focus().Index).IsEqualTo(3); // [⧉ duplicate]; was 4, the Del row
     }
 
     /// <summary>
@@ -254,7 +269,7 @@ public class ScreenPaneNavigationTests
         var session = new SettingsSession(selection => TriggersScreenRenderer.Model(sets, selection.SelectionIn(0)));
 
         await Assert.That(session.Handle(Key(ConsoleKey.UpArrow))).IsEqualTo(ScreenAction.Consumed);
-        await Assert.That(session.Focus()).IsEqualTo(new ScreenFocus(0, 0));
+        await Assert.That(Cursor(session)).IsEqualTo((0, 0, false));
 
         for (var hop = 0; hop < 20; hop++)
         {

@@ -1,55 +1,58 @@
 namespace SharpMUTerm.Tui;
 
 /// <summary>
-/// A checkbox row on a settings screen, bound to the config it shows: how to read the flag, how to
-/// flip it, and how to put back exactly what was there before. The snapshot exists because not every
-/// checkbox is a plain <c>bool</c> property — F5's trigger-set assignment is really a position in a
-/// list, and Esc has to restore that whole list, not merely "assigned".
+/// A checkbox row on a settings screen, bound to the config it shows: how to read the flag, and how to
+/// flip it.
+/// <para>
+/// There is nothing here about putting the old value back, and deliberately so. A flipped checkbox is a
+/// <em>committed</em> edit the moment Space presses it — see <see cref="ScreenEdits"/> for the scope rule
+/// — so nothing ever asks a toggle to undo itself, and a snapshot nothing replayed would be a mechanism
+/// with no driver.
+/// </para>
 /// </summary>
 /// <param name="Get">Reads the flag as the renderer draws it.</param>
 /// <param name="Flip">Inverts the flag.</param>
-/// <param name="Snapshot">Captures the current value, returning the action that restores it.</param>
-internal readonly record struct ScreenToggle(Func<bool> Get, Action Flip, Func<Action> Snapshot)
+internal readonly record struct ScreenToggle(Func<bool> Get, Action Flip)
 {
-    /// <summary>Binds a plain boolean property; restoring it is just writing the old value back.</summary>
+    /// <summary>Binds a plain boolean property.</summary>
     internal static ScreenToggle Bind(Func<bool> get, Action<bool> set)
     {
         ArgumentNullException.ThrowIfNull(get);
         ArgumentNullException.ThrowIfNull(set);
 
-        return new ScreenToggle(
-            get,
-            () => set(!get()),
-            () =>
-            {
-                var previous = get();
-                return () => set(previous);
-            });
+        return new ScreenToggle(get, () => set(!get()));
     }
 }
 
 /// <summary>
-/// What running a button left behind: how to undo it, and where the cursor should be afterwards.
+/// What running a button left behind: how to undo it if it destroyed something, and where the cursor
+/// should be afterwards.
 /// </summary>
-/// <param name="Undo">Puts the list back exactly as it was, position included.</param>
+/// <param name="Undo">
+/// Puts the list back exactly as it was, position included — or null when the press destroyed nothing.
+/// A button that <em>built</em> a row returns null: an addition loses no work by being kept, so it is
+/// never reviewed and never replayed, and an undo action nothing could run would be dead weight
+/// carried by every press. Only the destructive buttons hand one back, which is what makes
+/// <see cref="ScreenEdits"/>' log a log of deletions rather than of everything.
+/// </param>
 /// <param name="Select">
 /// The row of the button's own pane the cursor should move to — the row just added, so a new world
 /// opens ready to be named. Null leaves the cursor where it was.
 /// </param>
-internal readonly record struct ScreenPress(Action Undo, int? Select = null);
+internal readonly record struct ScreenPress(Action? Undo, int? Select = null);
 
 /// <summary>
-/// A button row on a settings screen: <c>[+ world]</c>, <c>[⧉ duplicate]</c>, <c>[- remove]</c>. ⏎ is
-/// already "activate the focused row", so a button is a row whose activation runs a command instead of
-/// opening an editor.
+/// A command on a settings screen. The building ones are rows the cursor lands on and ⏎ presses —
+/// <c>[+ world]</c>, <c>[⧉ duplicate]</c> — since ⏎ is already "activate the focused row". A
+/// <em>removal</em> is run by Delete on the row it would take, and its own drawn row is not a cursor stop
+/// (see <see cref="ScreenModel.Sizes"/>).
 /// <para>
 /// <see cref="Run"/> performs the change and *returns* how to undo it, rather than being handed a
-/// snapshot taken beforehand the way <see cref="ScreenToggle"/> and <see cref="ScreenField"/> are.
-/// That is forced by what these buttons do: the undo for an insertion is "remove the thing that was
-/// added", which cannot be described until it has been added. Doing it this way also lets a removal
-/// capture the item *and its index*, so Esc puts a deleted world back where it was in the list rather
-/// than on the end — the list's order is what the screen navigates by, and silently reordering it
-/// would be a second, invisible edit.
+/// snapshot taken beforehand. That is forced by what a removal has to capture: the item <em>and its
+/// index</em>, so the closing review's "put them back" restores a deleted world where it was in the list
+/// rather than on the end — the list's order is what the screen navigates by, and silently reordering it
+/// would be a second, invisible edit. A building press returns no undo at all: an addition destroys
+/// nothing, so nothing reviews or replays it.
 /// </para>
 /// </summary>
 /// <param name="Label">What the button is called, for the row the renderer draws.</param>
@@ -64,12 +67,28 @@ internal readonly record struct ScreenPress(Action Undo, int? Select = null);
 /// The row this button would act on, named on the button's own row so the screen says what is about to
 /// happen. Null for a button that acts on nothing in particular.
 /// </param>
+/// <param name="Describe">
+/// What this press would destroy, in words, asked <em>before</em> <paramref name="Run"/> — which is the
+/// only moment the answer can still be counted (a world's characters are gone by the time the press
+/// returns). It is what the closing review names, so the question reads <c>Aetherfall and its 2
+/// characters</c> rather than <c>1 deletion</c>; see <see cref="ScreenEditReview"/>. Null on a button
+/// that destroys nothing.
+/// </param>
 internal readonly record struct ScreenButton(
     string Label,
     Func<ScreenPress> Run,
     ScreenButtonKind Kind = ScreenButtonKind.Add,
-    string? Target = null)
+    string? Target = null,
+    Func<string>? Describe = null)
 {
+    /// <summary>
+    /// What a destructive button's row is labelled with, which is the <em>key</em> that runs it rather
+    /// than a chip you could land on. The row is not a cursor stop (see <see cref="ScreenModel.Sizes"/>),
+    /// so a bracketed <c>[[- del]]</c> would have been an affordance for something the keyboard could no
+    /// longer reach; naming the key instead makes the row a true reading of what Delete would take.
+    /// </summary>
+    internal const string RemoveKeyLabel = "Del";
+
     /// <summary>
     /// Appends a new item and leaves the cursor on it — a new row is worth nothing if the next
     /// keystroke has to go and find it.
@@ -93,7 +112,7 @@ internal readonly record struct ScreenButton(
             {
                 list.Add(create());
                 var at = list.Count - 1;
-                return new ScreenPress(() => list.RemoveAt(at), offset + at);
+                return new ScreenPress(null, offset + at);
             },
             ScreenButtonKind.Add,
             target);
@@ -103,19 +122,30 @@ internal readonly record struct ScreenButton(
     /// Removes the item at <paramref name="index"/>, restoring it *at that index* on undo. The cursor
     /// stays on the same ordinal, which is now whatever followed the deleted row — the same place the
     /// eye is. <paramref name="offset"/> means what it does on <see cref="Add"/>.
+    /// <para>
+    /// It takes no label. A removal is drawn as the key that runs it
+    /// (<see cref="ScreenButton.RemoveKeyLabel"/>) rather than as a chip, because its row is no longer
+    /// somewhere the cursor can go — see <see cref="ScreenModel.Sizes"/> for why, and
+    /// <see cref="ScreenChrome.Buttons"/> for what that row now reads as.
+    /// </para>
     /// </summary>
+    /// <param name="describe">
+    /// What this removal would destroy, in words, for the closing review to name. See
+    /// <see cref="ScreenButton.Describe"/>; it defaults to <paramref name="target"/>, which is the honest
+    /// answer for every row that takes nothing else with it.
+    /// </param>
     internal static ScreenButton Remove<T>(
-        string label, IList<T> list, int index, int offset = 0, string? target = null)
+        IList<T> list, int index, int offset = 0, string? target = null, Func<string>? describe = null)
     {
         ArgumentNullException.ThrowIfNull(list);
 
         return new ScreenButton(
-            label,
+            RemoveKeyLabel,
             () =>
             {
                 if (index < 0 || index >= list.Count)
                 {
-                    return new ScreenPress(() => { });
+                    return new ScreenPress(null);
                 }
 
                 var removed = list[index];
@@ -123,7 +153,8 @@ internal readonly record struct ScreenButton(
                 return new ScreenPress(() => list.Insert(index, removed), offset + index);
             },
             ScreenButtonKind.Remove,
-            target);
+            target,
+            describe ?? (target is { Length: > 0 } ? () => target : null));
     }
 }
 
@@ -137,7 +168,10 @@ internal enum ScreenButtonKind
     /// <summary>Puts a row into the list — <c>[+ world]</c>, <c>[⧉ duplicate]</c>.</summary>
     Add,
 
-    /// <summary>Takes the selected row out of it — <c>[- del]</c>, <c>[- remove]</c>.</summary>
+    /// <summary>
+    /// Takes the selected row out of it. Its row is drawn as the key that runs it (<c>Del  removes
+    /// Aetherfall</c>) rather than as a chip, because it is not a cursor stop — see <see cref="ScreenModel.Sizes"/>.
+    /// </summary>
     Remove,
 }
 
@@ -206,12 +240,52 @@ internal sealed class ScreenModel
     {
         ArgumentNullException.ThrowIfNull(panes);
         _panes = panes.Length == 0 ? new IReadOnlyList<ScreenRow>[] { Array.Empty<ScreenRow>() } : panes;
-        Sizes = Array.ConvertAll(_panes, p => p.Count);
+        Sizes = Array.ConvertAll(_panes, Stops);
         _layout = SideBySide(_panes.Length);
     }
 
-    /// <summary>Row counts per pane, in pane order — what <see cref="ScreenSelection"/> navigates by.</summary>
+    /// <summary>
+    /// How many rows of each pane the cursor may occupy, in pane order — what
+    /// <see cref="ScreenSelection"/> navigates by. It is <em>not</em> how many rows the pane draws: a
+    /// pane's destructive button is drawn and is not a stop.
+    /// <para>
+    /// That asymmetry is the point, and it is the fix for "only the last world can be deleted". A pane is
+    /// a list followed by its buttons, and reaching a button with ↑↓ means walking the cursor over every
+    /// row of the list on the way — which drags the selection to the last one
+    /// (<see cref="ScreenSelection.Anchor"/>), so a <c>[[- del]]</c> arrived at that way could only ever
+    /// delete the final item. It cannot be fixed by remembering where the cursor has been, because the
+    /// last list row visited on the way to the buttons is *always* the last row of the list; the button
+    /// block structurally cannot know which item was meant.
+    /// </para>
+    /// <para>
+    /// So the rule is: <b>an action with no target needs a cursor stop; an action with a target must not
+    /// steal the cursor from the thing it acts on.</b> <c>[[+ world]]</c> stays a stop, because "add" has
+    /// nothing to point at and needs somewhere to be pressed from. A removal has a target — the selected
+    /// row — and is run by Delete on that very row, so its drawn row stops being a place you go and
+    /// becomes a true reading of what Delete would take (<see cref="ScreenChrome.Buttons"/>). Nothing is
+    /// lost: <see cref="ScreenChrome.DeleteHint"/> advertises the key, and it is derived from
+    /// <see cref="HasRemovableRow"/> so it cannot advertise it where there is none.
+    /// </para>
+    /// </summary>
     internal IReadOnlyList<int> Sizes { get; }
+
+    /// <summary>
+    /// How many of a pane's rows the cursor may occupy: all of them but the destructive buttons at the
+    /// end. Removals are appended last on every screen (a pane reads list → add → duplicate → remove), so
+    /// this is a count and not a set of holes — the cursor never has to skip a row in the middle, and
+    /// <see cref="ScreenSelection"/> stays a plain clamp. <see cref="ScreenReachabilityTests"/> pins that
+    /// the shape really is that way on all eight screens.
+    /// </summary>
+    private static int Stops(IReadOnlyList<ScreenRow> rows)
+    {
+        var count = rows.Count;
+        while (count > 0 && rows[count - 1].Button is { Kind: ScreenButtonKind.Remove })
+        {
+            count--;
+        }
+
+        return count;
+    }
 
     /// <summary>
     /// Where each pane is drawn, which is what the arrow keys and ⇥ navigate by. It defaults to
@@ -259,9 +333,14 @@ internal sealed class ScreenModel
     /// <summary>
     /// How many rows of each pane are *list* rows rather than the buttons appended after them. A pane
     /// is a list followed by its own buttons, and the two mean different things to the cursor: moving
-    /// onto <c>[[+ world]]</c> must not change which world is selected, or <c>[[- del]]</c> could only
-    /// ever delete the last one — you would have to walk past every other world to reach the button.
+    /// onto <c>[[+ world]]</c> must not change which world is selected, or the detail column beside it
+    /// would blank the moment the cursor reached for the add button.
     /// <see cref="ScreenSelection"/> anchors the selection with this.
+    /// <para>
+    /// The anchor is <em>not</em> what keeps a removal pointed at the right row — it cannot be, since
+    /// walking down to a button leaves it on the last list row. That is what <see cref="Sizes"/> answers,
+    /// by keeping the cursor out of the removal's row altogether.
+    /// </para>
     /// </summary>
     internal IReadOnlyList<int> ListSizes
     {
@@ -286,6 +365,12 @@ internal sealed class ScreenModel
 
     /// <summary>How many panes the screen offers ⇥ between.</summary>
     internal int PaneCount => _panes.Length;
+
+    /// <summary>
+    /// How many rows a pane <em>draws</em>, buttons included — which is more than <see cref="Sizes"/>
+    /// wherever a pane offers a removal. Only the tests that check the two apart need it.
+    /// </summary>
+    internal int RowCount(int pane) => pane >= 0 && pane < _panes.Length ? _panes[pane].Count : 0;
 
     /// <summary>
     /// Whether anything on this screen can be edited. The header hints are derived from this rather
@@ -339,8 +424,9 @@ internal sealed class ScreenModel
     /// <summary>
     /// A pane's destructive button, or null when it has none — what Delete runs while the cursor is on
     /// one of that pane's list rows. Delete acts through the button rather than around it, so the key
-    /// and the drawn <c>[[- del]]</c> row are the same command with the same undo and the same
-    /// conditions: a pane that doesn't offer the button doesn't answer the key either.
+    /// and the drawn <c>Del</c> row are the same command with the same undo and the same conditions: a
+    /// pane that doesn't offer the button doesn't answer the key either, and the row cannot be pressed
+    /// independently because it is not a cursor stop.
     /// </summary>
     internal ScreenButton? RemoveIn(int pane)
     {
