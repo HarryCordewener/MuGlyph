@@ -62,12 +62,29 @@ public sealed class TelnetSessionOptions
     public IReadOnlyList<string>? TerminalTypes { get; init; } = SharpMUTermTerminalTypes;
 
     /// <summary>
-    /// What the interactive client announces: its own name, the terminal class it renders as, and the
-    /// MTTS bit vector the library already claimed on its behalf (ANSI, UTF-8, 256 colours, true
-    /// colour, MNES, MSLP, SSL — all of which this client does support).
+    /// What the interactive client announces: its own name, the terminal class it renders as, and an
+    /// MTTS bit vector claiming only what it actually does.
+    /// <para>
+    /// <b>2333</b> = ANSI (1) + UTF-8 (4) + 256 colours (8) + mouse tracking (16) + true colour (256)
+    /// + SSL (2048). Every one of those is implemented: SGR through <c>AnsiParser</c>, UTF-8 through
+    /// CHARSET negotiation, mouse through the pane drag/wheel/click routing, TLS through
+    /// <c>TcpTransport</c>.
+    /// </para>
+    /// <para>
+    /// Not <b>3853</b>, which the library claimed on our behalf and which is wrong in both directions:
+    /// it asserts <b>MNES (512)</b> — NEW-ENVIRON is not registered by this client at all — and
+    /// <b>MSLP (1024)</b>, which is not implemented anywhere in the stack, while omitting the mouse
+    /// tracking that is. A terminal-type string is a claim a server acts on; MTTS exists so a server
+    /// can decide what to send us, and over-claiming makes it send what we cannot render.
+    /// </para>
+    /// <para>
+    /// Deliberately absent: VT100 (2), because this is a line-oriented append-only view with no cursor
+    /// addressing or erase; OSC colour palette (32), which we never emit; screen reader (64) and
+    /// proxy (128), neither of which exist here.
+    /// </para>
     /// </summary>
     public static IReadOnlyList<string> SharpMUTermTerminalTypes { get; } =
-        ["SHARPMUTERM", "XTERM", "MTTS 3853"];
+        ["SHARPMUTERM", "XTERM", "MTTS 2333"];
 
     /// <summary>
     /// Telnet options to request outright on connect, by sending <c>IAC DO &lt;option&gt;</c>, rather
