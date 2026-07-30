@@ -6809,20 +6809,25 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // ribbon reads just as easily as two of five worlds, which is exactly the ambiguity that let this
         // fraction compare two different things for as long as it did.
         //
-        // It is abbreviated because this row has no width to spare. At 80 columns the demo's ribbon
-        // (35 cells) plus the minimum 3-cell gap plus this cluster came to precisely 80 — the full word
-        // "characters" is one cell too many and wraps the header onto a second row.
-        // InputAreaLayoutTests.TheFirstFrameFitsTheTerminalItIsOn(80) is the test that says so; it caught
-        // this, and anything added here has to keep it passing.
+        // The word is spelt out. It had to be abbreviated to "chars" while this row also carried the
+        // graphics readout, which took the 80-column layout to precisely 80 cells; dropping that (see
+        // below) gave the width back. InputAreaLayoutTests.TheFirstFrameFitsTheTerminalItIsOn(80) is the
+        // test that says so, and anything added here has to keep it passing.
         var connected = ConnectedCharacters().Count;
         var conn = _config.Worlds.Count > 0
-            ? $"{connected}/{ConfiguredConnections()} chars   "
+            ? $"{connected}/{ConfiguredConnections()} characters   "
             : string.Empty;
         var logFormat = ActiveLogging().Format;
         var log = logFormat == LogFormat.None
             ? $"[dim]{Glyphs.Log} LOG off[/]"
             : $"[#00f5b7]{Glyphs.Log}[/] [dim]LOG {logFormat.ToString().ToLowerInvariant()}[/]";
-        var right = $"[dim]{conn}[/]{log}   [dim]Graphics {Escape(_capabilities.Protocol.ToString())} [/]";
+        // No graphics readout here. Which protocol the probe settled on is decided once at startup and
+        // never changes, so a permanent cell of chrome spends the row's scarcest resource on a fact that
+        // cannot become news — and it was already said twice elsewhere: the session prints
+        // "*** SharpMUTerm — theme '…', graphics: …" when it opens, and the not-connected status line
+        // repeats it. A startup fact belongs where startup facts are read, not in the row that has to
+        // fit an identity ribbon and a live count at eighty columns.
+        var right = $"[dim]{conn}[/]{log}   ";
 
         // Right-align the status cluster to the far edge so the menu bar spans the whole console.
         var gap = Math.Max(3, HeaderWidth() - MarkupWidth(leftBar) - MarkupWidth(right));

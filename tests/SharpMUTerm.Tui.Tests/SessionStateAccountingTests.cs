@@ -206,7 +206,7 @@ public class SessionStateAccountingTests
         await wired.Open("Convergence.Riko", wired.RikoWire);
         wired.App.RenderNextFrame();
 
-        await Assert.That(wired.App.HeaderText).Contains("2/5 chars");
+        await Assert.That(wired.App.HeaderText).Contains("2/5 characters");
         await Assert.That(wired.App.HeaderText).DoesNotContain("2/3");
     }
 
@@ -222,7 +222,7 @@ public class SessionStateAccountingTests
         wired.App.SaveConfiguration(); // what F5's [+ add world] runs after it commits the new row
         wired.App.RenderNextFrame();
 
-        await Assert.That(wired.App.HeaderText).Contains("1/6 chars");
+        await Assert.That(wired.App.HeaderText).Contains("1/6 characters");
     }
 
     // ---- 3. the quit prompt ----------------------------------------------------------------
@@ -263,7 +263,7 @@ public class SessionStateAccountingTests
         var connected = wired.App.ConnectedCharacters();
         wired.App.SimulateKey(CtrlQ());
 
-        await Assert.That(wired.App.HeaderText).Contains($"{connected.Count}/5 chars");
+        await Assert.That(wired.App.HeaderText).Contains($"{connected.Count}/5 characters");
         await Assert.That(string.Join("\n", wired.App.QuitPromptLines))
             .Contains($"{connected.Count} characters connected");
     }
@@ -279,14 +279,14 @@ public class SessionStateAccountingTests
         var wired = await Wired();
         await wired.Open("Convergence.Riko", wired.RikoWire);
         wired.App.RenderNextFrame();
-        await Assert.That(wired.App.HeaderText).Contains("2/5 chars");
+        await Assert.That(wired.App.HeaderText).Contains("2/5 characters");
 
         // Riko is the active one now, so Mannaz is the background connection that drops.
         await wired.App.FindSession("Convergence.Mannaz")!.DisconnectAsync();
         wired.App.RenderNextFrame();
 
         await Assert.That(wired.App.ConnectedCharacters()).IsEquivalentTo(new[] { "Convergence.Riko" });
-        await Assert.That(wired.App.HeaderText).Contains("1/5 chars");
+        await Assert.That(wired.App.HeaderText).Contains("1/5 characters");
     }
 
     // ---- harness ---------------------------------------------------------------------------
