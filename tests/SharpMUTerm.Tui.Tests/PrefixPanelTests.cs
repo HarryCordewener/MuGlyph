@@ -131,8 +131,13 @@ public class PrefixPanelTests
     public async Task TheMinimumWidthHoldsTheExitHintOnOneRow()
     {
         // + 1 for the row's left margin, + 2 for the border, + 1 so the text does not lean on the frame.
-        await Assert.That(PrefixOverlay.MinimumWidth)
-            .IsGreaterThanOrEqualTo(PrefixPanel.ExitHint.Length + 4);
+        // Read into locals so the assertion is not made against a compile-time constant: both sides are
+        // `const`, and TUnit's analyser (TUnitAssertions0005) flags that as a test that cannot fail at
+        // runtime. It can still fail at build time, which is the point of writing it this way round.
+        var minimum = PrefixOverlay.MinimumWidth;
+        var needed = PrefixPanel.ExitHint.Length + 4;
+
+        await Assert.That(minimum).IsGreaterThanOrEqualTo(needed);
     }
 
     // --- the terse strip -------------------------------------------------------------------------

@@ -336,4 +336,57 @@ public class StartupConnectTests
         await Assert.That(startup.Select(s => $"{s.World.Name}.{s.Character!.Name}").ToArray())
             .IsEquivalentTo(new[] { DemoScene.ActiveSessionKey });
     }
+
+    // ---- The wiring, not just the work -----------------------------------------------------
+
+    /// <summary>
+    /// <b>That the launch is actually wired to this.</b> Every test above calls
+    /// <see cref="SharpMUTermApp.StartAsync"/> itself, which proves what a launch <em>does</em> and says
+    /// nothing about whether one ever happens — and for a while one never did. <c>Run</c> hung startup off
+    /// <c>Window.OnShown</c>, but that event is raised by <c>AddWindow</c>, which is the last line of the
+    /// app's constructor: it had already fired before <c>Run</c> subscribed, and is never raised again. So
+    /// <c>StartAsync</c> was dead code in the running client. Nothing threw, nothing logged, and the whole
+    /// of this file passed — a marked character was simply never dialled, and neither was a host typed on
+    /// the command line.
+    /// <para>
+    /// This drives the scheduling half of <c>Run</c> instead (<see cref="SharpMUTermApp.ScheduleStartup"/>,
+    /// which is exactly what <c>Run</c> calls before entering the blocking loop) and asserts the socket
+    /// opened. Headless, <c>OnUiThread</c> runs the queued action inline; in a terminal it is drained on
+    /// the loop's first pass.
+    /// </para>
+    /// </summary>
+    [Test]
+    public async Task WhatRunSchedules_ReallyDialsTheMarkedCharacter()
+    {
+        var config = Unmarked();
+        Mark(config, "Aetherfall", "Corvid");
+        var (app, telnet) = App(config);
+
+        app.ScheduleStartup(StartupConnections.Resolve(config));
+        await app.LastCommand;
+
+        await Assert.That(telnet.Connected.Count)
+            .IsEqualTo(1)
+            .Because("Run's own scheduling has to reach StartAsync, or the client never dials at all");
+        await Assert.That(app.ActiveSessionKey).IsEqualTo("Aetherfall.Corvid");
+    }
+
+    /// <summary>
+    /// And the reason the hook had to change, stated as the fact it is: by the time anything can subscribe
+    /// to the main window's <c>OnShown</c>, it has already been raised. A handler attached after the
+    /// constructor returns never runs — not on the first frame, not ever — so nothing may be hung off it.
+    /// </summary>
+    [Test]
+    public async Task TheMainWindowsOnShownHasAlreadyFiredBeforeAnyoneCanSubscribe()
+    {
+        var (app, _) = App(Unmarked());
+        var fired = false;
+
+        app.OnMainWindowShown((_, _) => fired = true);
+        app.RenderSnapshot(); // a real arranged, painted frame
+
+        await Assert.That(fired)
+            .IsFalse()
+            .Because("AddWindow raises OnShown inside the constructor, so startup must not hang off it");
+    }
 }

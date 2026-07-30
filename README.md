@@ -114,7 +114,10 @@ dotnet run --project src/SharpMUTerm.Tui -- <host> <port> [--tls] [--insecure] [
 sharpmuterm --help    # once published
 ```
 
-In-app: **Up/Down** input history · **Ctrl+N** next window · **Ctrl+W** close window · **Ctrl+Q** quit (y/n confirmation). (Windows/panes are mouse-resizable; each window keeps its own input draft.)
+In-app: **Up/Down** input history · **Ctrl+N** next window · **Ctrl+W** close window · **Alt+R** reconnect
+(drops the connection and redials it) · **Ctrl+D** disconnect · **Ctrl+Q** quit (y/n confirmation). Alt+R and
+Ctrl+D act at once, on the character whose pane is focused, and say so when there is nothing connected.
+(Windows/panes are mouse-resizable; each window keeps its own input draft.)
 
 ## Testing
 

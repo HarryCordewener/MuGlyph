@@ -91,8 +91,10 @@ public static class CommandCatalog
         }
 
         // WORLD
-        items.Add(new CommandItem(CommandGroup.World, "Reconnect", "world:reconnect"));
-        items.Add(new CommandItem(CommandGroup.World, "Disconnect", "world:disconnect"));
+        // Both carry their chord. The surface is where this client is discovered from, and a key nobody
+        // can find is the same as no feature — ⌃L's newline sat unused until it was reported missing.
+        items.Add(new CommandItem(CommandGroup.World, "Reconnect", "world:reconnect", "Alt+R"));
+        items.Add(new CommandItem(CommandGroup.World, "Disconnect", "world:disconnect", "⌃D"));
 
         // TERMINAL — stateful labels.
         items.Add(context.LoggingOn
