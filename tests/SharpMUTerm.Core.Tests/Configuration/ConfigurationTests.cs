@@ -224,8 +224,29 @@ public class ConfigurationTests
         await Assert.That(config.Worlds[0].Characters[0].TriggerSets).IsEquivalentTo(new[] { "Existing" });
     }
 
+    /// <summary>
+    /// The configuration document carries no password. <b>This assertion has inverted twice in one day and is
+    /// back where it started, for a completely different reason</b>, which is worth spelling out so nobody
+    /// "restores" the wrong one.
+    /// <para>
+    /// It began as <c>Password_IsNeverSerialized</c>, pinning the absence of the secret because
+    /// <see cref="CharacterDefinition.Password"/> was <c>[JsonIgnore]</c> session state — the client forgot
+    /// your password, and this test was the proof. It briefly became <c>Password_IsSerializedAndComesBack</c>
+    /// when the decision was to save passwords into <c>config.json</c> in plaintext. It is now the absence
+    /// again, but the client <em>does</em> save your password: it goes into
+    /// <see cref="SecretsStore"/>'s own file, and this document holds only a
+    /// <see cref="CharacterDefinition.PasswordRef"/> GUID.
+    /// </para>
+    /// <para>
+    /// So this is the strongest of the three claims rather than a retreat to the weakest. The old version
+    /// held because nothing was persisted; this one holds while the password is persisted and reloadable,
+    /// which is the property that makes a pasted config safe. The persistence half lives in
+    /// <see cref="PasswordAtRestTests"/>, and the two must be read together — either alone describes a design
+    /// this project has already rejected.
+    /// </para>
+    /// </summary>
     [Test]
-    public async Task Password_IsNeverSerialized()
+    public async Task Password_IsNotWrittenIntoTheConfigDocument()
     {
         var config = new AppConfiguration
         {

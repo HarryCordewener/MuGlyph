@@ -6,16 +6,31 @@ namespace SharpMUTerm.Core.Configuration;
 /// The login line as a <em>template</em>: <c>connect %CHARACTER% %PASSWORD%</c>, with the values
 /// substituted at send time rather than stored in the line.
 /// <para>
-/// This exists for one reason, and it is a security reason rather than a convenience one.
-/// <see cref="CharacterDefinition.Password"/> is <c>[JsonIgnore]</c> and never reaches disk, while
-/// <see cref="CharacterDefinition.ConnectString"/> <em>is</em> serialized — so before tokens, the only
-/// way to persist a working login line was to bake the password into it in plaintext. A template
-/// persists safely and the secret is joined to it only on the way to the socket, which is strictly
-/// better than the trade-off it replaces. It also gives a user somewhere to put a password other than
-/// the command line: typed input is echoed locally and written to the session transcript
-/// (<c>WorldSession.SendUserInputAsync</c> → <c>Print</c>), while the auto-login line goes straight out
-/// through <c>SendRawAsync</c> with no echo and no log write.
+/// The tokens were introduced when <see cref="CharacterDefinition.Password"/> could not be persisted at
+/// all, so that the line could be saved while the secret was not. <b>The password is persisted now</b> —
+/// into <see cref="SecretsStore"/>'s own file, never into <c>config.json</c> (see its own doc) — and the
+/// tokens are kept. Every reason for them survives the change, and the first one is now load-bearing in a
+/// way it was not before:
 /// </para>
+/// <list type="bullet">
+/// <item><b>It is what keeps the config document shareable.</b>
+/// <see cref="CharacterDefinition.ConnectString"/> <em>is</em> serialized. A password baked into the line
+/// therefore lands in the one file the whole storage design exists to keep free of secrets — so the token is
+/// not merely tidier than a literal, it is the difference between a config that can be pasted into a bug
+/// report and one that cannot.</item>
+/// <item><b>One home for the secret.</b> A password baked into the line is a second copy in a second
+/// field, and the two silently disagree the moment either is edited. The token means the password lives in
+/// the password field, full stop.</item>
+/// <item><b>The password field is masked; the connect line is not.</b>
+/// <see cref="CharacterDefinition.ConnectString"/> is drawn in the clear on F5, in snapshots and in
+/// screenshots, because it is an ordinary text field and has to be readable to be editable. A secret in it
+/// is a secret on screen.</item>
+/// <item><b>Substitution at send time keeps the resolved line off every local surface.</b> Typed input is
+/// echoed and written to the session transcript (<c>WorldSession.SendUserInputAsync</c> →
+/// <c>Print</c>) and is offered to <c>InputHistory</c>; the auto-login line goes straight out through
+/// <c>SendRawAsync</c> with no echo, no transcript write and no history entry. That is unchanged by
+/// where the password is stored.</item>
+/// </list>
 /// <para>
 /// The rules, all four of them decided here so every caller and every test reads the same ones:
 /// </para>
@@ -65,7 +80,7 @@ public static class ConnectStringTemplate
     /// <summary>The character's name, as configured.</summary>
     public const string CharacterToken = "%CHARACTER%";
 
-    /// <summary>The session-only password, or nothing at all when none is set.</summary>
+    /// <summary>The character's stored password, or nothing at all when none is set.</summary>
     public const string PasswordToken = "%PASSWORD%";
 
     /// <summary>

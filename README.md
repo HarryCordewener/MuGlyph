@@ -70,7 +70,9 @@ HTML logging · GMCP / MSDP / MSSP / MCCP · MXP + Pueblo · Unicode/emoji.
 - **Emoji** — optional emoticon (`:)` → 🙂) and `:shortcode:` (`:fire:` → 🔥) substitution.
 - **Logging** — plain-text and styled **HTML** session logs.
 - **Config** — a fresh JSON schema: worlds (servers) hold **characters**, and automation lives in
-  shared, named **trigger sets** that characters opt into; versioned with automatic migration.
+  shared, named **trigger sets** that characters opt into; versioned with automatic migration. Character
+  **passwords are saved in a separate `secrets.json`** (owner-only, `0600`) and the config carries only a
+  meaningless GUID pointing at them — so your `config.json` stays safe to paste into a bug report.
 - **Inline graphics** — Kitty graphics-protocol encoder (incl. Unicode placeholders), Sixel and
   half-block fallbacks, and a capability probe that degrades cleanly when no protocol is present.
 - **Scripting** — sandboxed **Lua** (MoonSharp) exposing `world`/`output`/`trigger`/`alias`/

@@ -116,7 +116,10 @@ python3 tools/ansi_frame_to_image.py frame.ansi frame.html   # or .svg
   the snapshot path passes none, so an app that isn't the live entry point owns no file. That matters
   because the settings screens persist each committed change as it is made: without the gate, a
   `--demo-config` frame that drove a key into a field (`logging-edit`, `keypad-edit`, `deletions`) would
-  write the demo worlds straight over your own `config.json`.
+  write the demo worlds straight over your own `config.json`. It now also protects a **second** file:
+  character passwords are saved in `secrets.json` beside the config (`SecretsStore`, `0600`), with
+  `config.json` carrying only a meaningless `passwordRef` GUID, so a save writes a secret-bearing file too.
+  `CommandSurfaceSettingsTests.AnAppWithNoSaveActionPersistsNothing` is the pin.
 - **The three `scroll*` views are the only ones with more output than a pane holds.** Every other view
   fits, which is exactly why no snapshot caught the panes being unable to scroll at all. Reach for one
   of these (or `LoadLongScene`) whenever a change touches the output area.

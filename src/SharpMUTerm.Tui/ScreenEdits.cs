@@ -3,9 +3,9 @@ namespace SharpMUTerm.Tui;
 /// <summary>
 /// The one path from a settings screen into the configuration, and the point at which each change is
 /// written to disk. Screens edit the live
-/// <see cref="SharpMUTerm.Core.Configuration.AppConfiguration"/> in place — cloning it would silently
-/// drop the fields that deliberately don't round-trip (a character's in-memory password is
-/// <c>[JsonIgnore]</c>) — so this is a gateway rather than a transaction.
+/// <see cref="SharpMUTerm.Core.Configuration.AppConfiguration"/> in place — the live object is what the
+/// running client reads, so an edit applied to a copy would be an edit the app does not have — making
+/// this a gateway rather than a transaction.
 /// <para>
 /// <b>The scope rule, which is what makes the three answers to Esc obviously right.</b> Esc discards
 /// work that has not been confirmed, keeps work that has, and <em>asks</em> about work that destroyed

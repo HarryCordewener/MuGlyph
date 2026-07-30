@@ -174,12 +174,27 @@ public class ConnectStringTemplateTests
     }
 
     /// <summary>
-    /// The property the whole design rests on: the template survives a save/reload and the password does
-    /// not. Before tokens, a login line that worked after a restart had to carry the password in it, in
-    /// plaintext, in <c>config.json</c> — the trade-off the token exists to remove.
+    /// A save/reload keeps the template <em>and</em> the password, and the reloaded pair resolves to a working
+    /// login line without anybody retyping anything. That last clause is the whole feature.
+    /// <para>
+    /// <b>Two assertions here are inverted from what this test used to claim.</b> It was
+    /// <c>AConfigRoundTripsTheTemplateAndForgetsThePassword</c>, and it required the password to come back
+    /// null — the property of a field the client did not save. Passwords are saved now, so "forgets the
+    /// password" is the bug rather than the contract, and the pinned property is the opposite one.
+    /// </para>
+    /// <para>
+    /// What is <em>not</em> inverted is where the secret goes. It is checked against the whole pair of files
+    /// through <see cref="ConfigurationStore.Save"/>, not through <c>Serialize</c>, precisely because the
+    /// config document must still contain no password — see
+    /// <c>PasswordAtRestTests.ConfigurationStoreDoesNotWriteThePasswordIntoTheConfigDocument</c>. That is why
+    /// the tokens survive a change that removed their original reason for existing: the config can hold
+    /// <c>co %CHARACTER% %PASSWORD%</c> and be safe to paste, the secret stays in one masked field instead of
+    /// copied into a connect line drawn in the clear, and substitution still happens on the way to the socket
+    /// so the resolved line reaches no echo, no transcript and no history entry.
+    /// </para>
     /// </summary>
     [Test]
-    public async Task AConfigRoundTripsTheTemplateAndForgetsThePassword()
+    public async Task AConfigRoundTripsBothTheTemplateAndThePassword()
     {
         var config = new AppConfiguration
         {
@@ -203,19 +218,43 @@ public class ConnectStringTemplateTests
             },
         };
 
-        var json = ConfigurationStore.Serialize(config);
-        await Assert.That(json).DoesNotContain("hunter2");
+        var directory = Path.Combine(Path.GetTempPath(), $"smuterm-template-{Guid.NewGuid():N}");
+        var configPath = Path.Combine(directory, "config.json");
+        try
+        {
+            ConfigurationStore.Save(configPath, config);
 
-        var reloaded = ConfigurationStore.Deserialize(json).Worlds[0].Characters[0];
-        await Assert.That(reloaded.Password).IsNull();
-        await Assert.That(reloaded.ConnectString).IsEqualTo("co %CHARACTER% %PASSWORD%");
-        await Assert.That(reloaded.AutoLogin).IsTrue();
+            // The config document holds the template and no secret; the secret is in the file beside it.
+            var document = File.ReadAllText(configPath);
+            await Assert.That(document).Contains("co %CHARACTER% %PASSWORD%");
+            await Assert.That(document).DoesNotContain("hunter2");
+            await Assert.That(File.ReadAllText(SecretsStore.PathFor(configPath))).Contains("hunter2");
 
-        // The reloaded character resolves to a line with no secret in it — and the moment a password is
-        // supplied for the session, the same stored template becomes the working login line.
-        await Assert.That(reloaded.ResolveConnectString()).IsEqualTo("co Corvid");
-        reloaded.Password = "hunter2";
-        await Assert.That(reloaded.ResolveConnectString()).IsEqualTo("co Corvid hunter2");
+            var reloaded = ConfigurationStore.Load(configPath).Worlds[0].Characters[0];
+            await Assert.That(reloaded.Password).IsEqualTo("hunter2");
+            await Assert.That(reloaded.ConnectString).IsEqualTo("co %CHARACTER% %PASSWORD%");
+            await Assert.That(reloaded.AutoLogin).IsTrue();
+
+            // Straight off a reload, with nothing typed: the working login line.
+            await Assert.That(reloaded.ResolveConnectString()).IsEqualTo("co Corvid hunter2");
+
+            // And clearing the field is still how a stored credential is forgotten — the token drops itself
+            // and the space that was holding it apart, so the line stays valid rather than trailing
+            // whitespace.
+            reloaded.Password = null;
+            await Assert.That(reloaded.ResolveConnectString()).IsEqualTo("co Corvid");
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch (Exception)
+            {
+                // Nothing a test should fail over.
+            }
+        }
     }
 
     /// <summary>

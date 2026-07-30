@@ -1,19 +1,32 @@
 using System.Text.RegularExpressions;
+using SharpConsoleUI.Drivers;
 using SharpMUTerm.Core.Configuration;
+using SharpMUTerm.Graphics;
 using SharpMUTerm.Tui;
 
 namespace SharpMUTerm.Tui.Tests;
 
 /// <summary>
-/// The character's password: a real field now, masked everywhere it is drawn, and honest about where the
-/// value goes — which is nowhere. It used to be a readout labelled <c>keychain</c>, an affordance-free row
-/// advertising a credential store this codebase does not contain, and the reason it was a readout was that
-/// there was genuinely nowhere to put a password: the only way to persist a working login line was to bake
-/// the secret into the connect string in plaintext, where it <em>was</em> serialized.
+/// The character's password: a real field, masked everywhere it is drawn, and honest about where the value
+/// goes — which is <c>secrets.json</c>, in plaintext, and deliberately <em>not</em> <c>config.json</c>. It
+/// used to be a readout labelled <c>keychain</c>, an affordance-free row advertising a credential store this
+/// codebase does not contain.
 /// <para>
-/// Two properties are pinned here, and both matter more than the row's appearance. The plaintext must
-/// never reach rendered markup — a frame is a thing snapshots write to disk and screenshots publish — and
-/// the label must not claim storage that does not exist.
+/// <b>The note has now said four different things, and this file's assertions moved with it.</b> It read
+/// <c>this session only — never saved</c> while the field was <c>[JsonIgnore]</c> session state; then
+/// <c>saved in config.json, plain text</c>, honest about a design that put the secret in the file people
+/// paste; and now it names the separate file the secret actually lives in. The rule these tests enforce has
+/// not moved an inch — <em>the row must describe what actually happens to the value</em> — it is the
+/// behaviour underneath that keeps moving, and a note left describing a previous design is a lie of the same
+/// kind as <c>keychain</c>.
+/// </para>
+/// <para>
+/// Three properties are pinned here, and all of them matter more than the row's appearance. The plaintext
+/// must never reach rendered <em>markup</em> — a frame is a thing snapshots write to disk and screenshots
+/// publish, and a screenshot with a live password in it is the leak that prompted the storage split. The
+/// label must not claim storage that does not exist, in either direction: no credential store, and no
+/// pretending the value is encrypted. And the value must reach the secrets file and not the config document,
+/// which is the whole design in one sentence.
 /// </para>
 /// </summary>
 public class ScreenPasswordFieldTests
@@ -105,7 +118,7 @@ public class ScreenPasswordFieldTests
     /// length.
     /// </summary>
     [Test]
-    public async Task TheRestingPasswordRowIsMaskedInAWellAndSaysItIsNotSaved()
+    public async Task TheRestingPasswordRowIsMaskedInAWellAndSaysWhereTheValueGoes()
     {
         var form = Form(Worlds());
         var row = Row(form, "password");
@@ -116,7 +129,7 @@ public class ScreenPasswordFieldTests
 
         // The note is the very next row, so it reads as belonging to the value above it.
         var note = form[form.IndexOf(row) + 1];
-        await Assert.That(Visible(note).Trim()).IsEqualTo(WorldsScreenRenderer.SessionOnlyNote);
+        await Assert.That(Visible(note).Trim()).IsEqualTo(WorldsScreenRenderer.StorageNote);
     }
 
     /// <summary>
@@ -178,7 +191,7 @@ public class ScreenPasswordFieldTests
         await Assert.That(row).Contains(Well);
         await Assert.That(Visible(row)).Contains(WorldsScreenRenderer.NoPassword);
         await Assert.That(Visible(form[form.IndexOf(row) + 1]).Trim())
-            .IsEqualTo(WorldsScreenRenderer.SessionOnlyNote);
+            .IsEqualTo(WorldsScreenRenderer.StorageNote);
     }
 
     /// <summary>
@@ -273,18 +286,58 @@ public class ScreenPasswordFieldTests
     }
 
     /// <summary>
-    /// And it says the true thing instead, in words rather than by omission: the value lives for this
-    /// session and is not written anywhere. Pinned against the definition it describes — if the password
-    /// ever stops being <c>[JsonIgnore]</c>, this note becomes a lie and the test has to be revisited.
+    /// And it says the true thing instead, in words rather than by omission: the value is saved, it is
+    /// plaintext, and it is in <c>secrets.json</c>. <b>This assertion has been inverted twice</b> — it once
+    /// required the note to say <c>never saved</c>, then required it to name <c>config.json</c> — and each
+    /// time it was pinned against the mechanism it describes, which is the only way a note like this is worth
+    /// anything. Here that means both halves at once: the secret is in the secrets file, and it is not in the
+    /// config document.
+    /// <para>
+    /// The strong word is required explicitly. <c>plain</c> is asserted, not merely <c>saved</c>, because
+    /// "saved" alone is the gloss a reader fills in reassuringly, and because <c>encrypted</c> or
+    /// <c>secure</c> would be the same class of lie as <c>keychain</c>. The words the note may <em>not</em>
+    /// use include the two things it used to say, so a revert cannot pass quietly.
+    /// </para>
     /// </summary>
     [Test]
     public async Task ThePasswordRowStatesWhatActuallyHappensToTheValue()
     {
-        await Assert.That(WorldsScreenRenderer.SessionOnlyNote).Contains("this session only");
-        await Assert.That(WorldsScreenRenderer.SessionOnlyNote).Contains("never saved");
+        await Assert.That(WorldsScreenRenderer.StorageNote).Contains("saved");
+        await Assert.That(WorldsScreenRenderer.StorageNote).Contains("plain");
+        await Assert.That(WorldsScreenRenderer.StorageNote).Contains(SecretsStore.FileName);
 
-        var json = ConfigurationStore.Serialize(new AppConfiguration { Worlds = Worlds() });
-        await Assert.That(json).DoesNotContain(Secret);
+        // The claim, checked against the pair of files that make it true.
+        var directory = Path.Combine(Path.GetTempPath(), $"smuterm-note-{Guid.NewGuid():N}");
+        var configPath = Path.Combine(directory, "config.json");
+        try
+        {
+            ConfigurationStore.Save(configPath, new AppConfiguration { Worlds = Worlds() });
+
+            await Assert.That(File.ReadAllText(configPath)).DoesNotContain(Secret);
+            await Assert.That(File.ReadAllText(SecretsStore.PathFor(configPath))).Contains(Secret);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch (Exception)
+            {
+                // Nothing a test should fail over.
+            }
+        }
+
+        // And the words it must not use — including the two the row used to say, so a revert cannot pass.
+        foreach (var lie in new[]
+        {
+            "encrypted", "secure", "safely", "never saved", "session only", "config.json",
+        })
+        {
+            await Assert.That(WorldsScreenRenderer.StorageNote.ToLowerInvariant())
+                .DoesNotContain(lie)
+                .Because(lie);
+        }
     }
 
     // ---- typing into it -----------------------------------------------------------------------------
@@ -413,14 +466,21 @@ public class ScreenPasswordFieldTests
     }
 
     /// <summary>
-    /// <c>[[⧉ duplicate]]</c> carries the password over — that is deliberate and documented on
-    /// <see cref="CharacterDefinition.Clone"/>, since a copy of a logged-in character that silently forgot
-    /// its password would be the worse surprise — and it still reaches nothing on disk. The button is the
-    /// one place a password is copied rather than typed, so this is the surface where "it is only ever in
-    /// memory" is worth checking rather than assuming.
+    /// <c>[[⧉ duplicate]]</c> carries the password over — deliberate, and re-justified on
+    /// <see cref="CharacterDefinition.Clone"/> now that the old justification ("nothing here reaches disk") is
+    /// void. A duplicate that dropped it would look complete on screen, because the mask cannot distinguish
+    /// "copied" from "cleared", and would then fail to log in.
+    /// <para>
+    /// <b>The disk assertion is inverted from "the secret is absent from the serialized config" to "it is
+    /// absent and there are two references"</b>, which is the stronger claim: the old one held because nothing
+    /// was saved, and this one holds while both characters' passwords are saved and reloadable.
+    /// <see cref="CharacterDefinition.PasswordRef"/> is <em>not</em> copied, so the two get separate rows —
+    /// pinned end to end in <c>PasswordAtRestTests.ADuplicatedCharacterGetsItsOwnSecretsRow</c>. The mask
+    /// assertion is unchanged and still absolute: neither form draws it.
+    /// </para>
     /// </summary>
     [Test]
-    public async Task DuplicatingACharacterCopiesThePasswordInMemoryAndNowhereElse()
+    public async Task DuplicatingACharacterCopiesThePasswordButNotItsReferenceOrItsFrame()
     {
         var worlds = Worlds();
         var model = WorldsScreenRenderer.Model(worlds, Array.Empty<TriggerSet>(), 0, 0);
@@ -435,14 +495,32 @@ public class ScreenPasswordFieldTests
         await Assert.That(copy.Password).IsEqualTo(Secret);
         await Assert.That(copy.Name).IsNotEqualTo("Corvid");
 
-        // Two characters holding it now, and still no route to the file.
-        var json = ConfigurationStore.Serialize(new AppConfiguration { Worlds = worlds });
-        await Assert.That(json).DoesNotContain(Secret);
+        // The value, not the reference: the copy is destined for a row of its own.
+        await Assert.That(copy.PasswordRef).IsNull();
 
-        // Nor to the copy's own drawn form.
+        // Two characters holding the secret, and the config document still holds none of it.
+        var json = ConfigurationStore.Serialize(new AppConfiguration { Worlds = worlds });
+        await Assert.That(Occurrences(json, Secret)).IsEqualTo(0);
+
+        // And still no route to a frame, for either of them.
         await Assert.That(string.Join(
                 "\n", WorldsScreenRenderer.FormColumn(copy, ScreenPalette.Accent, null, 1)))
             .DoesNotContain(Secret);
+        await Assert.That(string.Join("\n", Form(worlds))).DoesNotContain(Secret);
+    }
+
+    /// <summary>How many times <paramref name="needle"/> appears in <paramref name="haystack"/>.</summary>
+    private static int Occurrences(string haystack, string needle)
+    {
+        var count = 0;
+        for (var i = haystack.IndexOf(needle, StringComparison.Ordinal);
+             i >= 0;
+             i = haystack.IndexOf(needle, i + needle.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
     }
 
     /// <summary>
@@ -459,11 +537,54 @@ public class ScreenPasswordFieldTests
         {
             await Assert.That(character.Password).IsNull().Because(character.Name);
 
+            // Nor a reference, so a demo run creates no secrets file and a demo config pasted anywhere shows
+            // the shape of a character with no stored credential.
+            await Assert.That(character.PasswordRef).IsNull().Because(character.Name);
+
             // Null means "the default template", which is the state a demo should be showing off.
             await Assert.That(character.ConnectString).IsNull().Because(character.Name);
             await Assert.That(character.ResolveConnectString())
                 .IsEqualTo($"connect {character.Name}")
                 .Because(character.Name);
+        }
+    }
+
+    /// <summary>
+    /// The whole frame, not just the form column: an F5 screen rendered over a config that <em>carries</em>
+    /// a stored password emits no plaintext into the ANSI. This is the assertion that got more valuable
+    /// rather than less when the password started persisting — before, a loaded config could not have one,
+    /// so the only secret a frame could have leaked was one typed in the same process. Now every frame this
+    /// app renders is rendered over a config that may hold credentials.
+    /// <para>
+    /// Both states are checked, because they are drawn by different code: the row at rest (a fixed-width
+    /// mask) and the row mid-edit (one dot per character, caret inside). The app is constructed with no
+    /// save action, so this also exercises the gate that keeps a frame from writing anybody's
+    /// <c>config.json</c>.
+    /// </para>
+    /// </summary>
+    [Test]
+    [NotInParallel]
+    public async Task NoRenderedFrameOfTheF5ScreenCarriesAStoredPassword()
+    {
+        // Constructing the app touches the process-global console streams; a null reader keeps a headless
+        // driver from blocking on stdin.
+        Console.SetIn(TextReader.Null);
+
+        var capabilities = new TerminalCapabilities(
+            GraphicsProtocol.None, supportsTrueColor: true, supportsKittyGraphics: false, supportsSixel: false);
+
+        foreach (var view in new[] { "worlds", "worlds-edit", "password" })
+        {
+            var config = new AppConfiguration { Worlds = Worlds() };
+            var app = new SharpMUTermApp(config, capabilities, new HeadlessConsoleDriver(140, 40));
+
+            var frame = app.RenderSnapshot(view);
+
+            await Assert.That(frame).IsNotEmpty().Because(view);
+            await Assert.That(frame).DoesNotContain(Secret).Because(view);
+
+            // The stored value is still there afterwards — the frame did not clear it to pass.
+            await Assert.That(config.Worlds[0].Characters[0].Password).IsEqualTo(Secret).Because(view);
         }
     }
 
