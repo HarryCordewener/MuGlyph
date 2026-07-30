@@ -103,10 +103,17 @@ python3 tools/ansi_frame_to_image.py frame.ansi frame.html   # or .svg
 - **`--demo-config` is not optional for verification work.** Without it the snapshot renders
   whatever config is on the machine, and a saved `~/.config/SharpMUTerm/` quietly replaces the demo
   worlds — you end up checking your own data and calling it the demo.
+- **The demo has no live session, so anything a session *writes* has to be written into `DemoScene` by
+  hand — and it has to match.** Its saved main-window title is `Corvid` because that is what
+  `BindSession` writes (`SessionTitle(session)`); it used to say `main`, and that one word of divergence
+  hid the rail repeating the world's name under the character for as long as the rail has existed. Three
+  separate bugs have now hidden in this gap. `RailWindowRowTests.TheDemoScenesMainWindowIsTitledTheWayA…`
+  holds the two sides together; when you add state the demo fakes, pin it against the live writer the
+  same way.
 - **Views:** `worlds`/`settings`, `triggers`, `route`, `highlight`, `aliases`, `timers`, `keypad`,
   `set`, `textansi`, `input`, `logging`, `password`, `freeze`, `spawn`, `split`, `move`, `drag`,
   `history`, `history-search`, `history-search-filter`, `draft`, `draft2`, `menu`, `menu-split`,
-  `messages`, `quit`, `deletions`, `web`, `scrollback`, `scrollback-up`, `freeze-scrollback`,
+  `messages`, `quit`, `deletions`, `web`, `rail-long`, `scrollback`, `scrollback-up`, `freeze-scrollback`,
   `focus`/`focus-moved` (a split *and* a second command line — the one geometry showing a focused pane
   beside an unfocused one and an armed bar above an idle one, before and after a real ⌃→), plus the
   default workspace
@@ -197,6 +204,20 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
 - **Only `MarkupControl.AppendLine` and `FeedRange` hand pane content to a control** — the seam a
   windowed feed replaces. Appending re-parses the whole control (the parse cache is keyed on a content
   version), so never "refresh" a pane by re-`SetContent`-ing the full buffer on a scroll or a frame.
+- **The rail's width is derived from its widest row, so the rail must be re-measured whenever its rows
+  change — not only when the pane area is rebuilt.** `RefreshRail` recomputes it and resizes the sidebar's
+  own grid column (`ApplyRailWidth`); the width was once computed only in `BuildWorkspaceRow`, so the
+  startup retitle poured longer rows into a column sized for shorter ones and the framework **wrapped**
+  them. A wrapped rail row is what got reported as "the sidebar looks broken". Rows are also **elided**
+  to `RailMaxWidth - RailMargin` before they are measured (`RailRenderer.Render`'s `maxWidth`), because the
+  width is *clamped*: without that, any label past the clamp — a web page's title, most easily — wraps no
+  matter how carefully the column is sized. The width feeds per-pane NAWS through the pane rectangles, and
+  that report rides the frame (`PostBufferPaint → ReportPaneSizes`), so nothing needs to announce it here.
+- **A rail window row is `what` then `where`, and neither column may wear the other's word.** A
+  character's own session window reads `main` (`RailWindowLabel`); its title names the *connection*, which
+  the row's own ancestors — its character, under its world — have already said. The hosting-pane column
+  exists only in a split (one pane, one possible answer) and spells panes `pane N`, because it used to call
+  the first pane `main` too and `▪ main   main` is two meanings in one line.
 - **Focus is indicated by recolouring what is already drawn — never by spending a cell.** Per-pane NAWS
   is derived from the pane rectangle (`PaneOutputRects`), so a border, gutter or marker column that only
   the focused pane has would re-announce a different terminal size to every connected server on every
@@ -206,14 +227,37 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   is the test that stops this being "improved" into a border. Colours live in `WorkspacePalette`, whose
   constants are all derived from a `ScreenPalette` pair so the workspace and the settings screens share
   one idea of what focus looks like; the focus step is `CursorBg ÷ EditBg`.
-- **The Ctrl+arrows move pane *selection*, not keyboard focus.** The pin
-  (`FocusChanged → PinFocusToArmedBar`) is untouched: typing always lands in the armed command line
-  wherever you have navigated to, which is why "move into the pane" needs no third piece of state.
+- **The Ctrl+arrows move pane *selection*, not keyboard focus — but selection carries the session.** The
+  pin (`FocusChanged → PinFocusToArmedBar`) is untouched: typing always lands in the armed command line
+  wherever you have navigated to. That is a fact about which *control* gets a keystroke, and it says
+  nothing about **which character the bar talks to**; the first cut of these keys reasoned "it never moves
+  focus, so no third piece of state is needed" and left the command line pointed at the world you had
+  navigated away from. Keep the two separate and keep both.
   `TryFocusKey` sits in `HandleWindowKey` **after** `DispatchMacro` (so `MacroKeys.Verdict` reporting a
   macro on `Ctrl+Left` as live stays true) and **before** `TryScrollKey`/`TryRecallKey` and the command
   line (which would otherwise eat them — `TryRecallKey` ignores modifiers). Word movement moved from
   `Ctrl+←/→` to `Alt+←/→` to make room. Vertically the panes and the bars are one ladder: ⌃↓ off the
-  last pane arms the second command line, ⌃↑ leaves it.
+  last pane arms the second command line, ⌃↑ leaves it (the second bar is per *window*, so the ladder is
+  taken from a pane whose window has one).
+- **`SharpMUTermApp.Activate` is the one activation path, and activating a window activates its session.**
+  Every gesture that brings a window forward goes through it: a tab click (`OnTabChanged`), a rail or ⌃P
+  entry, a character switch, an MXP `PROMPT`, the web view, and both movers of pane selection (`FocusPane`
+  for ⌃arrows and the ⌃P `Focus pane …` entries, `CyclePane` for ⌃O and ⌃B o). They were five paths and
+  they disagreed — the pane movers and the tab click reloaded the drafts but left `_active` behind, so
+  typing after navigating went to the world you had left. It does four things: resolve and adopt the
+  session (`AdoptSessionOf`), select the pane's tab, `ChangeWindow()` (drafts, second bar, history
+  cursors), and `SyncToFocusedPane()` (indicator, scrollback segment, NAWS). Re-entrancy through the
+  framework's own `TabChanged` is guarded by `_activating`.
+- **Whose window is this? One resolver, `WindowSession`: the session printing into it, else the owner the
+  workspace records, else refuse.** There is no third arm falling back on `_active` — that fallback is the
+  bug, in both shapes it has had (a link clicked in a background pane sending to the focused character; a
+  pane selection moving without the bar following). A window that resolves to nothing keeps the bar where
+  it is and `Notice()`s that it did, naming where ⏎ still goes — bounded through `Snippet`, because a
+  window title can be a *world's* text (the web view is titled from the page it loaded). It is quiet only
+  when there is no redirect to report: a window already owned by the active character, or no active
+  session at all. **Ownership is recorded on every path that binds or adopts a window** (`BindSession` and
+  `OpenSessionWindow`), because the main window is built before any session exists and the rail and this
+  resolver both read ownership.
 - **The scrollback keys are routed from `PreviewKeyPressed`** (`TryScrollKey`), and the wheel from the
   driver (`ScrollPaneUnderPointer`), for the same reason everything else in this window is: focus is
   pinned to the armed bar, so `ScrollablePanelControl.ProcessKey` — which returns false unless it has

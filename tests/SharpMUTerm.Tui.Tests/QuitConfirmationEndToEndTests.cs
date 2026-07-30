@@ -126,6 +126,14 @@ public class QuitConfirmationEndToEndTests
     /// <summary>
     /// The facts come from the live client, not from a fixture: a line typed into the command line and
     /// never sent is named in the question, by the window holding it.
+    /// <para>
+    /// The window is <c>Corvid</c>, not <c>main</c>. The name here changed with the title a session gives its
+    /// own window: it was the demo's stand-in <c>main</c>, which no running client ever showed (a live
+    /// session titled that window for its <em>world</em>, so this line would have read
+    /// <c>1 unsent draft — Aetherfall</c> directly under <c>1 world connected — Aetherfall</c>). Naming the
+    /// character is the same assertion against the shape the client actually has, and a stronger one: it says
+    /// <em>which</em> of two characters' half-typed lines is about to be thrown away.
+    /// </para>
     /// </summary>
     [Test]
     public async Task TheQuestionNamesTheUnsentDraft()
@@ -138,7 +146,7 @@ public class QuitConfirmationEndToEndTests
 
         app.SimulateKey(CtrlQ());
 
-        await Assert.That(Prompt(app)).Contains("1 unsent draft — main");
+        await Assert.That(Prompt(app)).Contains("1 unsent draft — Corvid");
     }
 
     /// <summary>

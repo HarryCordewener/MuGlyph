@@ -167,6 +167,14 @@ internal static class DemoScene
     /// The saved session the demo resumes: Corvid's main window and a Chat spawn (routed by the
     /// <c>Comms</c> set's <c>public</c> trigger), both hosted as tabs in a single pane.
     /// </summary>
+    /// <remarks>
+    /// <b>The main window's title is its character's name because that is what a live session writes.</b>
+    /// <c>SharpMUTermApp.BindSession</c> titles a session's own window <c>SessionTitle(session)</c>; the demo
+    /// has no session, so whatever is written here is what every snapshot shows. It said <c>main</c>, and that
+    /// one word of divergence hid the rail repeating the world's name under the character — the frames were
+    /// checking a shape the running client never has. Keep it equal to
+    /// <see cref="ActiveSessionKey"/>'s character; <c>RailWindowRowTests</c> holds the two together.
+    /// </remarks>
     private static WorkspaceState BuildLastSession()
     {
         var chatId = Workspace.SpawnWindowId("Chat");
@@ -177,7 +185,7 @@ internal static class DemoScene
                 new WorkspaceWindowState
                 {
                     Id = "main",
-                    Title = "main",
+                    Title = "Corvid",
                     Kind = WindowKind.Main,
                     SessionKey = ActiveSessionKey,
                 },
