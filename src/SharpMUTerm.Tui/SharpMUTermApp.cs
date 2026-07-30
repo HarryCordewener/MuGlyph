@@ -3226,8 +3226,17 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // three-cell gap, so a wordier phrasing wrapped the status line onto a second row at 120 columns
         // — and a status line that grows a row takes one off the workspace (SyncInputHeights counts the
         // chrome), which is a pane getting shorter because you scrolled it.
+        //
+        // The *number* is the same hazard and was not guarded: it counts lines below the viewport, which
+        // grows unbidden from the wire while a reader sits in their scrollback, so the segment widened at
+        // 9 → 10 and again at 99 → 100 with nobody touching a key. At 80 columns that second step took the
+        // row from 80 cells to 81, it wrapped, and every pane lost a row — which per-pane NAWS then
+        // re-announced to every connected server, reflowing the game's output. It is now written into a
+        // reserved field capped the way the sidebar's unread badge is (RailRenderer.UnreadField), so the
+        // segment is the same width whatever it says.
         var below = Math.Max(1, panel.TotalContentHeight - panel.ViewportHeight - panel.VerticalScrollOffset);
-        return $"[#e5c07b]{Glyphs.Scrollback} scrollback[/] [dim]{below} · ⌃End live[/]";
+        var distance = UnreadBadge.Format(below).PadLeft(UnreadBadge.FieldWidth);
+        return $"[#e5c07b]{Glyphs.Scrollback} scrollback[/] [dim]{distance} · ⌃End live[/]";
     }
 
     /// <summary>
