@@ -6921,11 +6921,17 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             right.Add(scrollback);
         }
 
-        // Keepalive latency sparkline + last ack (compact), per the design status bar.
-        var spark = Meters.Sparkline(new[] { 38, 44, 41, 47, 40, 43 });
-        var ackMs = ActiveWorld() is { } w && w.World.KeepaliveSeconds > 0 ? 41 : 0;
-        right.Add($"[dim]{Glyphs.Heartbeat}[/] [#98c379]{spark}[/] [dim]{ackMs}ms[/]");
-
+        // No latency meter. There was one — a heartbeat glyph, a sparkline and a round-trip figure — and
+        // every part of it was invented: the sparkline came from a literal `{ 38, 44, 41, 47, 40, 43 }`
+        // and the figure was the literal 41 whenever keepalive was switched on. It read as telemetry, so
+        // a live session against a real world showed exactly the same "41ms" the demo did.
+        //
+        // It is removed rather than implemented because this client cannot currently measure the thing it
+        // was pretending to. The keepalive is an IAC NOP, which by design draws no reply, and telnet's
+        // only round-trip primitive is TIMING-MARK (RFC 860, option 6) — negotiated nowhere in this stack
+        // or in TelnetNegotiationCore. What *is* measurable without any of that is time since the last
+        // byte arrived, which is a liveness signal rather than a latency one; if this row earns a meter
+        // again, that is the honest one to build.
         var encoding = ActiveWorld() is { } enc ? enc.World.Encoding : "UTF-8";
         right.Add($"[dim]{Escape($"{host}:{port}")}  {Escape(encoding)}[/]");
 

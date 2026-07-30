@@ -24,7 +24,6 @@ internal static class Glyphs
     // smuggles a decorative close glyph back in.
     public const string Capture = "\uf090"; // nf-fa-sign_in — spawn capture / route (was the into-corner arrow)
     public const string Log = "\uf0f6"; // nf-fa-file_text_o — log indicator (was the fisheye)
-    public const string Heartbeat = "\uf21e"; // nf-fa-heartbeat — keepalive (was the recycle mark)
     public const string World = "\uf0ac"; // nf-fa-globe — world/server accent (paired with the spine)
 
     /// <summary>
