@@ -9,8 +9,8 @@ namespace SharpMUTerm.Crawler.Tests.Support;
 /// <para>
 /// This is a *server*, not just a pipe. The MSSP handshake is a conversation — the server says
 /// <c>IAC WILL MSSP</c> and only sends its report once the client has answered <c>IAC DO MSSP</c> — so
-/// a transport that replayed a fixed script would test the parser against bytes no real server would
-/// have sent yet, and would never exercise the negotiation the crawler depends on.
+/// a transport that replayed a fixed script would test the telnet layer's reader against bytes no real
+/// server would have sent yet, and would never exercise the negotiation the crawler depends on.
 /// </para>
 /// </summary>
 internal sealed class ScriptedTransport : ITransport
@@ -46,6 +46,13 @@ internal sealed class ScriptedTransport : ITransport
     public byte[] Greeting { get; init; } = [];
 
     /// <summary>
+    /// Delivers everything one byte per read — the worst case a TCP stream can produce, and the one an
+    /// incremental reader has to survive. A payload split this way must parse the same as one that
+    /// arrives whole.
+    /// </summary>
+    public bool Fragmented { get; init; }
+
+    /// <summary>
     /// When the client answers <c>IAC DO &lt;option&gt;</c>, deliver <paramref name="response"/>. This is
     /// how the MSSP report is made conditional on the client having asked for it.
     /// </summary>
@@ -60,7 +67,7 @@ internal sealed class ScriptedTransport : ITransport
         IsConnected = true;
         if (Greeting.Length > 0)
         {
-            _inbound.Writer.TryWrite(Greeting);
+            Deliver(Greeting);
         }
 
         return Task.CompletedTask;
@@ -81,7 +88,7 @@ internal sealed class ScriptedTransport : ITransport
             if (i + 2 < bytes.Length && bytes[i] == Iac && bytes[i + 1] == Do &&
                 _onDo.TryGetValue(bytes[i + 2], out var response))
             {
-                _inbound.Writer.TryWrite(response);
+                Deliver(response);
             }
         }
 
@@ -116,7 +123,25 @@ internal sealed class ScriptedTransport : ITransport
     }
 
     /// <summary>Delivers bytes to the client, as a server would mid-conversation.</summary>
-    public void SendToClient(params byte[] bytes) => _inbound.Writer.TryWrite(bytes);
+    public void SendToClient(params byte[] bytes) => Deliver(bytes);
+
+    /// <summary>
+    /// Queues bytes for the reader. <see cref="ReceiveAsync"/> hands back at most one queued chunk per
+    /// call, so queuing one byte at a time is what makes <see cref="Fragmented"/> arrive that way.
+    /// </summary>
+    private void Deliver(byte[] bytes)
+    {
+        if (!Fragmented)
+        {
+            _inbound.Writer.TryWrite(bytes);
+            return;
+        }
+
+        foreach (var b in bytes)
+        {
+            _inbound.Writer.TryWrite([b]);
+        }
+    }
 
     /// <summary>
     /// Waits (up to a second) for the client to have written <paramref name="expected"/>. Polling, but

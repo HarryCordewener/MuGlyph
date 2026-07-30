@@ -40,11 +40,9 @@ internal sealed class FakeProbe(TimeProvider time) : IMsspProbe
     /// <summary>Answers <paramref name="host"/> with a report referring to <paramref name="referrals"/>.</summary>
     public FakeProbe Referring(MsspHost host, params MsspHost[] referrals)
     {
-        var data = new MsspSubnegotiationParser()
-            .Consume(MsspWire.Subnegotiation(
-                ("NAME", [$"Server at {host.Host}"]),
-                ("REFERRAL", referrals.Select(r => r.ToReferralString()).ToArray())))
-            .Single();
+        var data = MsspWire.Report(
+            ("NAME", [$"Server at {host.Host}"]),
+            ("REFERRAL", referrals.Select(r => r.ToReferralString()).ToArray()));
 
         lock (_gate)
         {

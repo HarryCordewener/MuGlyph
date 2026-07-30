@@ -49,7 +49,7 @@ fallbacks) for inline images/maps.
   paged off an ephemeral per-session cache under `$XDG_CACHE_HOME`; absolute line indices, ranged
   reads capped at `MaxRangeLines`, and any disk failure degrades to memory-only. Emphatically **not**
   the session log — that stays `PlainTextLogSink`/`HtmlLogSink`, opt-in and kept),
-  `TcpTransport` (TLS + IPv6), `TelnetSession` (wraps TelnetNegotiationCore **2.6.0**),
+  `TcpTransport` (TLS + IPv6), `TelnetSession` (wraps TelnetNegotiationCore **2.6.5**),
   trigger/alias/macro engines + `IntervalScheduler`, plain-text + HTML logging, versioned JSON
   config (worlds → characters + shared trigger sets, with migration),
   `Theme`/`ThemeLibrary`, and `WorldSession`/`SessionManager` orchestration.
@@ -477,13 +477,28 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
 
 ## Other dependency notes
 
-- **TelnetNegotiationCore 2.6.0** (repo owner is its author — extend it by PR rather than working
+- **TelnetNegotiationCore 2.6.5** (repo owner is its author — extend it by PR rather than working
   around it). Fluent builder API; negotiates MCCP/MSDP/MXP itself; ships the keepalive interpreter
   (`WithKeepAlive(TimeSpan?, …)`, default 30s, clamped to 1s–24h). `TelnetSession` sets the
   init-only `CallbackOnByteAsync` reflectively to see raw bytes including unterminated prompts — a
   first-class `OnByte` builder hook remains a good upstream PR. It handles the option handshake
   (TELOPT, GA, TTYPE/MTTS, EOR, NAWS, CHARSET, MSSP, GMCP) — **Pueblo and all ANSI/MXP/Pueblo
   payload _parsing_ stay our layer.**
+- **MSSP is read by the library, not by us — since 2.6.5, and that is the standing example of the
+  rule above.** 2.6.0's reader destroyed the protocol's own array notation inside the library:
+  `PORT "80" "23" "4201"` arrived as the integer `80234201`, `REFERRAL` (array-only, and the whole
+  reason a crawler connects) arrived null, booleans failed to bind from `1`/`0`, `CHARSET` and every
+  invented name were dropped, `CRAWL_DELAY`/`MINIMUM_AGE` bound to nothing, and a variable with no
+  value wedged MSSP for the rest of the connection. We carried a byte-level `MsspSubnegotiationParser`
+  for exactly as long as that was true; the fix went upstream (PR #56) and the parser is **deleted**.
+  Do not re-add one. `MSSPConfig.Variables` is now an ordered name → value-**list** map,
+  `MsspData.From` projects it, and `MsspData` is a projection with **no parsing in it** — what it adds
+  is ours: `REFERRAL` as crawlable `MsspHost`s, `CRAWL DELAY` −1 as "no preference", ports validated
+  as ports. Two upstream defects remain open and are pinned by name in `MsspParsingTests`: MSSP fields
+  are decoded as **ASCII** rather than the negotiated charset (a non-ASCII `NAME` comes back as
+  question marks, one per byte), and an escaped `IAC IAC` inside a value **loses the literal byte**.
+  MSSP also has no payload size cap upstream — `SubnegotiationBuffer` guards GMCP, MSDP and CHARSET's
+  TTABLE, but not this — so a hostile server can make the crawler buffer as much as it likes.
 - **Text encoding is CHARSET's answer, not a setting** (`SessionEncoding`, `TelnetSession.CurrentEncoding`).
   A world's `encoding` is `auto` by default — state the app's `CharsetOrder`, decode with whatever RFC
   2066 settles on — and naming one is an *override*: still offered at the head of the order so a

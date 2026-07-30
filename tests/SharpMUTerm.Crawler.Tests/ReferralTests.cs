@@ -101,8 +101,7 @@ public class ReferralTests
     [Test]
     public async Task TheReferralListIsReadFromTheArrayAndDeduplicated()
     {
-        var parser = new MsspSubnegotiationParser();
-        var data = parser.Consume(MsspWire.Subnegotiation(
+        var data = MsspWire.Report(
             ("REFERRAL",
             [
                 "a.example.org 4000",
@@ -110,7 +109,7 @@ public class ReferralTests
                 "A.EXAMPLE.ORG 4000",     // the same host, spelled differently
                 "not a referral",          // a stale line; dropped, not fatal
                 "2001:db8::9 4201",
-            ]))).Single();
+            ]));
 
         await Assert.That(data.Referrals.Select(r => r.ToReferralString()))
             .IsEquivalentTo(new[] { "a.example.org 4000", "b.example.org 4000", "2001:db8::9 4201" });
