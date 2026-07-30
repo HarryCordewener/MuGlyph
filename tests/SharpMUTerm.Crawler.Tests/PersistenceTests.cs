@@ -389,4 +389,43 @@ public class PersistenceTests
         var separators = row.Where((c, i) => c == '|' && (i == 0 || row[i - 1] != '\\')).Count();
         await Assert.That(separators).IsEqualTo(8);
     }
+
+    /// <summary>
+    /// A report is the same bytes wherever it was produced. <c>StringBuilder.AppendLine</c> emits
+    /// <see cref="Environment.NewLine"/>, so the renderer used to write CRLF on Windows and LF on Linux —
+    /// the same crawl, two different files. A report gets committed, diffed and pasted, and one whose
+    /// shape follows the machine that made it is useless as a baseline.
+    /// <para>
+    /// <b>This assertion only bites on Windows</b>, where <c>Environment.NewLine</c> is CRLF; on Linux it
+    /// is LF and the test passes whether or not the normalisation is there. It is the Windows CI job that
+    /// guards this, which is why the Crawler suite now runs there.
+    /// </para>
+    /// </summary>
+    [Test]
+    public async Task AReportIsTheSameBytesOnEveryPlatform()
+    {
+        var summary = new CrawlSummary
+        {
+            StartedAt = Now,
+            FinishedAt = Now,
+            StopReason = CrawlStopReason.Exhausted,
+            Results =
+            [
+                new ProbeResult
+                {
+                    Host = Host("a.example.org"),
+                    Outcome = CrawlOutcome.MsspReceived,
+                    ObservedAt = Now,
+                    Data = MsspWire.Report(("NAME", ["Corvid Nest"])),
+                },
+            ],
+            Hosts = [],
+            Verdicts = new Dictionary<DiscoveryVerdict, int>(),
+        };
+
+        var report = CrawlReport.Render(summary, new CrawlOptions());
+
+        await Assert.That(report).DoesNotContain("\r");
+        await Assert.That(report).Contains("\n").Because("the report is still line-delimited, just with LF");
+    }
 }

@@ -85,7 +85,16 @@ public static class CrawlReport
         WriteProblems(text, summary);
         WriteSchedule(text, summary);
 
-        return text.ToString();
+        // Newlines are normalised to "\n" rather than left as StringBuilder.AppendLine wrote them.
+        // AppendLine emits Environment.NewLine, so the same crawl produced different *bytes* on Windows
+        // than on Linux — a report is an artefact people commit, diff and paste, and one that changes
+        // shape with the machine that made it is worth nothing as a baseline. Markdown renders "\n"
+        // everywhere, so nothing is lost.
+        //
+        // Safe as a blanket replace because no cell can carry a carriage return of its own: Cell strips
+        // control characters out of everything that came off the wire, which is the point of the escape
+        // test beside this one.
+        return text.Replace("\r\n", "\n").ToString();
     }
 
     private static void WriteOutcomes(StringBuilder text, CrawlSummary summary)
