@@ -317,8 +317,16 @@ internal readonly record struct ScreenField(
     /// <summary>
     /// A secret: typed like any other value, drawn as dots (see <see cref="Masked"/>). A character's
     /// login password is the only one, and it is why the field kind exists — the alternative on offer
-    /// before this was for the user to write the password into the connect string in plaintext, where it
-    /// was serialized to <c>config.json</c>.
+    /// before this was for the user to write the password into the connect string, an ordinary text field
+    /// that draws its value in the clear.
+    /// <para>
+    /// <b>What the mask is and is not.</b> It keeps the value out of rendered markup, which is what a
+    /// snapshot writes to a file and a screenshot publishes — and a screenshot with a live password in it is
+    /// the leak that prompted the storage design behind this field. It says nothing about storage: the
+    /// committed value is written to <c>secrets.json</c> in plaintext (see
+    /// <see cref="SharpMUTerm.Core.Configuration.SecretsStore"/>), and the row carries a note saying so,
+    /// because a masked field is exactly the thing a reader would otherwise assume was encrypted.
+    /// </para>
     /// <para>
     /// The buffer opens on the <em>real</em> value rather than on a blank, so an existing password can be
     /// corrected a character at a time instead of retyped from scratch; nothing is revealed by that,

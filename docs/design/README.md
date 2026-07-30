@@ -52,7 +52,8 @@ The design separates them: a world is a **server** (host/port/TLS/encoding), and
 public sealed class CharacterDefinition
 {
     public string Name { get; set; } = "New Character";
-    public string? Password { get; set; }          // [JsonIgnore]: session only, never on disk
+    public string? Password { get; set; }          // [JsonIgnore]: lives in secrets.json (see below)
+    public Guid? PasswordRef { get; set; }         // the secrets.json key; meaningless on its own
     public string? ConnectString { get; set; }     // template; null → "connect %CHARACTER% %PASSWORD%"
     public bool AutoLogin { get; set; }
     public string? OnConnect { get; set; }         // ';'-separated commands
@@ -68,6 +69,65 @@ public sealed class CharacterDefinition
 
 `SessionManager.Open` should take `(WorldDefinition, CharacterDefinition, int scrollbackLines)`
 and key sessions on `$"{world.Name}.{character.Name}"`.
+
+#### Passwords live in `secrets.json`, not in `config.json`
+
+Character passwords are saved — a client that forgets them is a client whose users type credentials into
+the command line, where they are echoed, written to the session transcript and offered to history. But they
+are **not saved in `config.json`**, because that is the file people share: it goes into bug reports, help
+channels, screenshots and dotfiles repositories.
+
+So there are two files, side by side in `~/.config/SharpMUTerm/`:
+
+| File | Holds | Mode | Safe to paste? |
+|---|---|---|---|
+| `config.json` | worlds, characters, trigger sets, preferences — and a per-character `passwordRef` GUID | left as found | **yes** |
+| `secrets.json` | `{ "<guid>": "<password>" }`, nothing else | `0600` | **no** |
+
+`CharacterDefinition.Password` is `[JsonIgnore]`; `CharacterDefinition.PasswordRef` is the GUID that
+reaches the config, and it carries no information — a shared config discloses that *a* password exists and
+nothing more. `ConfigurationStore.Save` and `.Load` are the only code that knows a reference stands for a
+password; everything upstream reads and writes `Password`.
+
+**This is not encryption, and does not pretend to be.** The passwords are plaintext in a JSON file, as
+hand-editable as the config, and anyone who can read the file can read them. Obfuscation was considered and
+rejected: the key would ship inside the client, so it stops nobody holding the file, while making the field
+look protected and adding a permanent migration burden. What the split buys is that *accidental disclosure*
+and *deliberate sharing* stop being the same action, which is the failure that actually happens. What the
+mode buys is that "anyone who can read the file" is one account. An OS credential store
+(DPAPI/Keychain/libsecret) is the thing that would make these secrets at rest; it remains a legitimate
+future option and nothing claims it exists today.
+
+The rules, all of which exist so that nothing on this path can stop you logging in:
+
+- **No secrets file until there is a secret.** A user who has saved no passwords has no `secrets.json` at
+  all — the same principle as the scrollback spill only creating its cache on the first eviction. Blanking
+  the last password deletes the file again.
+- **Everything degrades to "no password".** A missing file, an unparseable one, a key that is not a GUID, a
+  reference with no matching row: all mean the character has no stored password. The client starts, and
+  `connect %CHARACTER% %PASSWORD%` sends `connect <name>` — the template already drops one adjacent space
+  for an empty token. A file that exists and could not be read is reported **once**, at startup, to the
+  client message log (Ctrl+P); never per keystroke.
+- **Owner-only, tightened silently.** Every write narrows `secrets.json` to `0600` first, creating it with
+  that mode rather than chmodding after, so no window exists in which a world-readable file holds a
+  password. An existing wider file is narrowed in place without asking: the condition is fixed by the time
+  anyone could be told, and refusing to write would lose passwords over a permission bit. On Windows there
+  is no equivalent step — the file inherits `%APPDATA%`'s user-only ACL, and hand-rolling a DACL no CI here
+  can exercise would trade something correct for something untested.
+- **Orphans cannot accumulate.** The file is rewritten from the characters that exist, so deleting a
+  character deletes its row. There is no separate sweep to get wrong.
+- **A duplicated character gets its own row.** `Clone()` copies `Password` and deliberately does *not* copy
+  `PasswordRef`, so the next save allocates a fresh GUID. Sharing a row would mean editing one character's
+  password silently changed the other's, invisibly, behind two masks. `Save` also refuses to let two
+  characters share a row, so the intent and the enforcement are separate and agree.
+- **A secrets file that cannot be read is moved aside, not overwritten.** It becomes
+  `secrets.json.unreadable` before anything replaces it, because the client is about to write a map that
+  demonstrably does not contain those passwords.
+
+**No migration is needed.** `passwordRef` is a new optional property with a null default, and `Password`
+was never serialized, so there is nothing on disk to convert: an existing v2 document simply has no
+reference, which means "no stored password" — the same state the user was already in. `CurrentVersion` does
+not move, because it exists for renames and restructures, not for additive optional fields.
 
 ### 2. Triggers live in named sets, assigned to characters
 
@@ -189,8 +249,8 @@ top to bottom:
 - **`├ CHARACTERS`**: a table — name, state (`● connected` / `○ offline`), login mode,
   assigned trigger sets — with `[+ add character] [⧉ duplicate]` and the same `Del` row. Empty state:
   *"no characters — this world has nothing to connect with."*
-- **`└ CHARACTER · <name>`**: two columns. Left: name, password (masked, *this session only —
-  never saved*), the connect-line template (`connect %CHARACTER% %PASSWORD%`), on-connect,
+- **`└ CHARACTER · <name>`**: two columns. Left: name, password (masked, *saved in secrets.json,
+  plaintext*), the connect-line template (`connect %CHARACTER% %PASSWORD%`), on-connect,
   auto-login, session state, log format + folder. Right: the trigger-set checklist — each row is
   `[x] ▪ Comms — channel + page routing    2 rules`. Toggling assigns/unassigns live.
 

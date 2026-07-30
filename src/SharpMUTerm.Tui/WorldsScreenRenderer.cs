@@ -831,9 +831,10 @@ internal static class WorldsScreenRenderer
     /// The <b>password</b> was a seventh readout until it had somewhere to go. It was drawn without a
     /// well and labelled <c>keychain</c> — an affordance-free row advertising a credential store that
     /// does not exist anywhere in this codebase. It is now a real field, masked
-    /// (<see cref="ScreenChrome.RestingMask"/>), and it says what is actually true: the value is kept for
-    /// this session and never written to config. When a credential store lands, that note changes with
-    /// it; until then the row does not promise one.
+    /// (<see cref="ScreenChrome.RestingMask"/>), and its note says what is actually true: the value is
+    /// written to <c>secrets.json</c> in plaintext, and <em>not</em> into <c>config.json</c> (see
+    /// <see cref="StorageNote"/>). The mask is about shoulders and screenshots, not about storage, and the
+    /// note is what stops it being read as a claim about storage.
     /// </para>
     /// <para>
     /// The <b>connect line</b> is drawn here for the first time, because it is only now a thing worth
@@ -872,7 +873,7 @@ internal static class WorldsScreenRenderer
                 selectedCharacter,
                 PasswordField,
                 pane: CharactersPane)),
-            CharField(string.Empty, $"[{Label}]{SessionOnlyNote}[/]"),
+            CharField(string.Empty, $"[{Label}]{StorageNote}[/]"),
             CharField("connect", Field(
                 $"[{Value}]{Escape(character.ConnectString ?? ConnectStringTemplate.Default)}[/]",
                 cursor,
@@ -923,16 +924,27 @@ internal static class WorldsScreenRenderer
     internal const string NoPassword = "(not set)";
 
     /// <summary>
-    /// What the password row says about where the value goes, which is: nowhere.
-    /// <see cref="CharacterDefinition.Password"/> is <c>[JsonIgnore]</c>, so it survives exactly as long
-    /// as the process does, and this row is the only place a user could learn that.
+    /// What the password row says about where the value goes: into <c>secrets.json</c>, as plaintext.
+    /// <see cref="CharacterDefinition.Password"/> is saved — just not into <c>config.json</c>, which carries
+    /// only a meaningless GUID (<see cref="CharacterDefinition.PasswordRef"/>). This row is the only place a
+    /// user could learn any of that.
     /// <para>
-    /// It replaces the word <c>keychain</c>, which was the only occurrence of the term anywhere in this
-    /// codebase: there is no keychain, no DPAPI and no libsecret behind this field — only a doc comment
-    /// naming them as a follow-up. A row advertising a credential store that does not exist is the exact
-    /// class of claim the rest of these screens' tests are written to prevent, and it is worse than the
-    /// others because a user who believes it will type a password expecting it to be stored safely and
-    /// then wonder where it went.
+    /// It has said four different things, and the sequence is worth keeping legible because each was true of
+    /// the design it shipped with. It said <c>keychain</c> — a credential store that exists nowhere in this
+    /// codebase, which is the exact class of claim these screens' tests are written to prevent. It said
+    /// <c>this session only — never saved</c>, honest while the field was <c>[JsonIgnore]</c> and a lie the
+    /// moment passwords were persisted. It briefly said <c>saved in config.json, plain text</c>, which was
+    /// honest about a design that put the secret in the file people paste. It now names the file the secret
+    /// is actually in.
+    /// </para>
+    /// <para>
+    /// <b>Plainly, not glossed.</b> "Encrypted" would be false, "stored securely" would be a gloss over a
+    /// plaintext file, and saying only <c>saved</c> would let a reader supply the reassuring half themselves.
+    /// Naming the file is what makes the note actionable — a user who wants to look after their credentials,
+    /// exclude them from a backup or check what is in them now knows what to open. The two things it does not
+    /// have room for are the owner-only mode and the fact that <c>config.json</c> is consequently safe to
+    /// share; both are in <c>docs/design/README.md</c> and in <c>--help</c>, and neither is something a reader
+    /// of this row has to act on.
     /// </para>
     /// <para>
     /// It takes a row of its own, with a blank label, the way the certificate checkbox hangs off the
@@ -941,10 +953,12 @@ internal static class WorldsScreenRenderer
     /// the moment a password was set, and a wrapped row costs the form a line it was not measured for and
     /// pushed <c>log folder</c> out of the band. On its own row it cannot collide with a value of any
     /// length, and it is drawn while the field is open as well as at rest, which is when it is most worth
-    /// reading.
+    /// reading. <c>CharField</c> spends 14 of the panel's 47 usable cells on the indent and the label
+    /// column, so this string has 33 to fit in and
+    /// <c>ScreenPasswordFieldTests.EveryFormRowFitsThePanel…</c> is what stops the next edit forgetting it.
     /// </para>
     /// </summary>
-    internal const string SessionOnlyNote = "this session only — never saved";
+    internal const string StorageNote = "saved in secrets.json, plaintext";
 
     /// <summary>What the CHARACTER form says while the cursor is somewhere else on the screen.</summary>
     internal const string FormClosed = "⏎ on the character in the list above";

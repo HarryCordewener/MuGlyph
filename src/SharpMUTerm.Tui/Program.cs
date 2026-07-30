@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using SharpMUTerm.Core.Configuration;
 using SharpMUTerm.Graphics;
 using SharpConsoleUI.Drivers;
@@ -14,7 +15,11 @@ internal static class Program
             return 0;
         }
 
-        var config = LoadConfiguration();
+        // Anything the load wants to say about the secrets file is collected here and logged once diagnostics
+        // exist — the pipeline is built further down, and this runs before it. It is deliberately a list that
+        // is drained exactly once: a secrets problem is a startup fact, not a recurring notice.
+        var loadNotices = new List<string>();
+        var config = LoadConfiguration(loadNotices.Add);
         var capabilities = DetectCapabilities(config);
 
         // Headless snapshot: render one demo frame to ANSI (for docs images / CI golden files) and
@@ -66,6 +71,17 @@ internal static class Program
         // the World.Character-*.log transcripts). Never a console sink — this app owns the screen.
         using var diagnostics = ClientDiagnostics.Create(
             Path.Combine(Path.GetDirectoryName(ConfigurationStore.DefaultPath)!, "logs"));
+
+        // Drain what the configuration load had to say now that there is somewhere to say it. A secrets file
+        // that could not be read means characters start with no password — worth one line in the client
+        // message log (⌃P), and never more than that: the client still runs, still connects, and the password
+        // can simply be typed again.
+        var loadLogger = diagnostics.For("SharpMUTerm.Configuration");
+        foreach (var notice in loadNotices)
+        {
+            loadLogger.LogWarning("{Notice}", notice);
+        }
+
         var liveApp = new SharpMUTermApp(
             config,
             capabilities,
@@ -103,11 +119,15 @@ internal static class Program
         return (160, 48);
     }
 
-    private static AppConfiguration LoadConfiguration()
+    /// <summary>
+    /// Loads the configuration, collecting anything the store wants reported into
+    /// <paramref name="report"/> for the caller to log once diagnostics exist.
+    /// </summary>
+    private static AppConfiguration LoadConfiguration(Action<string> report)
     {
         try
         {
-            return ConfigurationStore.Load(ConfigurationStore.DefaultPath);
+            return ConfigurationStore.Load(ConfigurationStore.DefaultPath, report);
         }
         catch
         {
@@ -196,6 +216,11 @@ internal static class Program
         usage.WriteLine("  -h, --help           Show this help.");
         usage.WriteLine();
         usage.WriteLine($"Config: {ConfigurationStore.DefaultPath}");
+
+        // Named because it is the file a user has to know about to look after it — and because "where did my
+        // password go" should be answerable without reading the source. Config is safe to share; this is not.
+        usage.WriteLine($"Secrets: {SecretsStore.PathFor(ConfigurationStore.DefaultPath)}"
+            + " — character passwords, plain text, owner-only. Not the file to paste.");
         usage.WriteLine("With no host, the first configured world is used (if any).");
         usage.WriteLine();
         usage.WriteLine("In-app: Up/Down history · Ctrl+N next window · Ctrl+W close · Ctrl+P palette · Ctrl+Q quit.");
