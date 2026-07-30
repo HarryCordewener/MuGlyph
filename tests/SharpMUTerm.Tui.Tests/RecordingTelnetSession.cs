@@ -52,13 +52,24 @@ internal sealed class RecordingTelnetSession : ITelnetSession
         }
     }
 
-#pragma warning disable CS0067 // Required by the interface; these tests drive sizes, not output.
     public event EventHandler<TelnetOutputEventArgs>? OutputReceived;
+
+#pragma warning disable CS0067 // Required by the interface; these tests drive sizes and output, not these.
     public event EventHandler<GmcpMessageEventArgs>? GmcpReceived;
     public event EventHandler<MsdpMessageEventArgs>? MsdpReceived;
     public event EventHandler<MsspReceivedEventArgs>? MsspReceived;
 #pragma warning restore CS0067
     public event EventHandler<SessionDisconnectedEventArgs>? Disconnected;
+
+    /// <summary>
+    /// Delivers text as if the world had sent it, so a test can drive the whole receive path — the
+    /// session's own <see cref="ITelnetSession.OutputReceived"/> handler, its configured line parser
+    /// (ANSI/MXP/Pueblo), the trigger engine, and out to whatever is bound to the session's printed
+    /// lines. It is the only way to assert on what a <em>server's</em> markup does to this client, as
+    /// opposed to what a hand-built <c>StyledLine</c> does.
+    /// </summary>
+    public void Receive(string text) =>
+        OutputReceived?.Invoke(this, new TelnetOutputEventArgs(text, isPrompt: false));
 
     public Task ConnectAsync(CancellationToken cancellationToken = default)
     {

@@ -319,17 +319,18 @@ public class RailClickTests
 
         foreach (var target in targets)
         {
-            app.OnLinkClicked(target);
+            app.OnLinkClicked(app.ActiveWindowId(), target);
         }
 
-        // Nothing switched, nothing was connected, and no character's window was opened. (An unknown
-        // scheme falls through to the web view, which is what this handler has always done with a link
-        // it does not recognise — a picture of an error page, not a hand on the client's controls.)
+        // Nothing switched, nothing was connected, and no character's window was opened. (A rail target
+        // carries none of the three schemes the pane handler writes, so it is refused out loud — it used
+        // to fall through to the web view, and that fallback is half of what made a forged scheme work.)
         await Assert.That(app.ActiveSessionKey).IsEqualTo(before);
         await Assert.That(app.FindSession(Rookery)).IsNull();
         await Assert.That(app.FindSession(Thistle)).IsNull();
         await Assert.That(app.WindowIds().Any(id => id.StartsWith("char:", StringComparison.Ordinal))).IsFalse();
         await Assert.That(app.StatusMarkup).DoesNotContain("switched to");
+        await Assert.That(app.StatusMarkup).Contains("nothing here handles it");
     }
 
     /// <summary>
@@ -343,7 +344,7 @@ public class RailClickTests
         var app = App();
         app.RenderSnapshot();
 
-        app.OnLinkClicked("sharpmuterm-menu:toggle");
+        app.OnLinkClicked(app.ActiveWindowId(), "sharpmuterm-menu:toggle");
 
         await Assert.That(app.MenuIsOpen).IsFalse();
     }
