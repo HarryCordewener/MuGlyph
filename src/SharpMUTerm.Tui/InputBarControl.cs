@@ -343,6 +343,40 @@ internal sealed class InputBarControl : BaseControl, IInteractiveControl, IFocus
         return Math.Max(1, width - Margin.Left - Margin.Right - MarkupParser.StripLength(_prompt));
     }
 
+    /// <summary>
+    /// <b>Where row 0 of the text lands and how far it has scrolled, derived once.</b> Both
+    /// <see cref="PaintDOM"/> and <see cref="GetLogicalCursorPosition"/> ask this, because the caret is
+    /// drawn on the row the text was painted on and there is no version of that sentence in which two
+    /// formulas may compute it separately: they agree only for as long as nobody edits one of them, and
+    /// a caret computed from state that does not match what was painted is a bug with a new symptom for
+    /// every layout change.
+    /// <para>
+    /// <paramref name="boxHeight"/> is the rows the control was actually <em>given</em>, which is not
+    /// always the rows it asked for — the framework clamps a measure to the space left. The paint has
+    /// always honoured that (it cannot paint outside its bounds); the cursor did not, so on any frame
+    /// where the two differed the scroll offset the caret was placed by was one the text was never drawn
+    /// at. Pass 0 when nothing has been arranged yet and the requested height is the only answer there is.
+    /// </para>
+    /// </summary>
+    private (IReadOnlyList<InputRow> Rows, int Row, int Column, int Height) Geometry(
+        int fieldWidth, int boxHeight)
+    {
+        var rows = InputLayout.Wrap(Buffer.Text, fieldWidth);
+        var (row, column) = InputLayout.Caret(rows, Buffer.Caret);
+        var height = InputLayout.Height(rows.Count, MinRows, MaxRows);
+        if (boxHeight > 0)
+        {
+            height = Math.Min(height, boxHeight);
+        }
+
+        _scroll = InputLayout.Scroll(row, rows.Count, height, _scroll);
+        return (rows, row, column, height);
+    }
+
+    /// <summary>The rows the last arrange gave the text, or 0 before there has been one.</summary>
+    private int ArrangedTextHeight() =>
+        ActualHeight > 0 ? Math.Max(0, ActualHeight - Margin.Top - Margin.Bottom) : 0;
+
     /// <inheritdoc/>
     public Point? GetLogicalCursorPosition()
     {
@@ -351,10 +385,7 @@ internal sealed class InputBarControl : BaseControl, IInteractiveControl, IFocus
             return null;
         }
 
-        var rows = InputLayout.Wrap(Buffer.Text, FieldWidth());
-        var (row, column) = InputLayout.Caret(rows, Buffer.Caret);
-        var height = InputLayout.Height(rows.Count, MinRows, MaxRows);
-        _scroll = InputLayout.Scroll(row, rows.Count, height, _scroll);
+        var (_, row, column, _) = Geometry(FieldWidth(), ArrangedTextHeight());
         return new Point(
             Margin.Left + MarkupParser.StripLength(_prompt) + column,
             Margin.Top + row - _scroll);
@@ -400,11 +431,7 @@ internal sealed class InputBarControl : BaseControl, IInteractiveControl, IFocus
         var promptWidth = MarkupParser.StripLength(_prompt);
         var fieldWidth = Math.Max(1, bounds.Width - Margin.Left - Margin.Right - promptWidth);
 
-        var rows = InputLayout.Wrap(Buffer.Text, fieldWidth);
-        var height = Math.Min(
-            InputLayout.Height(rows.Count, MinRows, MaxRows), bounds.Height - Margin.Top - Margin.Bottom);
-        var (caretRow, _) = InputLayout.Caret(rows, Buffer.Caret);
-        _scroll = InputLayout.Scroll(caretRow, rows.Count, height, _scroll);
+        var (rows, _, _, height) = Geometry(fieldWidth, bounds.Height - Margin.Top - Margin.Bottom);
 
         for (var line = 0; line < height; line++)
         {

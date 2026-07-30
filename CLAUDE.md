@@ -187,6 +187,15 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   `FocusManager`**, which is why paste broke after any click while typing appeared fine.
   `FocusChanged → PinFocusToArmedBar()` makes "which bar ⏎ sends from", "what the framework pastes
   into" and "where the caret is drawn" one fact. Keep the pin; don't re-sync three places.
+- **A caret assertion must read the frame, not the function.** `InputBarControl.GetLogicalCursorPosition`
+  is where a caret bug lives, so a test built on it (`SharpMUTermApp.CaretReported`) agrees with the code
+  while the screen disagrees. `CaretOnScreen()` reads the cell the *driver* was handed — it goes through
+  `ConsoleWindowSystem.ProcessOnce` because `ForceRender` paints and stops, and the cursor pass
+  (`UpdateCursor`) is a separate, `internal` step of the real loop. `FrameGrid.Decode` turns a frame back
+  into cells so "where the text is" is read off the paint. **`PaintDOM` and `GetLogicalCursorPosition`
+  derive the text's origin and scroll from one place** (`InputBarControl.Geometry`): the paint has always
+  been clamped to the rows it was *given* and the cursor was not, so on any frame where the arranged
+  height was short of the requested one they disagreed about the scroll.
 - **Ask the driver for the terminal size, never a literal.** `_system.ConsoleDriver.ScreenSize` is
   correct from the moment the window system exists — before any window does. Chrome built in the
   app constructor against a literal wrapped the header on the first frame of any narrower terminal,
@@ -258,6 +267,20 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   width is *clamped*: without that, any label past the clamp — a web page's title, most easily — wraps no
   matter how carefully the column is sized. The width feeds per-pane NAWS through the pane rectangles, and
   that report rides the frame (`PostBufferPaint → ReportPaneSizes`), so nothing needs to announce it here.
+- **Nothing volatile on a rail row may cost a cell only when it has something to say.** The width is the
+  widest row's, so a badge that appears out of nothing widens the sidebar, narrows every pane and
+  re-announces a new terminal size to every connected server. The unsent-draft ✎ did exactly that on the
+  *first keystroke of every line* (the reported "sidebar grows by one character"), and the unread count
+  does it unbidden from the wire — twice, once appearing and again at 9 → 10. Both now render into
+  reserved fields that are blank when empty (`RailRenderer.UnsentFieldWidth` / `UnreadFieldWidth`, the
+  count capped at `99+` so the field is finite). The sidebar is a few columns wider than it used to be at
+  rest and it no longer moves. What is *left* variable, deliberately: the labels (they change when the
+  thing they name does, and elision caps them), the hosting-pane column (only in a split, and appearing
+  when the layout changes, which is already a relayout), and the set of rows itself (a spawn window opening
+  is structural). `RailRendererTests.Render_An*DoesNotChangeARowsWidth` and
+  `FocusIndicationTests.TypingDoesNotMoveAnyPaneRectangle` are the pins — the latter is the typing
+  counterpart of `MovingFocusDoesNotMoveAnyPaneRectangle`, and it has to read the rail's *widest* row,
+  because in the demo scene the Chat row's unread badge coincidentally masked the pen's two cells.
 - **A rail window row is `what` then `where`, and neither column may wear the other's word.** A
   character's own session window reads `main` (`RailWindowLabel`); its title names the *connection*, which
   the row's own ancestors — its character, under its world — have already said. The hosting-pane column
@@ -295,14 +318,24 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   framework's own `TabChanged` is guarded by `_activating`.
 - **Whose window is this? One resolver, `WindowSession`: the session printing into it, else the owner the
   workspace records, else refuse.** There is no third arm falling back on `_active` — that fallback is the
-  bug, in both shapes it has had (a link clicked in a background pane sending to the focused character; a
-  pane selection moving without the bar following). A window that resolves to nothing keeps the bar where
-  it is and `Notice()`s that it did, naming where ⏎ still goes — bounded through `Snippet`, because a
-  window title can be a *world's* text (the web view is titled from the page it loaded). It is quiet only
-  when there is no redirect to report: a window already owned by the active character, or no active
-  session at all. **Ownership is recorded on every path that binds or adopts a window** (`BindSession` and
-  `OpenSessionWindow`), because the main window is built before any session exists and the rail and this
-  resolver both read ownership.
+  bug, in every shape it has had (a link clicked in a background pane sending to the focused character; a
+  pane selection moving without the bar following; **⏎ itself**, see below). Bounded through `Snippet`
+  where a message names a window, because a window title can be a *world's* text (the web view is titled
+  from the page it loaded). **Ownership is recorded on every path that binds or adopts a window**
+  (`BindSession` and `OpenSessionWindow`), because the main window is built before any session exists and
+  the rail and this resolver both read ownership.
+- **⏎, a macro key and the prompt all resolve through the *focused window*, not `_active`
+  (`SendTarget`).** `AdoptSessionOf` deliberately leaves `_active` on the previous world when the window
+  you navigated to has no session of its own, and `OnCommandEntered` used to send to `_active` — each
+  half defensible, and together a misdelivery: with a connected Ann in one pane and a session-less window
+  in the other (a *resumed* workspace, which is every pane at startup), ⌃→ moved the focus, the indicator
+  and the tab marker, and the next line went to Ann, whose pane was not the focused one. **Navigation
+  always succeeds** — asking to go somewhere arrives, and the pane takes the focus and the caret like any
+  other. It is *sending* that needs a target: with none, ⏎ refuses out loud at the moment of sending
+  (`NothingToSendTo`, which names the pane's owner and what opens it) and the prompt reads
+  `no connection ›` (`PromptLabel`) rather than naming a world it cannot reach. A client with nothing open
+  anywhere keeps the resting prompt it always had — there is no other world for a keystroke to reach, and
+  that is the arm the snapshot demo renders through.
 - **The scrollback keys are routed from `PreviewKeyPressed`** (`TryScrollKey`), and the wheel from the
   driver (`ScrollPaneUnderPointer`), for the same reason everything else in this window is: focus is
   pinned to the armed bar, so `ScrollablePanelControl.ProcessKey` — which returns false unless it has

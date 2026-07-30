@@ -66,9 +66,12 @@ public class RailWindowRowTests
 
         var windows = Rail(app).Where(r => r.TrimStart().StartsWith("▪", StringComparison.Ordinal)).ToList();
 
-        // The demo leaves a line half-typed in the main window, so that row also carries the ✎ pen.
-        await Assert.That(windows.Select(r => r.Trim()).ToList())
-            .IsEquivalentTo(new[] { "▪ main " + Glyphs.Draft, "▪ Chat 2" });
+        // The demo leaves a line half-typed in the main window, so that row also carries the ✎ pen. The
+        // gaps are the reserved badge fields: the pen's two cells and the unread count's three are always
+        // there, blank when there is nothing to put in them, so that a keystroke or a line of output
+        // cannot resize the sidebar (see RailRenderer.UnsentFieldWidth).
+        await Assert.That(windows.Select(r => r.TrimEnd()).Select(r => r.TrimStart()).ToList())
+            .IsEquivalentTo(new[] { "▪ main " + Glyphs.Draft, "▪ Chat    2" });
     }
 
     /// <summary>
@@ -107,9 +110,27 @@ public class RailWindowRowTests
         foreach (var row in Rail(app).Where(r => r.TrimStart().StartsWith("▪", StringComparison.Ordinal)))
         {
             await Assert.That(row).DoesNotContain("pane ");
-            await Assert.That(row).DoesNotEndWith(" ");
         }
+
+        // The rows do end in blanks now, and that is the reserved badge fields rather than slack — so the
+        // claim this used to make with DoesNotEndWith(" ") is made by width instead, which is the thing
+        // that actually mattered: a single-pane rail must not pay for a column with nothing in it. (It
+        // used to: three spaces were emitted unconditionally and the sidebar was three cells wider.)
+        var single = MainWindowRowWidth(app);
+        await Assert.That(app.DispatchCommand("layout:split-right")).IsTrue();
+        app.RenderNextFrame();
+
+        await Assert.That(Rail(app).Single(MainRow)).Contains("pane ");
+        await Assert.That(MainWindowRowWidth(app)).IsGreaterThan(single);
     }
+
+    private static bool MainRow(string row) =>
+        row.TrimStart().StartsWith("▪ main", StringComparison.Ordinal);
+
+    private static int MainWindowRowWidth(SharpMUTermApp app) =>
+        app.RailLines.Select(SharpMUTermApp.MarkupWidth)
+            .Zip(Rail(app), (width, plain) => (width, plain))
+            .Single(r => MainRow(r.plain)).width;
 
     /// <summary>
     /// Closing a window takes its row away rather than marking it <c>closed</c>, because
@@ -186,7 +207,10 @@ public class RailWindowRowTests
         var rows = Rail(app);
         var web = rows.Single(r => r.Contains("WWW", StringComparison.Ordinal));
 
-        await Assert.That(web).EndsWith("…");
+        // Not EndsWith: the row's reserved badge fields sit after the label, so the ellipsis is followed
+        // by blanks. What is being claimed is that the label gave ground rather than the row wrapping,
+        // and the width cap below is the half of it the layout depends on.
+        await Assert.That(web).Contains("…");
         foreach (var row in app.RailLines)
         {
             await Assert.That(SharpMUTermApp.MarkupWidth(row)).IsLessThanOrEqualTo(app.RailColumnWidth);

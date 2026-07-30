@@ -1,3 +1,4 @@
+using System.Globalization;
 using SharpConsoleUI.Parsing;
 using SharpMUTerm.Core.Text;
 using SharpMUTerm.Core.Workspaces;
@@ -57,10 +58,18 @@ internal static class RailRenderer
     /// <summary>
     /// Renders a row, and if it does not fit, renders it again with its <see cref="RailRow.Label"/> shortened
     /// by however much it overran. The label is the only part that may give ground: the accent spine, the
-    /// connected dot, the unread count, the ✎ pen and the pane column are one or two cells each and every one
-    /// of them is information. Measured with the app's own <see cref="SharpMUTermApp.MarkupWidth"/>, because
-    /// that is the measure the sidebar's width is derived from — anything else could agree here and disagree
-    /// where it matters.
+    /// connected dot, the unread count, the ✎ pen and the pane column are all information. Measured with the
+    /// app's own <see cref="SharpMUTermApp.MarkupWidth"/>, because that is the measure the sidebar's width is
+    /// derived from — anything else could agree here and disagree where it matters.
+    /// <para>
+    /// <b>Only the label may vary in width, and only when it changes.</b> Everything else on a row is either
+    /// one cell whatever it says (the spine, the ● / ○ dot, the ▸ active marker, the ▪ bullet) or occupies a
+    /// reserved field that is blank when it has nothing to say (<see cref="UnsentFieldWidth"/>,
+    /// <see cref="UnreadFieldWidth"/>). That is what stops a keystroke or a line of output resizing the
+    /// sidebar and, through it, every connected server's terminal size. The pane column is the one
+    /// remaining variable part and it is deliberately left so: it exists only in a split and appears when
+    /// the layout changes, which is already a relayout that re-reports every pane.
+    /// </para>
     /// </summary>
     private static string Fit(RailRow row, int maxWidth, Func<RailRow, string> render)
     {
@@ -98,8 +107,11 @@ internal static class RailRenderer
                         : "?";
                     var dot = row.Connected ? "●" : "○";
                     var name = row.Active ? $"[bold]{initial}[/]" : initial;
-                    var unread = row.Unread > 0 ? $"[#00f5b7]{row.Unread}[/]" : string.Empty;
-                    lines.Add(Link(row, $"[{Accent(row)}]{dot}[/]{name}{unread}"));
+
+                    // Reserved here too. The collapsed strip is clamped to 4–10 cells, so it moves less —
+                    // but it moves, and a strip that widens when a background world says something is the
+                    // same reflow as the expanded rail's, on a rail chosen for taking no space.
+                    lines.Add(Link(row, $"[{Accent(row)}]{dot}[/]{name}{UnreadField(row.Unread)}"));
                     break;
             }
         }
@@ -112,9 +124,49 @@ internal static class RailRenderer
         var marker = row.Active ? "[bold]▸[/]" : " ";
         var dot = row.Connected ? "●" : "○";
         var name = row.Active ? $"[bold]{Escape(row.Label)}[/]" : Escape(row.Label);
-        var unread = row.Unread > 0 ? $"   [#00f5b7]{row.Unread}[/]" : string.Empty;
-        return $"{Indent(row)}{Link(row, $"{marker} [{Accent(row)}]{dot}[/] {name}{unread}")}";
+        return $"{Indent(row)}{Link(row, $"{marker} [{Accent(row)}]{dot}[/] {name}{UnreadField(row.Unread)}")}";
     }
+
+    /// <summary>
+    /// <b>Cells the sidebar keeps for a row's unsent-draft pen, whether or not there is one.</b> Two: the
+    /// glyph and the space that separates it from the label.
+    /// <para>
+    /// This is the reported bug. The pen used to be emitted only when there was a draft, so the row grew by
+    /// two cells on the <em>first keystroke</em> of every line — and <c>SharpMUTermApp.RailWidth</c> takes
+    /// the sidebar's column count from its widest row, so the column grew, the panes shrank, and per-pane
+    /// NAWS re-announced a new terminal size to every connected server, which reflowed the game's own
+    /// output. Starting to type made the screen jump. The same reasoning is why focus is indicated by
+    /// recolouring and never by spending a cell; here the cell has to be spent, so it is spent
+    /// unconditionally.
+    /// </para>
+    /// </summary>
+    private const int UnsentFieldWidth = 2;
+
+    /// <summary>Cells kept for an unread count, blank when there is none. See <see cref="UnreadField"/>.</summary>
+    private const int UnreadFieldWidth = 3;
+
+    /// <summary>The largest count drawn in full; above it the badge reads <c>99+</c> and stops growing.</summary>
+    private const int MaxUnread = 99;
+
+    /// <summary>The pen, or the same width in blanks. See <see cref="UnsentFieldWidth"/>.</summary>
+    private static string Unsent(bool unsent) =>
+        unsent ? $" [#ffd700]{Glyphs.Draft}[/]" : new string(' ', UnsentFieldWidth);
+
+    /// <summary>
+    /// An unread count in a fixed-width field, right-aligned, blank at zero. Reserved for the same reason
+    /// the pen is (<see cref="UnsentFieldWidth"/>) and with more urgency: unread arrives <em>unbidden from
+    /// the wire</em>, so an unreserved badge resizes the sidebar — and every connected server's idea of its
+    /// terminal — on a line of output the reader did not ask for, and again at 9 → 10 when it takes a
+    /// second digit. The cap is what makes the field finite: a count past <see cref="MaxUnread"/> reads
+    /// <c>99+</c>, which is the same three cells and the same information at a glance.
+    /// </summary>
+    private static string UnreadField(int unread) =>
+        unread <= 0
+            ? new string(' ', UnreadFieldWidth)
+            : $"[#00f5b7]{Badge(unread).PadLeft(UnreadFieldWidth)}[/]";
+
+    private static string Badge(int unread) =>
+        unread > MaxUnread ? $"{MaxUnread}+" : unread.ToString(CultureInfo.InvariantCulture);
 
     /// <summary>
     /// A window row: what the window is, then — when there is anything to say — where it is.
@@ -130,11 +182,14 @@ internal static class RailRenderer
     private static string Window(RailRow row)
     {
         var name = Escape(row.Label);
-        var unsent = row.Unsent ? $" [#ffd700]{Glyphs.Draft}[/]" : string.Empty;
-        var unread = row.Unread > 0 ? $" [#00f5b7]{row.Unread}[/]" : string.Empty;
         var where = row.Closed ? "closed" : row.Pane is { Length: > 0 } pane ? pane : null;
-        var tail = where is null ? string.Empty : $"   [dim]{Escape(where)}[/]";
-        return $"{Indent(row)}{Link(row, $"[dim]▪[/] {name}{unsent}{unread}{tail}")}";
+
+        // Two spaces, not three. The reserved badge fields sit between the label and this column and are
+        // blank far more often than not, so they already hold the gap open; a third on top of them would
+        // be paid for in sidebar columns, which come out of the panes. Not one, though: a populated
+        // unread badge ends right here, and `2 pane 2` reads as one thing rather than two.
+        var tail = where is null ? string.Empty : $"  [dim]{Escape(where)}[/]";
+        return $"{Indent(row)}{Link(row, $"[dim]▪[/] {name}{Unsent(row.Unsent)}{UnreadField(row.Unread)}{tail}")}";
     }
 
     /// <summary>

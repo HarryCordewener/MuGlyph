@@ -188,6 +188,61 @@ public class RailRendererTests
         await Assert.That(SharpMUTermApp.MarkupWidth(line)).IsEqualTo("    no characters".Length);
     }
 
+    // --- the width trap: nothing volatile may cost a cell ------------------------------------------
+
+    /// <summary>
+    /// <b>The unsent-draft pen costs the same whether it is there or not.</b> The reported defect: the pen
+    /// was emitted only when a window held a draft, so a row grew by two cells on the first keystroke of
+    /// every line — and <c>RailWidth</c> takes the sidebar's column count from its widest row, so the
+    /// sidebar grew, the panes shrank, and per-pane NAWS re-announced a new terminal size to every
+    /// connected server. Asserted on <see cref="SharpMUTermApp.MarkupWidth"/> because that is the measure
+    /// the layout is derived from; anything else could agree here and disagree where it matters.
+    /// </summary>
+    [Test]
+    public async Task Render_AnUnsentDraftDoesNotChangeARowsWidth()
+    {
+        var rows = Scene();
+        var without = rows.Select(r => r with { Unsent = false }).ToList();
+        var with = rows.Select(r => r with { Unsent = r.Kind == RailRowKind.Window }).ToList();
+
+        var drawn = RailRenderer.Render(with);
+        await Assert.That(drawn.Any(l => l.Contains(Glyphs.Draft, StringComparison.Ordinal))).IsTrue();
+
+        await AssertSameWidths(drawn, RailRenderer.Render(without));
+    }
+
+    /// <summary>
+    /// And the unread count, which is the worse of the two because it arrives unbidden from the wire: a
+    /// badge appearing on a background window, and the same badge going from one digit to two, both used
+    /// to resize the sidebar on a line of output nobody asked for. Every count is checked against the same
+    /// row with none — including one past the cap, which is where a reserved field would otherwise burst.
+    /// </summary>
+    [Test]
+    [Arguments(1)]
+    [Arguments(9)]
+    [Arguments(10)]
+    [Arguments(99)]
+    [Arguments(100)]
+    [Arguments(12345)]
+    public async Task Render_AnUnreadCountDoesNotChangeARowsWidth(int unread)
+    {
+        var rows = Scene();
+        var none = rows.Select(r => r with { Unread = 0 }).ToList();
+        var some = rows.Select(r => r with { Unread = unread }).ToList();
+
+        await AssertSameWidths(RailRenderer.Render(some), RailRenderer.Render(none));
+        await AssertSameWidths(RailRenderer.RenderCollapsed(some), RailRenderer.RenderCollapsed(none));
+    }
+
+    /// <summary>A count past the cap says so rather than growing: three cells, always.</summary>
+    [Test]
+    public async Task Render_ALargeUnreadCountIsCapped()
+    {
+        var rows = Scene().Select(r => r with { Unread = 4321 }).ToList();
+        await Assert.That(RailRenderer.Render(rows).Any(l => l.Contains("99+", StringComparison.Ordinal)))
+            .IsTrue();
+    }
+
     [Test]
     public async Task Render_EscapesMarkupBrackets()
     {

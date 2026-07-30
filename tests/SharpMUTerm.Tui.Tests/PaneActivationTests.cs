@@ -209,12 +209,106 @@ public class PaneActivationTests
         await Assert.That(two.App.ActiveWindowId()).IsEqualTo("web");
         await Assert.That(two.App.ActiveSessionKey).IsEqualTo("Loud.Bob"); // refused, not redirected
         await Assert.That(two.App.StatusMarkup).Contains("belongs to no connection");
-        await Assert.That(two.App.StatusMarkup).Contains("Bob");
 
-        // And the line still goes where the client said it would.
+        // And the line goes nowhere at all. This assertion used to read the other way — the web view's
+        // pane was focused and ⏎ still reached Bob, "where the client said it would". Saying so out loud
+        // is not the same as not doing it: a line typed with your eyes on one pane was delivered to a
+        // world in another, which is the property the per-window link work exists to guarantee. The client
+        // now refuses at the moment of sending and names the pane that has no connection.
         Send(two.App, "look");
-        await Assert.That(two.Loud.Lines).IsEquivalentTo(new[] { "look" });
+        await Assert.That(two.Loud.Lines).IsEmpty();
         await Assert.That(two.Quiet.Lines).IsEmpty();
+        await Assert.That(two.App.StatusMarkup).Contains("nothing was sent");
+    }
+
+    // ---- and it sends nowhere rather than to the world you navigated away from ----------------
+
+    /// <summary>
+    /// <b>The reported defect, and the misdelivery it hid.</b> A resumed workspace with two panes: Ann's
+    /// window, connected, and a window belonging to Cal, who has no session this run — the ordinary state
+    /// of a client that has just started and connected one character. Moving to Cal's pane <em>does</em>
+    /// move the focus, the active window and the tab marker; that part was never broken. What was broken
+    /// is where the next line went: the command line kept sending to <c>_active</c>, which
+    /// <c>AdoptSessionOf</c> deliberately leaves behind, so a line typed while looking at Cal's pane
+    /// arrived at Ann.
+    /// </summary>
+    [Test]
+    public async Task TypingInAPaneWithNoSession_ReachesNoWorldAtAll()
+    {
+        var one = await ConnectedBesideASessionLessPane();
+
+        MoveTo(one.App, one.SessionLessPane);
+        await Assert.That(one.App.FocusedPaneId).IsEqualTo(one.SessionLessPane);
+        await Assert.That(one.App.ActiveWindowId()).IsEqualTo("char:Quiet.Cal");
+
+        Send(one.App, "look");
+
+        await Assert.That(one.Ann.Lines).IsEmpty();
+        await Assert.That(one.App.StatusMarkup).Contains("Quiet.Cal");
+        await Assert.That(one.App.StatusMarkup).Contains("nothing was sent");
+    }
+
+    /// <summary>
+    /// Navigation itself always succeeds — the user asked to go somewhere and arrives. Refusing to
+    /// <em>send</em> is not a reason to refuse to <em>move</em>, and the pane with no connection takes the
+    /// focus, the indicator's plane and the tab marker exactly like a connected one. Pinned because the
+    /// obvious reading of the report ("moving panes is blocked when nothing is connected") is a fix that
+    /// would be wrong, and the obvious over-correction — refusing the move to keep ⏎ safe — is worse.
+    /// </summary>
+    [Test]
+    public async Task NavigatingToAPaneWithNoSession_StillMovesTheFocus()
+    {
+        var one = await ConnectedBesideASessionLessPane();
+        var started = one.App.FocusedPaneId;
+
+        MoveTo(one.App, one.SessionLessPane);
+        one.App.RenderNextFrame();
+
+        await Assert.That(one.App.FocusedPaneId).IsEqualTo(one.SessionLessPane);
+        await Assert.That(one.App.FocusedPaneId).IsNotEqualTo(started);
+        await Assert.That(one.App.ActiveWindowId()).IsEqualTo("char:Quiet.Cal");
+        await Assert.That(one.App.ArmedBarHasFocus).IsTrue(); // and the caret came with it
+
+        // Back again, and the connected pane's command line is live once more.
+        MoveTo(one.App, started);
+        Send(one.App, "look");
+        await Assert.That(one.Ann.Lines).IsEquivalentTo(new[] { "look" });
+    }
+
+    /// <summary>
+    /// The prompt names the character ⏎ will reach and never one it will not. While the send refused
+    /// silently and the bar stayed pointed at the world behind you, <c>Ann@Quiet ›</c> was at least
+    /// accurate; now that ⏎ from here sends nowhere it would be a lie, and it is the only thing on screen
+    /// that answers "where does this line go?" between one status notice and the next.
+    /// </summary>
+    [Test]
+    public async Task ThePromptSaysSoWhenThePaneHasNoConnection()
+    {
+        var one = await ConnectedBesideASessionLessPane();
+        await Assert.That(one.App.PrimaryPromptMarkup).Contains("Ann");
+
+        MoveTo(one.App, one.SessionLessPane);
+
+        await Assert.That(one.App.PrimaryPromptMarkup).DoesNotContain("Ann");
+        await Assert.That(one.App.PrimaryPromptMarkup).Contains("no connection");
+    }
+
+    /// <summary>
+    /// A macro key is a keystroke too, and it went through <c>_active</c> by the same route the command
+    /// line did — so F1 pressed with a session-less pane in front of you fired the macro of the world you
+    /// had left. Same rule, same resolver.
+    /// </summary>
+    [Test]
+    public async Task AMacroKeyInAPaneWithNoSession_FiresNothing()
+    {
+        var one = await ConnectedBesideASessionLessPane();
+        one.App.SimulateKey(new ConsoleKeyInfo('\0', ConsoleKey.F1, false, false, false));
+        await Assert.That(one.Ann.Lines).IsEquivalentTo(new[] { "look" }); // the macro is live where it belongs
+
+        MoveTo(one.App, one.SessionLessPane);
+        one.App.SimulateKey(new ConsoleKeyInfo('\0', ConsoleKey.F1, false, false, false));
+
+        await Assert.That(one.Ann.Lines).IsEquivalentTo(new[] { "look" }); // and nowhere else
     }
 
     /// <summary>
@@ -472,6 +566,84 @@ public class PaneActivationTests
 
         await app.FindSession(sessionKey)!.ConnectAsync();
         return app.ActiveWindowId();
+    }
+
+    /// <summary>A connected character in one pane and, beside it, a window whose owner has no session.</summary>
+    private sealed record BesideNothing(SharpMUTermApp App, RecordingTelnetSession Ann, string SessionLessPane);
+
+    /// <summary>
+    /// The state the report was made from, built the way a user reaches it: a <em>resumed</em> workspace.
+    /// Two panes were saved last run, one holding Ann's window and one holding Cal's; on restart neither
+    /// has a session until a character is switched to, and switching to Ann leaves Cal's pane owned but
+    /// unopened. That is what "not connected" means from the outside — the pane has a name on it and no
+    /// connection under it — and it is the ordinary state of every pane at startup.
+    /// <para>
+    /// Ann is genuinely connected over a recording transport, because <c>SendUserInputAsync</c> returns
+    /// immediately with nothing underneath it: "the wrong world got it" asserted against an unconnected
+    /// session is true however broken the routing is.
+    /// </para>
+    /// </summary>
+    private static async Task<BesideNothing> ConnectedBesideASessionLessPane()
+    {
+        Console.SetIn(TextReader.Null);
+        var config = new AppConfiguration();
+        config.TriggerSets.Add(new TriggerSet
+        {
+            Name = "keys",
+            Macros = { new Macro { Name = "look", Key = "F1", Command = "look" } },
+        });
+
+        var world = World("Quiet");
+        world.Characters.Add(new CharacterDefinition
+        {
+            Name = "Ann", Logging = new LoggingSettings(), TriggerSets = { "keys" },
+        });
+        world.Characters.Add(new CharacterDefinition { Name = "Cal", Logging = new LoggingSettings() });
+        config.Worlds.Add(world);
+
+        config.LastSession = new WorkspaceState
+        {
+            Windows =
+            {
+                new WorkspaceWindowState
+                {
+                    Id = "main", Title = "Ann", Kind = WindowKind.Main, SessionKey = "Quiet.Ann",
+                },
+                new WorkspaceWindowState
+                {
+                    Id = "char:Quiet.Cal", Title = "Cal", Kind = WindowKind.Main, SessionKey = "Quiet.Cal",
+                },
+            },
+            Root = new LayoutNodeState
+            {
+                Type = "split",
+                Direction = SplitDirection.Row,
+                Children =
+                {
+                    new LayoutNodeState { Type = "pane", Id = "p1", Tabs = { "main" }, ActiveIndex = 0 },
+                    new LayoutNodeState
+                    {
+                        Type = "pane", Id = "p2", Tabs = { "char:Quiet.Cal" }, ActiveIndex = 0,
+                    },
+                },
+            },
+            FocusedPaneId = "p1",
+        };
+
+        var app = new SharpMUTermApp(config, Headless, new HeadlessConsoleDriver(Width, Height));
+        var ann = new RecordingTelnetSession();
+        app.TelnetFactory = _ => ann;
+        await Open(app, "Quiet.Ann");
+        app.RenderNextFrame();
+
+        var sessionLess = app.PaneIdOf("char:Quiet.Cal")
+            ?? throw new InvalidOperationException("Cal's window is in no pane");
+        if (app.FocusedPaneId == sessionLess)
+        {
+            throw new InvalidOperationException("the resumed workspace started on the wrong pane");
+        }
+
+        return new BesideNothing(app, ann, sessionLess);
     }
 
     /// <summary>Two connected worlds in one app, each in its own window, with Loud's the active one.</summary>
