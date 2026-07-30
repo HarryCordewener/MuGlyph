@@ -30,7 +30,7 @@ public sealed class WorldSession : IAsyncDisposable
     private ILogSink? _log;
     private readonly TextSettings? _text;
     private readonly InputSettings? _input;
-    private readonly TimerDefinition[] _timers;
+    private TimerDefinition[] _timers = Array.Empty<TimerDefinition>();
     private readonly List<IDisposable> _timerHandles = new();
     private ITelnetSession? _telnet;
     private ILogger _logger = NullLogger.Instance;
@@ -40,6 +40,12 @@ public sealed class WorldSession : IAsyncDisposable
     /// is composed from the union of <paramref name="triggerSets"/> — resolve them for a character
     /// via <see cref="AppConfiguration.ResolveTriggerSets"/>. A null character yields an anonymous
     /// session (e.g. an ad-hoc command-line connection) with no auto-login.
+    /// <para>
+    /// <paramref name="triggerSets"/> is not a permanent choice: <see cref="ReloadAutomation"/> re-points
+    /// a live session at whatever the configuration says now, which is what makes assigning a set or
+    /// adding a rule mid-connection take effect. Without it a session opened before the user finished
+    /// configuring it ran an empty engine for the rest of its life.
+    /// </para>
     /// <para>
     /// <paramref name="text"/> and <paramref name="input"/> are the app-wide rendering and input
     /// preferences the F7/F8 screens edit. They are held by reference and read <em>per line</em>, not
@@ -71,12 +77,41 @@ public sealed class WorldSession : IAsyncDisposable
             : null;
         Scrollback = new ScrollbackBuffer(scrollbackCapacity, CreateSpill(spill ?? new ScrollbackSpillOptions()));
 
-        var sets = triggerSets ?? Array.Empty<TriggerSet>();
-        Triggers = new TriggerEngine(sets.SelectMany(s => s.Triggers));
-        Aliases = new AliasEngine(sets.SelectMany(s => s.Aliases));
-        Macros = new MacroEngine(sets.SelectMany(s => s.Macros));
-        _timers = sets.SelectMany(s => s.Timers).ToArray();
-        ScriptFiles = sets.SelectMany(s => s.ScriptFiles)
+        Triggers = new TriggerEngine();
+        Aliases = new AliasEngine();
+        Macros = new MacroEngine();
+        ReloadAutomation(triggerSets ?? Array.Empty<TriggerSet>());
+    }
+
+    /// <summary>
+    /// Re-points this session's automation at <paramref name="triggerSets"/> — the sets the configuration
+    /// resolves for its character <em>now</em>. Rules added at runtime by the scripting layer are kept;
+    /// see <see cref="TriggerEngine.ReplaceConfigured"/>.
+    /// <para>
+    /// This is the answer to the bug it was written for: the engines used to be handed a list at
+    /// construction, so a session opened before its character had a trigger set assigned — or before a
+    /// set gained the rule the user was in the middle of writing — went on matching nothing until it was
+    /// reconnected, with no way to tell from the client that this was what had happened. Membership is
+    /// now as live as a rule's own <see cref="Trigger.Pattern"/> already was.
+    /// </para>
+    /// <para>
+    /// Running <see cref="Scheduler"/> timers are deliberately <em>not</em> re-armed. A timer's period is
+    /// baked into its schedule and re-periodising one means tearing it down, which resets every other
+    /// timer's phase — and this method runs after every committed settings change, so doing that here
+    /// would reset the phase of every timer on the session each time a checkbox was ticked. The new
+    /// definitions apply at the next connect, which is what the F6 screen says. Enabled/command edits
+    /// were already live, because <see cref="StartTimers"/> reads those inside the callback.
+    /// </para>
+    /// </summary>
+    public void ReloadAutomation(IReadOnlyList<TriggerSet> triggerSets)
+    {
+        ArgumentNullException.ThrowIfNull(triggerSets);
+
+        Triggers.ReplaceConfigured(triggerSets.SelectMany(s => s.Triggers));
+        Aliases.ReplaceConfigured(triggerSets.SelectMany(s => s.Aliases));
+        Macros.ReplaceConfigured(triggerSets.SelectMany(s => s.Macros));
+        _timers = triggerSets.SelectMany(s => s.Timers).ToArray();
+        ScriptFiles = triggerSets.SelectMany(s => s.ScriptFiles)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
     }
@@ -131,7 +166,7 @@ public sealed class WorldSession : IAsyncDisposable
     public string SessionKey => Character is null ? World.Name : $"{World.Name}.{Character.Name}";
 
     /// <summary>Lua script files contributed by the active trigger sets, de-duplicated.</summary>
-    public IReadOnlyList<string> ScriptFiles { get; }
+    public IReadOnlyList<string> ScriptFiles { get; private set; } = Array.Empty<string>();
 
     public ScrollbackBuffer Scrollback { get; }
 

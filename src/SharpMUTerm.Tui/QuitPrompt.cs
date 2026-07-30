@@ -37,7 +37,13 @@ internal readonly record struct QuitDecision(QuitAction Action, QuitChoice Selec
 /// sessions, windows and the open settings screen) and the prompt only renders it, so "what the
 /// question says, given N connections and M drafts" is answerable without a terminal.
 /// </summary>
-/// <param name="ConnectedWorlds">The worlds whose connections a quit drops, by name.</param>
+/// <param name="ConnectedCharacters">
+/// The connections a quit drops, by <c>world.character</c> (a world's own name for an anonymous one) —
+/// the same list and the same unit the header's fraction counts, from the app's single derivation. It
+/// used to be distinct <em>world</em> names, so two characters logged in on one world were announced as
+/// "1 world connected" while the user was looking at two, and the one thing this prompt exists to do is
+/// be trustworthy about what is at stake.
+/// </param>
 /// <param name="Drafts">
 /// How many unsent lines there are, counted per command line rather than per window: the second bar
 /// holds a line of its own, and a window counted once would hide it.
@@ -50,7 +56,7 @@ internal readonly record struct QuitDecision(QuitAction Action, QuitChoice Selec
 /// consequence line that could never be reached is worse than one fact fewer.
 /// </remarks>
 internal readonly record struct QuitFacts(
-    IReadOnlyList<string> ConnectedWorlds,
+    IReadOnlyList<string> ConnectedCharacters,
     int Drafts,
     IReadOnlyList<string> DraftWindows)
 {
@@ -153,10 +159,10 @@ internal static class QuitPrompt
     {
         var lines = new List<string>();
 
-        if (facts.ConnectedWorlds.Count > 0)
+        if (facts.ConnectedCharacters.Count > 0)
         {
-            var n = facts.ConnectedWorlds.Count;
-            lines.Add($"{n} world{Plural(n)} connected — {Names(facts.ConnectedWorlds)}");
+            var n = facts.ConnectedCharacters.Count;
+            lines.Add($"{n} character{Plural(n)} connected — {Names(facts.ConnectedCharacters)}");
         }
 
         if (facts.Drafts > 0)
