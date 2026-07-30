@@ -229,6 +229,12 @@ internal static class Program
         usage.WriteLine("        command line); Ctrl+O cycles them; Tab switches command lines. The pane you are on and");
         usage.WriteLine("        the line Enter sends from are both drawn lit, and the focused pane's tab is marked.");
 
+        // Ctrl+Shift+arrow is a chord this host does deliver — the parser reads both modifier bits out of
+        // CSI 1;6 <final> — which is why it may be named here at all; see TerminalKeyArrivalTests.
+        usage.WriteLine("Size:   Ctrl+Shift+Left/Right/Up/Down resize the focused pane by two character cells "
+            + "(it says so when");
+        usage.WriteLine("        there is no split that way, or the pane beside it is at its smallest).");
+
         // Alt+Enter and Ctrl+L only. Shift+Enter and Ctrl+Enter are deliberately not listed: no Unix
         // terminal reports them distinctly through SharpConsoleUI's input parser (both arrive as a bare
         // Enter), and a help page naming a key that cannot fire is the defect this file is careful about.

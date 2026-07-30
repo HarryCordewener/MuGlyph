@@ -2198,6 +2198,79 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
+    /// Handles Ctrl+Shift+←/→/↑/↓ — makes the focused pane wider, narrower, taller or shorter by
+    /// <see cref="PaneResize.StepCells"/> cells.
+    /// <para>
+    /// The chord is the deliberate sibling of the one above it: Ctrl+arrow moves <em>between</em> panes,
+    /// so Ctrl+Shift+arrow resizing <em>the</em> pane is the pairing a reader can guess. It is also one
+    /// this host actually delivers, which is not a given here — <c>CLAUDE.md</c> lists four chords that
+    /// collapse onto their ASCII bytes and cannot be bound at all. <c>CSI 1;6 &lt;final&gt;</c> decodes to
+    /// the arrow with both modifier bits set, distinctly from the plain, Shift, Alt and Ctrl forms, and
+    /// <see cref="SharpMUTerm.Tui.Tests"/>' <c>TerminalKeyArrivalTests</c> asks the framework's own parser
+    /// that question rather than assuming it.
+    /// </para>
+    /// <para>
+    /// Matched on the exact modifier pair, not on flags: Ctrl+Alt+Shift+→ is somebody else's chord and a
+    /// <c>HasFlag</c> test would quietly claim it.
+    /// </para>
+    /// </summary>
+    private bool TryResizeKey(KeyPressedEventArgs e)
+    {
+        if (e.KeyInfo.Modifiers != (ConsoleModifiers.Control | ConsoleModifiers.Shift))
+        {
+            return false;
+        }
+
+        var direction = e.KeyInfo.Key switch
+        {
+            ConsoleKey.LeftArrow => PaneDirection.Left,
+            ConsoleKey.RightArrow => PaneDirection.Right,
+            ConsoleKey.UpArrow => PaneDirection.Up,
+            ConsoleKey.DownArrow => PaneDirection.Down,
+            _ => (PaneDirection?)null,
+        };
+
+        if (direction is not { } move)
+        {
+            return false;
+        }
+
+        // Claimed whichever way it turns out, for the reason TryFocusKey is: a chord that is live in one
+        // geometry and types a character in another reads as a corrupted command line.
+        e.Handled = true;
+        ResizePane(move);
+        return true;
+    }
+
+    /// <summary>
+    /// Resizes the focused pane, or says why it could not — what both the chord and the ⌃P surface's four
+    /// <c>Make this pane …</c> entries run.
+    /// <para>
+    /// The rectangles handed to <see cref="PaneResize"/> are <see cref="FocusRects"/>, the same arranged
+    /// geometry pane navigation answers from, so the border moves the number of cells the user can count.
+    /// Rebuilding the pane area is all the announcing this needs: NAWS rides the frame
+    /// (<c>PostBufferPaint → ReportPaneSizes</c>) and is rate-limited there, so a held Ctrl+Shift+→
+    /// costs the server at most one report per <see cref="WindowSizeReportInterval"/> plus the trailing
+    /// flush that carries the size the resize settled on — the same throttle a drag goes through, reached
+    /// by the same route rather than around it.
+    /// </para>
+    /// </summary>
+    private void ResizePane(PaneDirection direction)
+    {
+        var result = PaneResize.Apply(_workspace.Layout, direction, FocusRects());
+        if (result.Changed)
+        {
+            RebuildPaneArea();
+            return;
+        }
+
+        Notice(
+            PaneResize.Describe(result.Outcome, direction),
+            MessageSeverity.Warning,
+            $"⌃⇧{PaneResize.Arrow(direction)}");
+    }
+
+    /// <summary>
     /// Moves pane selection one step, or says there is nothing that way — what the ⌃P surface's four
     /// <c>Focus pane …</c> entries run. It is the keyboard's path minus the command-line fall-through:
     /// a palette entry named "Focus pane down" is about panes, and arming a command line from a list of
@@ -3644,6 +3717,18 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 return true;
             case "layout:focus-down":
                 MoveFocus(PaneDirection.Down);
+                return true;
+            case "layout:wider":
+                ResizePane(PaneDirection.Right); // reports when there is no border to move that way
+                return true;
+            case "layout:narrower":
+                ResizePane(PaneDirection.Left);
+                return true;
+            case "layout:taller":
+                ResizePane(PaneDirection.Down);
+                return true;
+            case "layout:shorter":
+                ResizePane(PaneDirection.Up);
                 return true;
             case "layout:cycle":
                 if (_workspace.Layout.Panes.Count <= 1)
@@ -5446,6 +5531,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 return sent;
             }
 
+            // Ctrl+Shift+arrows: resize the focused pane. Immediately before its sibling because the two
+            // are one gesture family, and before the scrollback keys because Shift+↑/↓ is theirs and
+            // TryScrollKey would otherwise have to be trusted not to take the Ctrl+Shift form of it.
+            if (TryResizeKey(e))
+            {
+                return null;
+            }
+
             // Ctrl+arrows: move between panes, and at the bottom edge into the command lines. Ahead of
             // both the scrollback keys and recall because it is a workspace gesture rather than a move
             // inside one, and ahead of the command line because the bars would otherwise eat it —
@@ -6928,17 +7021,33 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// for why those cannot fire on this terminal; the newline chord is advertised on the ⌃P surface and in
     /// <c>--help</c>, where there is room to name it and its second spelling both.
     /// </para>
+    /// <para>
+    /// <b>Longest first, and the caller takes the first that fits.</b> Resizing a pane belongs on this row
+    /// for the same reason moving between them does, but it is the longer claim and this row cannot afford
+    /// to grow: an overflow wraps the sticky band and costs a row of workspace. Returning candidates
+    /// rather than one string means the narrow terminal loses the <em>resize</em> hint and keeps the
+    /// navigation one, instead of losing both because the pair no longer fitted. The chord is still named
+    /// on the ⌃P surface and in <c>--help</c> either way.
+    /// </para>
     /// </summary>
-    private string FocusHint()
+    private string[] FocusHints()
     {
         var panes = _workspace.Layout.Panes.Count > 1 && _workspace.Layout.ZoomedPaneId is null;
         var bars = _second.Visible;
         return (panes, bars) switch
         {
-            (true, true) => "[dim]⌃←→↑↓ pane · ⇥ line[/]",
-            (true, false) => "[dim]⌃←→↑↓ pane[/]",
-            (false, true) => "[dim]⇥ · ⌃↑↓ line[/]",
-            _ => string.Empty,
+            (true, true) => new[]
+            {
+                "[dim]⌃←→↑↓ pane · ⌃⇧←→↑↓ size · ⇥ line[/]",
+                "[dim]⌃←→↑↓ pane · ⇥ line[/]",
+            },
+            (true, false) => new[]
+            {
+                "[dim]⌃←→↑↓ pane · ⌃⇧←→↑↓ size[/]",
+                "[dim]⌃←→↑↓ pane[/]",
+            },
+            (false, true) => new[] { "[dim]⇥ · ⌃↑↓ line[/]" },
+            _ => Array.Empty<string>(),
         };
     }
 
@@ -7007,10 +7116,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // measurement the header already makes to right-align its own cluster.
         var rightBar = string.Join("   ", right);
         var room = HeaderWidth() - MarkupWidth(left) - MarkupWidth(rightBar) - MinStatusGap;
-        if (FocusHint() is { Length: > 0 } focusHint && MarkupWidth(focusHint) + 3 <= room)
+        foreach (var focusHint in FocusHints())
         {
-            right.Insert(right.Count - 1, focusHint);
-            rightBar = string.Join("   ", right);
+            if (MarkupWidth(focusHint) + 3 <= room)
+            {
+                right.Insert(right.Count - 1, focusHint);
+                rightBar = string.Join("   ", right);
+                break;
+            }
         }
 
         // Right-align the cluster to the far edge; identity stays pinned left.
