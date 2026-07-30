@@ -68,6 +68,33 @@ MSLP (1024), which we do not implement. `TelnetInterpreter.TerminalTypes` is pub
 tuple `("Char.Vitals", "{\"hp\":\"1000\",\"maxhp\":\"1200\"}")`. GMCP *send* is public and already
 wrapped: `TelnetInterpreter.SendGMCPCommand(string, string)`.
 
+**But a GMCP message is silently truncated at 8192 bytes, and this is not a corner case.** Measured, by
+feeding oversized subnegotiations and reading the delivered payload length:
+
+| sent | delivered |
+|---|---|
+| `Ab ` + 20 000 bytes | package `Ab`, payload **8189** bytes — 3 + 8189 = 8192 |
+| `Abcdefghijk ` + 20 000 bytes | package `Abcdefghijk`, payload **8180** bytes — 12 + 8180 = 8192 |
+| `Ab ` + exactly 8189 bytes | unchanged |
+| `Ab ` + 8190 bytes | truncated to 8189 |
+
+The cap is **8192 bytes for the whole message**, package name and separator included, and the excess is
+dropped with no error, no log line and no signal of any kind. `TelnetInterpreter.MaxBufferSize` — public,
+settable, default 5 MiB — is a *different* limit and does not govern this.
+
+The consequence is that **truncated, invalid JSON is the normal outcome for a large package, not an
+exceptional one.** `Char.Items.List` on a MUD with a full inventory, a room player list on a busy MUD, or
+any map package will exceed 8 KiB routinely. So the malformed-JSON path in §9 is not defensive
+programming against a hostile server; it is the path a well-behaved server puts us on. Two things follow:
+our own size cap is moot (the library caps below anything we would choose), and the message that goes to
+the client message log should say *truncated* where the length is exactly 8192, because "invalid JSON"
+would send someone hunting for a server bug that is ours.
+
+**And an empty payload never reaches us at all.** `IAC SB 201 Char.Vitals IAC SE` — a package name with
+no payload, which is a legitimate signal — raises no callback. Whatever we design for that case is
+unreachable through this library, so it is not designed for; §9 records it as swallowed rather than
+handled.
+
 **MSDP receive works, and nesting survives.** Feeding
 
 ```
@@ -620,9 +647,10 @@ All of it lands on the telnet read loop, and all of it must be survivable there.
 |---|---|
 | **Unsolicited package** — a server sends `Comm.Channel` we never subscribed to | Stored. It costs one path and one dictionary entry, and refusing it would mean a Lua script cannot see data the client received. |
 | **Malformed JSON** | The message is dropped, the store is untouched, and one line goes to the client message log (`ClientDiagnostics`, ⌃P ▸ *Show client messages*) — **not** to the output pane, which is the server's stream and the character's transcript. Rate-limited: a server emitting broken JSON per line must not fill the log. |
-| **Non-JSON payload** — `Package somevalue`, which some servers send | Stored as a string at the package path. Not an error. This is a real divergence between servers and the library hands us the raw payload either way. |
-| **Empty payload** — `Package` with nothing after it | Treated as a signal, not data: raises `Changed` with an empty path set, stores nothing. |
-| **Huge payload** — an inventory dump, a full room list | A per-message size cap (proposed: 256 KiB) above which the message is dropped and logged. The cap exists because the payload is decoded to a string and parsed on the read loop before anything can decide it is too big; without it a server can make us allocate whatever it likes. |
+| **Truncated payload** — the 8192-byte cap in §1.1 | The commonest cause of the row above, and it must not be reported as the row above. When the whole message measures exactly 8192 bytes, say *truncated at the telnet layer's 8 KiB limit* and name the package. Verified: `Char.Big` + 300 KiB arrives as 8183 payload bytes with no error. |
+| **Non-JSON payload** — `Package somevalue`, which some servers send | Stored as a string at the package path. Not an error. This is a real divergence between servers and the library hands us the raw payload either way (verified: `Char.Vitals 42` arrives as the two-byte string `42`). |
+| **Empty payload** — `Package` with nothing after it | **Unreachable.** The library raises no callback for it (§1.1). Nothing is designed for a case we cannot observe; if a future library version starts delivering it, treat it as a signal — raise `Changed` with an empty path set, store nothing. |
+| **Huge payload** | Already capped below anything we would choose, at 8192 bytes, by the library (§1.1). A cap of our own would never fire, and an unreachable guard claiming to be a safety net is worse than none — the same reasoning `TelnetSessionOptions.ResolveKeepalive` gives for having no minimum clamp. If the 8 KiB cap is ever lifted upstream, a cap here becomes necessary in the same change. |
 | **Path explosion** — a server using a unique path per object | A per-session path cap (proposed: 4096) above which new paths are refused and one warning is logged. Existing paths keep updating. Without a cap the store is an unbounded leak driven by the wire. |
 | **High-frequency updates** — vitals every combat round | No throttle in the store (§6.2). Cost is stated in §10 and mitigated at the consumer. |
 | **A package that is a prefix of another** | Both stored; `Char` and `Char.Vitals` coexist. `GetAll("Char")` returns the subtree. |
@@ -723,4 +751,5 @@ promise. `docs/PLAN.md:46`'s `GmcpRouter` should be renamed to `SessionData` in 
 | Live Lua table vs. snapshot copy for `gmcp.get` | Whether the script bridge marshals callbacks onto the UI thread. If it does, a live table is safe and free. |
 | INFO as its own full-screen overlay vs. an overlay over F5 | Whether anything else wants a read-only report. If the client message viewer and this converge, make them one mechanism — which argues for its own screen. |
 | Upstream PR vs. reflection for `TerminalTypes` | Not either/or: reflection unblocks stage 2, the PR removes it. The question is only whether stage 2 waits, and it should not. |
+| Whether the 8 KiB GMCP truncation (§1.1) is a bug or a deliberate limit | Ask upstream. It is silent either way, which is the part that is certainly wrong: a message that loses its tail should say so. This is the highest-value upstream report of the three named in this document, because it makes a *correct* server look like a broken one, and no amount of care on our side can recover the dropped bytes. |
 | Whether MSSP should also be shown at connect, in the output pane | Nobody has asked for it, and it is the server's stream. Deliberately not designed here. |
