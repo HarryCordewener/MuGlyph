@@ -133,7 +133,10 @@ python3 tools/ansi_frame_to_image.py frame.ansi frame.html   # or .svg
   beside an unfocused one and an armed bar above an idle one, before and after a real ⌃→), plus the
   default workspace
   (no `--view`). Any settings screen also takes a `-edit` suffix, which opens it and drives real
-  keys in so the frame shows a field mid-edit. State toggles: `collapsed`, `prefix`, `timestamps`.
+  keys in so the frame shows a field mid-edit. State toggles: `collapsed`, `prefix`, `timestamps`,
+  and `timestamps-toggled` — the same column reached the *other* way, by dispatching the real ⌃P entry
+  after the scene is already on screen, over a split so one frame carries a session window beside a
+  spawn window. The pair has to match cell for cell; when it did not, that was the reported bug.
 - **A snapshot never writes configuration.** `SharpMUTermApp` takes its `save` action from the caller and
   the snapshot path passes none, so an app that isn't the live entry point owns no file. That matters
   because the settings screens persist each committed change as it is made: without the gate, a
@@ -222,6 +225,20 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
 - **Only `MarkupControl.AppendLine` and `FeedRange` hand pane content to a control** — the seam a
   windowed feed replaces. Appending re-parses the whole control (the parse cache is keyed on a content
   version), so never "refresh" a pane by re-`SetContent`-ing the full buffer on a scroll or a frame.
+  `BindSession`'s scrollback replay used to be a third route, painting straight onto the control; the
+  buffer and the control then disagreed and the next thing to re-feed that pane dropped those lines.
+- **A buffered line is a `PaneLine` — markup plus, held apart from it, when the line arrived** — and the
+  timestamp gutter is glued on in `Compose`, on the way to a control. That is what makes *show
+  timestamps* a render-time decision: it repaints history in every window, including spawn windows,
+  whose history is markup in this buffer and nothing else (there are no `StyledLine`s left to
+  re-render). Baked into the markup at append time it reached only lines yet to arrive, which is
+  indistinguishable from a dead command on a quiet connection — the reported bug. **Whatever else a
+  setting does, do not decide it at append time if it describes lines that have already arrived.**
+  The re-feed it costs (`RepaintPanes`) is the expensive whole-buffer path, and it is affordable only
+  because it is bounded by one deliberate keystroke; do not reach for it per line or per frame.
+- **A ⌃P view toggle must not persist through `SaveConfiguration`.** That is the settings screens'
+  funnel and it also runs `ReloadAutomation`, which re-periodises every running timer and so resets
+  every other timer's phase. The write-only half is `PersistConfiguration`.
 - **The rail's width is derived from its widest row, so the rail must be re-measured whenever its rows
   change — not only when the pane area is rebuilt.** `RefreshRail` recomputes it and resizes the sidebar's
   own grid column (`ApplyRailWidth`); the width was once computed only in `BuildWorkspaceRow`, so the

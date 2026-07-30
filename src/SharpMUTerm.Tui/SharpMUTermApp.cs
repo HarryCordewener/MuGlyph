@@ -78,7 +78,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     // Per-window markup line buffer (the scrollback source of truth) and, per frozen pane, the buffer
     // length of its active window at the moment it froze — the split point between pinned scrollback and
     // the live tail. Kept here (not read back from the controls) so freeze can rebuild both regions.
-    private readonly Dictionary<string, List<string>> _lines = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<PaneLine>> _lines = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _freezePoints = new(StringComparer.Ordinal);
 
     /// <summary>
@@ -261,7 +261,6 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private string? _demoActiveKey;
     private readonly bool _headless;
     private bool _railCollapsed;
-    private bool _showTimestamps;
     private bool _prefixArmed;
     private bool _moveMode;
     private string? _moveWindowId;
@@ -523,10 +522,28 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
         else if (string.Equals(view, "timestamps", StringComparison.OrdinalIgnoreCase))
         {
-            _showTimestamps = true;
+            // Set before the scene loads, so this frame is the column *on* rather than a live toggle.
+            // The `timestamps-toggled` view below is the other half of the pair and the one that
+            // exercises the reported bug: same scene, column turned on after the output is already there.
+            ShowTimestamps = true;
         }
 
         LoadDemoScene();
+
+        // The reported bug, as a frame: the scene is already on screen with the column off, and *then*
+        // the real ⌃P entry is dispatched. Under the old append-time gutter this frame was identical to
+        // the default workspace — which is exactly what "the button seems to not do anything" was.
+        // It splits first so one frame carries a *session* window beside a *spawn* window. That pair is
+        // the reason the gutter moved out of the line's markup: a session window could in principle be
+        // rebuilt from its WorldSession.Scrollback, and a spawn window could not — its history is markup
+        // in the line buffer and nothing else. Both have to gain the column, or the same command visibly
+        // does different things in different tabs.
+        if (string.Equals(view, "timestamps-toggled", StringComparison.OrdinalIgnoreCase))
+        {
+            PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitRight);
+            RebuildPaneArea();
+            DispatchCommand("term:timestamps-on");
+        }
 
         // Activate the Chat spawn window so its dim "⇱ capture …" header renders under the tab strip.
         if (string.Equals(view, "spawn", StringComparison.OrdinalIgnoreCase))
@@ -580,7 +597,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             {
                 foreach (var line in parser.Feed(text + "\n"))
                 {
-                    AppendWindowLine(MainWindowId, _formatter.ToMarkup(line, Stamp()));
+                    AppendWindowLine(MainWindowId, _formatter.ToMarkup(line), StampNow());
                 }
             }
         }
@@ -965,7 +982,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         {
             foreach (var line in parser.Feed(ansiLine + "\n"))
             {
-                AppendWindowLine(windowId, _formatter.ToMarkup(line, Stamp()));
+                AppendWindowLine(windowId, _formatter.ToMarkup(line), StampNow());
             }
         }
 
@@ -982,13 +999,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             new StyledSpan("  ", TextStyle.Default),
             Link("east"),
         });
-        AppendWindowLine(MainWindowId, _formatter.ToMarkup(exits, Stamp()));
+        AppendWindowLine(MainWindowId, _formatter.ToMarkup(exits), StampNow());
 
         // A trigger-highlighted line: carries a left-rule colour, so it gets the 2-col rule treatment.
         var highlighted = new StyledLine(
             new[] { new StyledSpan("[public] Rivane: to the crypt, then!", TextStyle.Default) },
             TerminalColor.FromRgb(0x00, 0xf5, 0xb7));
-        AppendWindowLine(MainWindowId, _formatter.ToMarkup(highlighted, Stamp()));
+        AppendWindowLine(MainWindowId, _formatter.ToMarkup(highlighted), StampNow());
 
         // The Chat spawn window already exists (opened by the resumed session); feed its backlog and
         // leave it in the background with unread, as if lines arrived while another tab was focused.
@@ -1003,7 +1020,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         {
             foreach (var line in chatParser.Feed(text + "\n"))
             {
-                AppendWindowLine(chatId, _formatter.ToMarkup(line, Stamp()));
+                AppendWindowLine(chatId, _formatter.ToMarkup(line), StampNow());
             }
 
             _workspace.NoteActivity(chatId); // each line accrues unread while Chat is in the background
@@ -1255,10 +1272,16 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _workspace.SetWindowOwner(windowId, session.SessionKey);
         }
 
-        var main = PaneContentFor(windowId, session.World.Name);
+        // Any history the session already holds is replayed *through the line buffer*, not straight onto
+        // the control. Painting it directly made this a third place pane content reached a control, and
+        // the two disagreed: a line only the control knew about was dropped by the next thing to re-feed
+        // that pane from the buffer (freezing, resuming, or now toggling the timestamp column). It
+        // carries no stamp because a StyledLine records no arrival time — nothing in this replay knows
+        // when these lines came in, and inventing one would be worse than leaving the gutter off them.
+        PaneContentFor(windowId, session.World.Name);
         foreach (var line in session.Scrollback.Snapshot())
         {
-            main.AppendLine(_formatter.ToMarkup(line));
+            AppendWindowLine(windowId, _formatter.ToMarkup(line));
         }
 
         session.LinePrinted += (_, line) => OnUi(() => OnLine(windowId, line));
@@ -1471,23 +1494,53 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         return windowId;
     }
 
-    /// <summary>The optional output-view timestamp gutter, or null when the column is off. Headless
-    /// snapshots use a fixed clock so golden images stay stable.</summary>
-    private string? Stamp() => _showTimestamps ? (_headless ? "09:24" : DateTime.Now.ToString("HH:mm")) : null;
+    /// <summary>
+    /// Whether the output views draw the timestamp gutter. Read straight off the live
+    /// <see cref="TextSettings"/> rather than mirrored into a field of its own, so the ⌃P entry, the
+    /// catalog's idea of which label to offer, and what the panes draw are one fact and cannot desync —
+    /// which is precisely what let <c>term:timestamps-on</c> and <c>term:timestamps-off</c> both run a
+    /// plain <c>!</c> flip and mean the opposite of what they said.
+    /// </summary>
+    private bool ShowTimestamps
+    {
+        get => _config.Text.ShowTimestamps;
+        set => _config.Text.ShowTimestamps = value;
+    }
+
+    /// <summary>
+    /// When a line arriving now should say it arrived. Recorded on every session line whether or not
+    /// the gutter is currently drawn — see <see cref="PaneLine"/>. Headless snapshots use a fixed clock
+    /// so golden frames stay stable.
+    /// </summary>
+    private string StampNow() => _headless ? "09:24" : DateTime.Now.ToString("HH:mm");
+
+    /// <summary>
+    /// One buffered line as a control should draw it right now: its own markup, with the timestamp
+    /// gutter glued on only while the column is on and the line has a stamp to show. This is the whole
+    /// of the "show timestamps" decision, and it is made here — on the way to a control — rather than
+    /// on the way into the buffer.
+    /// </summary>
+    private string Compose(PaneLine line) =>
+        MarkupFormatter.WithTimestamp(line.Markup, ShowTimestamps ? line.Stamp : null);
 
     /// <summary>
     /// Appends one already-formatted markup line to a window: records it in the scrollback buffer and,
     /// if the window has a live control, paints it. A frozen pane's live control is its tail region, so
     /// new lines land below the <c>▲ FROZEN ⌃F</c> bar while the pinned scrollback stays put.
+    /// <para>
+    /// <paramref name="stamp"/> is when the line arrived, and defaults to none: only a world's output
+    /// passes one, because only a world's output is what the timestamp column describes.
+    /// </para>
     /// </summary>
-    private void AppendWindowLine(string windowId, string markup)
+    private void AppendWindowLine(string windowId, string markup, string? stamp = null)
     {
         if (!_lines.TryGetValue(windowId, out var buffer))
         {
-            _lines[windowId] = buffer = new List<string>();
+            _lines[windowId] = buffer = new List<PaneLine>();
         }
 
-        buffer.Add(markup);
+        buffer.Add(new PaneLine(markup, stamp));
+
 
         // Cap the UI-side buffer at the configured scrollback so a long session doesn't grow without
         // bound (and freeze rebuilds stay cheap); shift the freeze point down by whatever we trimmed.
@@ -1504,7 +1557,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
         if (_panes.TryGetValue(windowId, out var control))
         {
-            control.AppendLine(markup);
+            control.AppendLine(Compose(buffer[^1]));
         }
     }
 
@@ -1523,11 +1576,95 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// Keep new callers going through here rather than touching a control's content directly.
     /// </para>
     /// </summary>
-    private static void FeedRange(MarkupControl control, List<string> buffer, int from, int count)
+    private void FeedRange(MarkupControl control, List<PaneLine> buffer, int from, int count)
     {
         var start = Math.Clamp(from, 0, buffer.Count);
         var length = Math.Clamp(count, 0, buffer.Count - start);
-        control.SetContent(buffer.GetRange(start, length));
+        var markup = new List<string>(length);
+        for (var i = 0; i < length; i++)
+        {
+            markup.Add(Compose(buffer[start + i]));
+        }
+
+        control.SetContent(markup);
+    }
+
+    /// <summary>
+    /// Turns the output views' timestamp column on or off and repaints what is already on screen, which
+    /// is the whole point of the setting: it describes lines that have <em>arrived</em>.
+    /// <para>
+    /// It takes the state it is asked for rather than flipping. Both catalog ids used to run one
+    /// <c>!</c>, so the entry labelled <c>Show timestamps</c> turned them <em>off</em> whenever the
+    /// catalog's idea of the state and the app's had drifted apart. They can no longer drift — the
+    /// catalog reads <see cref="ShowTimestamps"/> and so does every pane — but a command that says which
+    /// state it wants should ask for it, not for the other one.
+    /// </para>
+    /// <para>
+    /// Asking for the state it is already in does nothing at all: it must not flip, and it must not
+    /// spend a full re-feed of every pane to arrive where it already was.
+    /// </para>
+    /// </summary>
+    private void SetTimestamps(bool on)
+    {
+        if (ShowTimestamps == on)
+        {
+            return;
+        }
+
+        ShowTimestamps = on;
+        RepaintPanes();
+        PersistConfiguration();
+    }
+
+    /// <summary>
+    /// Re-draws every output pane from its line buffer, so a change to how a <em>buffered</em> line
+    /// renders reaches the text already on screen. Toggling the timestamp gutter is the one caller: the
+    /// setting names something about lines that have already arrived, so a version of it that only
+    /// applied to the next line would be the reported bug in a politer form.
+    /// <para>
+    /// Feeding whole buffers is the expensive operation this file warns about (<see cref="FeedRange"/>),
+    /// and that is the right trade here and only here: it is bounded by one deliberate keystroke, not by
+    /// the wire. A frozen window's two halves are re-fed at its split point, exactly as
+    /// <see cref="BuildFrozenContent"/> lays them out, so the pinned scrollback does not slide into the
+    /// live tail on the way past.
+    /// </para>
+    /// <para>
+    /// The web view is skipped. Its pane is not fed from this buffer at all — <see cref="ShowWeb"/>
+    /// sets the page's markup straight onto the control — so re-feeding it would replace the page with
+    /// whatever <c>/graphics</c> or <c>/triggers</c> happened to print into that window. Web pages carry
+    /// no arrival times and have no gutter to gain.
+    /// </para>
+    /// </summary>
+    private void RepaintPanes()
+    {
+        foreach (var (windowId, buffer) in _lines)
+        {
+            if (string.Equals(windowId, WebWindowId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (_freezePoints.TryGetValue(windowId, out var point))
+            {
+                var split = Math.Clamp(point, 0, buffer.Count);
+                if (_frozenPanes.TryGetValue(windowId, out var frozen))
+                {
+                    FeedRange(frozen, buffer, 0, split);
+                }
+
+                if (_panes.TryGetValue(windowId, out var tail))
+                {
+                    FeedRange(tail, buffer, split, buffer.Count - split);
+                }
+
+                continue;
+            }
+
+            if (_panes.TryGetValue(windowId, out var control))
+            {
+                FeedRange(control, buffer, 0, buffer.Count);
+            }
+        }
     }
 
     /// <summary>The trigger pattern that routes to a spawn <paramref name="target"/>, for its capture line.</summary>
@@ -1547,7 +1684,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private void OnLine(string windowId, StyledLine line)
     {
-        AppendWindowLine(windowId, _formatter.ToMarkup(line, Stamp()));
+        AppendWindowLine(windowId, _formatter.ToMarkup(line), StampNow());
 
         if (!_workspace.IsCaughtUp(windowId))
         {
@@ -1575,7 +1712,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // the *main window's* title, which is a different session's name as soon as more than one is open.
         window.OwnerLabel ??= SessionTitle(session);
         PaneContentFor(window.Id, window.Title); // ensure the live control exists before buffering
-        AppendWindowLine(window.Id, _formatter.ToMarkup(line, Stamp()));
+        AppendWindowLine(window.Id, _formatter.ToMarkup(line), StampNow());
 
         // A first-seen spawn adds a tab to its pane, so rebuild; otherwise just refresh badges.
         if (existed)
@@ -2876,6 +3013,29 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         RefreshHeader();
         RefreshRail();
 
+        PersistConfiguration();
+    }
+
+    /// <summary>
+    /// Writes the configuration out, with the workspace layout captured alongside it so a save never
+    /// rolls back the resumed session. The <em>write</em> half of <see cref="SaveConfiguration"/> and
+    /// nothing else.
+    /// <para>
+    /// It is separate because the other half belongs to the settings screens.
+    /// <see cref="ReloadAutomation"/> re-resolves and re-hands every live session its trigger sets,
+    /// which re-periodises running timers and so resets every other timer's phase — right after an F2
+    /// edit, and wrong after a view preference that has nothing to do with automation. A caller that
+    /// changed only a preference (<see cref="SetTimestamps"/>) persists through here.
+    /// </para>
+    /// <para>
+    /// An app with no <c>save</c> writes nothing at all — see the constructor, and
+    /// <c>CommandSurfaceSettingsTests.AnAppWithNoSaveActionPersistsNothing</c>. A failed write is
+    /// swallowed onto the status row for the same reason startup's is: the config is a convenience,
+    /// not the session.
+    /// </para>
+    /// </summary>
+    private void PersistConfiguration()
+    {
         if (_save is null)
         {
             return;
@@ -3463,7 +3623,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             LoggingOn: _active?.IsLogging == true,
             Zoomed: _workspace.Layout.ZoomedPaneId is not null,
             Frozen: _workspace.Layout.FocusedPane.Frozen,
-            TimestampsOn: _showTimestamps,
+            TimestampsOn: ShowTimestamps,
             SecondInputOn: _secondBars.IsShown(ActiveWindowId()),
             ScrolledBack: ScrollTarget() is { CanScrollDown: true });
         return CommandCatalog.Build(
@@ -3684,8 +3844,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 ScrollFocusedPane(BackToLive);
                 break;
             case "term:timestamps-on":
+                SetTimestamps(true);
+                break;
             case "term:timestamps-off":
-                _showTimestamps = !_showTimestamps;
+                SetTimestamps(false);
                 break;
             case "world:reconnect":
                 Reconnect();
@@ -4935,7 +5097,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private IWindowControl BuildFrozenContent(string windowId, string title)
     {
-        var buffer = _lines.TryGetValue(windowId, out var b) ? b : new List<string>();
+        var buffer = _lines.TryGetValue(windowId, out var b) ? b : new List<PaneLine>();
         var split = _freezePoints.TryGetValue(windowId, out var p) ? Math.Clamp(p, 0, buffer.Count) : buffer.Count;
 
         var frozen = FrozenContentFor(windowId);
