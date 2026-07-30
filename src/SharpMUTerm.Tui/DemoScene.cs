@@ -46,6 +46,13 @@ internal static class DemoScene
                 new CharacterDefinition
                 {
                     Name = "Corvid",
+
+                    // The demo resumes with Corvid connected and focused, and this is the setting that
+                    // would actually have done it — so the frames show the mark and the connection it
+                    // explains together, and InitDemoRuntimeState derives one from the other rather than
+                    // asserting a connection nothing in the config asks for. Rookery and Thistle are left
+                    // unmarked, which is what puts both states of the row in reach of one screenshot.
+                    ConnectAtStartup = true,
                     AutoLogin = true,
                     OnConnect = "@@ +who; look",
                     TriggerSets = { "Comms", "Trade" },

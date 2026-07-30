@@ -55,7 +55,8 @@ public sealed class CharacterDefinition
     public string? Password { get; set; }          // [JsonIgnore]: lives in secrets.json (see below)
     public Guid? PasswordRef { get; set; }         // the secrets.json key; meaningless on its own
     public string? ConnectString { get; set; }     // template; null → "connect %CHARACTER% %PASSWORD%"
-    public bool AutoLogin { get; set; }
+    public bool AutoLogin { get; set; }            // send the connect line once connected
+    public bool ConnectAtStartup { get; set; }     // open this connection at launch — see below
     public string? OnConnect { get; set; }         // ';'-separated commands
     public string? OnDisconnect { get; set; }
     public List<string> TriggerSets { get; set; } = new();  // set names, see below
@@ -69,6 +70,28 @@ public sealed class CharacterDefinition
 
 `SessionManager.Open` should take `(WorldDefinition, CharacterDefinition, int scrollbackLines)`
 and key sessions on `$"{world.Name}.{character.Name}"`.
+
+#### `ConnectAtStartup` is not `AutoLogin`
+
+Two facts, deliberately two booleans, and each is useful without the other:
+
+| | what it decides | when it applies |
+|---|---|---|
+| `ConnectAtStartup` (F5 `at start`) | whether a socket is opened at all, unasked | client launch |
+| `AutoLogin` (F5 `auto-login`) | whether `ConnectString` is sent | once a connection exists |
+
+Auto-connecting a character whose password you type by hand is normal; so is a character that logs
+itself in whenever *you* choose to dial it. `StartupConnections.Resolve` is the single place that
+answers "what does this launch connect": a host on the command line wins outright, else every marked
+character in configuration order, else **nothing** — the client opens with no connection and says so.
+Zero, one or several may be marked; the first in configuration order takes the main window and is
+focused, later ones each get a tab, and the sockets are dialled concurrently so one dead host cannot
+hold the others up.
+
+It lives on the character rather than as a `WorldDefinition` pointer naming one, so it cannot dangle
+when a character is renamed or removed. It defaults to `false` with **no migration**: before it
+existed the client dialled the first world's first character unconditionally, and reinstating that
+would re-impose it on the users who never chose it.
 
 #### Passwords live in `secrets.json`, not in `config.json`
 

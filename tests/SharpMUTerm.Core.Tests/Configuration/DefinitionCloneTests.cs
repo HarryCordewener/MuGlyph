@@ -18,6 +18,7 @@ public class DefinitionCloneTests
         Password = "hunter2",
         ConnectString = "connect Kaz hunter2",
         AutoLogin = true,
+        ConnectAtStartup = true,
         OnConnect = "look",
         OnDisconnect = "quit",
         TriggerSets = new List<string> { "Comms", "Combat" },
@@ -33,6 +34,11 @@ public class DefinitionCloneTests
         await Assert.That(copy.Password).IsEqualTo("hunter2");
         await Assert.That(copy.ConnectString).IsEqualTo("connect Kaz hunter2");
         await Assert.That(copy.AutoLogin).IsTrue();
+
+        // Carried, like the password and unlike PasswordRef: a duplicate draws the mark on its own F5
+        // row, so a copy that will dial at launch says so — while one that silently would not is the
+        // quieter surprise. See CharacterDefinition.Clone.
+        await Assert.That(copy.ConnectAtStartup).IsTrue();
         await Assert.That(copy.OnConnect).IsEqualTo("look");
         await Assert.That(copy.OnDisconnect).IsEqualTo("quit");
         await Assert.That(copy.TriggerSets).IsEquivalentTo(new[] { "Comms", "Combat" });
@@ -55,12 +61,14 @@ public class DefinitionCloneTests
         copy.Logging.Format = LogFormat.None;
         copy.Logging.Directory = "/logs/copy";
         copy.AutoLogin = false;
+        copy.ConnectAtStartup = false;
 
         await Assert.That(original.Name).IsEqualTo("Kaz");
         await Assert.That(original.TriggerSets).IsEquivalentTo(new[] { "Comms", "Combat" });
         await Assert.That(original.Logging.Format).IsEqualTo(LogFormat.Html);
         await Assert.That(original.Logging.Directory).IsEqualTo("/logs/kaz");
         await Assert.That(original.AutoLogin).IsTrue();
+        await Assert.That(original.ConnectAtStartup).IsTrue();
 
         // And in the other direction — an aliasing bug is only half-visible from one side.
         original.TriggerSets.Add("Guild");

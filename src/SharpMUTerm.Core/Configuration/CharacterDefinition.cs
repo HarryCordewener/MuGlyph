@@ -68,7 +68,44 @@ public sealed class CharacterDefinition
     public string? ConnectString { get; set; }
 
     /// <summary>Send the connect string automatically on connect.</summary>
+    /// <remarks>
+    /// This is <em>credentials once a connection exists</em> — it says nothing about whether one is ever
+    /// made. <see cref="ConnectAtStartup"/> is the other fact, and the two are independent in both
+    /// directions: auto-connecting a character whose password you type by hand is normal, and so is a
+    /// character that logs itself in whenever <em>you</em> choose to dial it.
+    /// </remarks>
     public bool AutoLogin { get; set; }
+
+    /// <summary>
+    /// Connect this character when the client starts. Zero, one or several characters may be marked, on
+    /// any number of worlds; each gets a session at launch, the first in configuration order taking the
+    /// main window and the rest a tab apiece.
+    /// <para>
+    /// <b>Not <see cref="AutoLogin"/>.</b> That one is <em>what to type once connected</em> — the
+    /// <see cref="ConnectString"/>, sent as soon as the socket is up. This one is <em>whether to open the
+    /// socket at all, unasked</em>. Either without the other is a sensible configuration, which is why
+    /// they are two booleans and not one: marking this alone connects you to the login screen and leaves
+    /// you to log in by hand, and marking <see cref="AutoLogin"/> alone — the normal case — logs you in
+    /// whenever <em>you</em> dial. F5 draws them on adjacent rows and labels them <c>at start</c> and
+    /// <c>auto-login</c> for the same reason.
+    /// </para>
+    /// <para>
+    /// It defaults to <c>false</c>, and there is deliberately no migration marking anybody. Until this
+    /// existed the client connected the first configured world's first character on every launch, with
+    /// no way to say which or to say no; a migration that reinstated that would re-impose on precisely
+    /// the users who never chose it. An upgraded config therefore starts connected to nothing, and the
+    /// client says so and names the two keys that change it (see <c>SharpMUTermApp.StartAsync</c>).
+    /// </para>
+    /// <para>
+    /// It lives on the character rather than as a pointer from the world — <c>WorldDefinition</c> naming
+    /// a character it should connect — because a name in one object referring to a row in another goes
+    /// stale the moment that row is renamed or deleted, and a dangling reference that silently connects
+    /// nothing is the failure mode this codebase has already had to build reports for elsewhere
+    /// (<c>TriggerSetReferences</c>). A boolean on the thing it describes cannot dangle: rename the
+    /// character and the mark travels with it, delete the character and the mark goes too.
+    /// </para>
+    /// </summary>
+    public bool ConnectAtStartup { get; set; }
 
     /// <summary>Semicolon-separated commands sent after connecting.</summary>
     public string? OnConnect { get; set; }
@@ -97,6 +134,12 @@ public sealed class CharacterDefinition
     /// without the credential is to blank the field, which is one keystroke and visible on the row.
     /// </para>
     /// <para>
+    /// <see cref="ConnectAtStartup"/> is carried over for the same reason as everything else here, and
+    /// unlike the password it needs no argument about hidden state: the duplicate draws the mark on its
+    /// own F5 row, so a copy that will dial at launch says so where the copy is made. Dropping it would
+    /// be the quieter surprise — a duplicate of an auto-connecting character that silently does not.
+    /// </para>
+    /// <para>
     /// <b><see cref="PasswordRef"/> is deliberately <em>not</em> copied.</b> The copy gets its own row in
     /// <see cref="SecretsStore"/> — the next save allocates one, because that is what a null reference beside
     /// a set password means. Sharing a row would mean editing one character's password silently changed the
@@ -112,6 +155,7 @@ public sealed class CharacterDefinition
         PasswordRef = null,
         ConnectString = ConnectString,
         AutoLogin = AutoLogin,
+        ConnectAtStartup = ConnectAtStartup,
         OnConnect = OnConnect,
         OnDisconnect = OnDisconnect,
         TriggerSets = new List<string>(TriggerSets),

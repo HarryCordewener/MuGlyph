@@ -38,7 +38,7 @@ namespace SharpMUTerm.Tui;
 /// </summary>
 internal sealed class SharpMUTermApp : IAsyncDisposable
 {
-    private const string MainWindowId = "main";
+    internal const string MainWindowId = "main";
     private const string WebWindowId = "web";
 
     private readonly AppConfiguration _config;
@@ -257,7 +257,6 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private readonly ClientMessageLog _messages;
 
     private WorldSession? _active;
-    private WorldDefinition? _pendingWorld;
     private string? _demoActiveKey;
     private readonly bool _headless;
     private bool _railCollapsed;
@@ -506,11 +505,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>Captures the current workspace (panes/windows/focus) so it can be persisted and resumed.</summary>
     public WorkspaceState CaptureSession() => WorkspaceState.Capture(_workspace);
 
-    /// <summary>Runs the UI loop, connecting <paramref name="world"/> once the window is shown.</summary>
-    public int Run(WorldDefinition? world)
+    /// <summary>
+    /// Runs the UI loop, opening <paramref name="startup"/> once the window is shown. An empty list is a
+    /// supported launch and not an error — see <see cref="StartAsync"/>.
+    /// </summary>
+    public int Run(IReadOnlyList<StartupConnection> startup)
     {
-        _pendingWorld = world;
-        _window.OnShown += (_, _) => _ = StartAsync(_pendingWorld);
+        var pending = startup ?? Array.Empty<StartupConnection>();
+        _window.OnShown += (_, _) => _ = StartAsync(pending);
         return _system.Run();
     }
 
@@ -1095,14 +1097,21 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         return new Workspace(MainWindowId, "Main");
     }
 
-    /// <summary>Sets the demo's focused/connected character from the resumed config (snapshot chrome).</summary>
+    /// <summary>
+    /// Sets the demo's focused/connected character from the resumed config (snapshot chrome). It asks
+    /// <see cref="StartupConnections"/> rather than reaching for the first world's first character,
+    /// because that is now what a launch actually does — and the demo faking a connection the live
+    /// startup path would not open is the exact class of divergence that has hidden three bugs in this
+    /// file already. The first connection is the focused one here for the same reason it is in
+    /// <see cref="StartAsync"/>.
+    /// </summary>
     private void InitDemoRuntimeState()
     {
-        if (_config.Worlds.FirstOrDefault() is { } world &&
-            world.Characters.FirstOrDefault() is { } character)
+        foreach (var (world, character) in StartupConnections.Resolve(_config))
         {
-            _demoActiveKey = $"{world.Name}.{character.Name}";
-            _demoConnectedKeys.Add(_demoActiveKey);
+            var key = $"{world.Name}.{character?.Name ?? world.Name}";
+            _demoActiveKey ??= key;
+            _demoConnectedKeys.Add(key);
         }
     }
 
@@ -1111,19 +1120,90 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         new TextStyle(TerminalColor.FromIndex(11), TerminalColor.Default, TextAttributes.Underline),
         SpanInteraction.Command(command));
 
-    private async Task StartAsync(WorldDefinition? world)
+    /// <summary>
+    /// What a launch does: open a window per <see cref="StartupConnection"/>, then dial them.
+    /// <para>
+    /// <b>Windows first, in order; sockets afterwards, together.</b> The two halves are separated on
+    /// purpose. Creating the sessions and their windows runs sequentially on the UI thread in
+    /// configuration order, so the tab strip, the rail and — decisively — <em>which character the
+    /// command line is pointed at</em> are settled by the configuration and not by which server answered
+    /// first. Dialling then happens concurrently, because a world with a black-holed port would
+    /// otherwise hold every later world's window hostage for the length of a TCP timeout. Focus is taken
+    /// before the first packet leaves, so three auto-connects land you on the first one, every time.
+    /// </para>
+    /// <para>
+    /// <b>Nothing marked is a launch, not a failure.</b> The client opens with no connection, and says
+    /// which of the two reasons it is and which keys change it — an empty workspace that explains itself
+    /// rather than one that looks broken. This used to be unreachable (the first configured world was
+    /// dialled unconditionally), which is exactly why the state is worth a sentence.
+    /// </para>
+    /// <para>
+    /// <b>One refusal does not stop the others.</b> Each dial is awaited on its own and its failure is
+    /// reported where the user can find it: <see cref="WorldSession"/> prints it as a system line in that
+    /// character's own window — which may be a background tab — so it is also raised as a
+    /// <see cref="Notice"/>, and every notice is kept in the ⌃P client message log after it retires
+    /// itself. Several failures therefore leave several rows there, not one survivor.
+    /// </para>
+    /// </summary>
+    internal async Task StartAsync(IReadOnlyList<StartupConnection> startup)
     {
-        if (world is null)
+        ArgumentNullException.ThrowIfNull(startup);
+
+        if (startup.Count == 0)
         {
-            Notice("No world configured. Pass a host/port on the command line, or add one on F5.");
+            // Two different states, and telling them apart is the whole value of the message: nothing
+            // configured is a client with nothing to do yet, while worlds configured and none marked is
+            // a client doing exactly what it was told. The second is Info for that reason — and neither
+            // carries a key chip, because no surface refused anything; the text names the keys instead.
+            var empty = _config.Worlds.Count == 0;
+            Notice(
+                empty ? NoWorldsNotice : NothingAtStartNotice,
+                empty ? MessageSeverity.Warning : MessageSeverity.Info);
             return;
         }
 
-        var session = OpenSession(world);
-        BindSession(session);
+        var opened = new List<(WorldSession Session, string WindowId)>(startup.Count);
+        foreach (var (world, character) in startup)
+        {
+            var session = OpenSession(world, character);
 
-        session.PrintSystem($"*** SharpMUTerm — theme '{_theme.Name}', graphics: {_capabilities.Protocol}.");
+            // The same pair SwitchToCharacter uses, and for the same reason: the first session finds the
+            // main window free and takes it, every later one gets a tab of its own, because two
+            // characters sharing one buffer would interleave their output.
+            var windowId = OpenSessionWindow(session);
+            BindSession(session, windowId);
+            session.PrintSystem($"*** SharpMUTerm — theme '{_theme.Name}', graphics: {_capabilities.Protocol}.");
+            opened.Add((session, windowId));
+        }
 
+        // BindSession leaves _active on whichever session was bound last. The rule is the first one, so
+        // it is claimed back here — through Activate, the one activation path, so the tab, the drafts and
+        // the pane indicator agree with it — and this happens before any dial, so no race can move it.
+        Activate(opened[0].WindowId);
+
+        await Task.WhenAll(opened.Select(o => DialAtStartupAsync(o.Session))).ConfigureAwait(false);
+    }
+
+    /// <summary>The empty-workspace message when there is nothing to connect because there is nothing at all.</summary>
+    internal const string NoWorldsNotice =
+        "No world configured. Pass a host/port on the command line, or add one on F5.";
+
+    /// <summary>
+    /// And when there are worlds but none of their characters is marked. It is the ordinary state of a
+    /// fresh install and of every config upgraded from before the mark existed, so it names the two ways
+    /// out rather than reading as a fault: connect one now, or mark it and stop being asked.
+    /// </summary>
+    internal const string NothingAtStartNotice =
+        "nothing connects at start — ⌃P ▸ Switch to …, then Reconnect · F5 ▸ at start marks one";
+
+    /// <summary>
+    /// One startup dial, whose failure is this connection's own business. Awaited separately from its
+    /// siblings so a refused world cannot cancel them, and reported rather than swallowed: the session
+    /// prints the reason into its own window, which is a background tab for all but the first, so the
+    /// status row says which connection it was.
+    /// </summary>
+    private async Task DialAtStartupAsync(WorldSession session)
+    {
         try
         {
             await session.ConnectAsync().ConfigureAwait(false);
@@ -1133,9 +1213,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             // geometry and the report bookkeeping live.
             OnUiThread(ReportPaneSizes);
         }
-        catch
+        catch (Exception ex)
         {
-            // WorldSession already surfaced the failure as a system line.
+            // Through Snippet, because the reason can carry a host name straight off the command line.
+            OnUi(() => Notice(
+                $"could not connect {SessionTitle(session)} — {Snippet(ex.Message)}",
+                MessageSeverity.Error,
+                "⌃P"));
         }
     }
 
@@ -2926,10 +3010,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         new(ConsoleKey.F6, "Timers", new[] { "timers" }, TimersScreen),
         new(ConsoleKey.F7, "Text & ANSI", new[] { "textansi" }, TextAnsiScreen),
         new(ConsoleKey.F8, "Input", new[] { "input" }, InputScreen),
-        // "password" is a second --view name for the same character-pane screen, the way F2 carries four:
-        // the screen is identical, only the -edit script differs, and the password field is a state a
-        // still frame is the only way to look at (a masked buffer mid-edit).
-        new(ConsoleKey.F9, "Character logging", new[] { "logging", "password" }, CharacterLoggingScreen),
+        // "password" and "startup" are further --view names for the same character-pane screen, the way
+        // F2 carries four: the screen is identical, only the -edit script differs, and each names a
+        // state a still frame is the only way to look at — a masked buffer mid-edit, and the two-entry
+        // dropdown over `at start`, which is drawn *downward* over the rows beneath it.
+        new(ConsoleKey.F9, "Character logging", new[] { "logging", "password", "startup" }, CharacterLoggingScreen),
     };
 
     /// <summary>
@@ -3483,6 +3568,19 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             foreach (var c in "hunter2")
             {
                 yield return Stroke(c, ConsoleKey.NoName);
+            }
+
+            yield break;
+        }
+
+        if (string.Equals(view, "startup", StringComparison.OrdinalIgnoreCase))
+        {
+            // name → … → at start. Its list has two entries and it is not the last row of the block, so
+            // this is the frame that shows a dropdown drawn *downward* over the rows under it — the
+            // opposite of the `logging` view's, which has nowhere below to go and opens upward.
+            for (var i = 0; i < WorldsScreenRenderer.StartupField; i++)
+            {
+                yield return Stroke('\t', ConsoleKey.Tab);
             }
 
             yield break;

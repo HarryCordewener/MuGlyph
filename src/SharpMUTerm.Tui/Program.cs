@@ -64,7 +64,10 @@ internal static class Program
             Environment.Exit(0);
         }
 
-        var world = ResolveWorld(args, config);
+        // What this launch connects: the command line's host if one was typed, else whatever is marked
+        // `at start` on F5, else nothing at all. The precedence lives in Core (StartupConnections) so it
+        // can be asserted without a terminal; the parsing stays here.
+        var startup = StartupConnections.Resolve(config, CommandLineWorld(args));
 
         // Client diagnostics: an in-memory history behind ⌃P ▸ Show client messages, plus a rolling
         // file beside the session logs but plainly not one of them (client-diagnostics-*.log next to
@@ -87,7 +90,7 @@ internal static class Program
             capabilities,
             diagnostics: diagnostics,
             save: saved => ConfigurationStore.Save(ConfigurationStore.DefaultPath, saved));
-        var exitCode = liveApp.Run(world); // blocks on the SharpConsoleUI main loop until exit
+        var exitCode = liveApp.Run(startup); // blocks on the SharpConsoleUI main loop until exit
 
         // Persist the workspace so the next launch resumes where this one left off.
         try
@@ -147,10 +150,17 @@ internal static class Program
     }
 
     /// <summary>
-    /// Resolves the world to connect: explicit host[/port] from the command line, otherwise the
-    /// first configured world, otherwise none (the UI starts disconnected).
+    /// The world named on the command line — <c>host [port]</c> plus its switches — or null when no host
+    /// was given.
+    /// <para>
+    /// It used to fall back to <c>config.Worlds.FirstOrDefault()</c>, and that fallback was the whole of
+    /// the client's startup policy: the first world's first character, dialled unconditionally, with no
+    /// way to name a different one and no way to decline. Choosing is now
+    /// <see cref="CharacterDefinition.ConnectAtStartup"/> and it belongs in
+    /// <see cref="StartupConnections"/>, so this function is left doing only the thing its name says.
+    /// </para>
     /// </summary>
-    private static WorldDefinition? ResolveWorld(string[] args, AppConfiguration config)
+    private static WorldDefinition? CommandLineWorld(string[] args)
     {
         var positional = args.Where(a => !a.StartsWith('-')).ToArray();
         if (positional.Length >= 1)
@@ -167,7 +177,7 @@ internal static class Program
             };
         }
 
-        return config.Worlds.FirstOrDefault();
+        return null;
     }
 
     private static string? GetOption(string[] args, string name)
@@ -221,7 +231,12 @@ internal static class Program
         // password go" should be answerable without reading the source. Config is safe to share; this is not.
         usage.WriteLine($"Secrets: {SecretsStore.PathFor(ConfigurationStore.DefaultPath)}"
             + " — character passwords, plain text, owner-only. Not the file to paste.");
-        usage.WriteLine("With no host, the first configured world is used (if any).");
+        // "why does it connect to *that*?" is the question this setting answers, so the answer belongs
+        // on the page a user reaches for when they ask it. Both halves are stated: what connects with no
+        // host, and that a host overrides it.
+        usage.WriteLine("With no host, the characters marked 'at start' on F5 connect — none by default,");
+        usage.WriteLine("and the client opens with no connection. A host given here connects instead of them.");
+        usage.WriteLine("'at start' is not 'auto-login': one opens the connection, the other sends the login line.");
         usage.WriteLine();
         usage.WriteLine("In-app: Up/Down history · Ctrl+N next window · Ctrl+W close · Ctrl+P palette · Ctrl+Q quit.");
         usage.WriteLine("Scroll: PgUp/PgDn a page · Shift+Up/Down a line · Ctrl+Home top · Ctrl+End back to live output.");
