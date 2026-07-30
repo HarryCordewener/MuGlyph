@@ -234,7 +234,8 @@ internal static class Program
         // Enter), and a help page naming a key that cannot fire is the defect this file is careful about.
         usage.WriteLine("Typing: Alt+Enter or Ctrl+L inserts a newline · Ctrl+A/E line ends · Ctrl+K/U kill ·");
         usage.WriteLine("        Alt+Left/Right by word · Ctrl+R searches history.");
-        usage.WriteLine("Panes:  Ctrl+B then | - z o x b m i < > splits, zooms, closes and moves; or drag a pane's tab");
+        usage.WriteLine("Panes:  Ctrl+B then | - z o x b m i < > splits, zooms, closes and moves; Esc or Ctrl+B");
+        usage.WriteLine("        cancels, and pausing after Ctrl+B pops a panel naming each key. Or drag a tab.");
         usage.WriteLine("        strip onto another pane — middle drops it as a tab, an edge splits there.");
     }
 }
