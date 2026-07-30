@@ -77,6 +77,16 @@ public sealed class ObservationLog(string path) : IDisposable
 
     public void Dispose() => _writer.Dispose();
 
+    /// <summary>
+    /// The share mode names <see cref="FileShare.Delete"/> deliberately. A crawl can run for hours, and
+    /// the observation log is a file the operator tails, rotates and clears while it does — on Windows a
+    /// file opened without it can be neither deleted nor renamed nor its directory removed until the
+    /// crawler exits, which POSIX allows unasked. This is the same omission the spill, the restore log
+    /// and both transcript sinks carried; the Windows CI job runs no Crawler step, so nothing here would
+    /// have caught it.
+    /// </summary>
+    private const FileShare LogShare = FileShare.Read | FileShare.Delete;
+
     private static StreamWriter Open(string path)
     {
         var directory = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(path));
@@ -89,7 +99,7 @@ public sealed class ObservationLog(string path) : IDisposable
         // newline-delimited JSON file breaks the first record for every consumer that does not know to
         // strip it — which is most of them, including Python's own json module.
         return new StreamWriter(
-            new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read),
+            new FileStream(path, FileMode.Append, FileAccess.Write, LogShare),
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
 
