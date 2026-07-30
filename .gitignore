@@ -57,6 +57,16 @@ appsettings.*.local.json
 secrets.json
 .claude/
 
+# A user's own configuration and session data must never be committable. None of these are
+# written inside the repository today — config.json and the diagnostics log live beside each
+# other under the per-user config directory, session transcripts go wherever a character's
+# logging settings point, and the scrollback spill is an ephemeral cache under XDG_CACHE_HOME.
+# They are listed because a character's password is persisted in config.json in plaintext, so
+# the one realistic route into git is a human copying a real config in to reproduce something.
+config.json
+client-diagnostics-*.log
+*.log
+
 # Python bytecode cache
 __pycache__/
 *.pyc
