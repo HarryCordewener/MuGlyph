@@ -999,7 +999,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         _statusIdentity = ("Corvid", "aetherfall.mux", 4201, "connected");
-        _statusBar.SetContent(new List<string> { StatusBarMarkup("Corvid", "aetherfall.mux", 4201, "connected") });
+        _statusBar.SetContent(new List<string> { StatusBarMarkup("Corvid", "connected") });
         _header.SetContent(new List<string> { HeaderMarkup() });
         _input.SetAndNotify("say hello there");
         RebuildPaneArea(); // realise the Chat spawn tab, then refresh badges
@@ -2482,7 +2482,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         SetStatus(_statusIdentity is { } id
-            ? StatusBarMarkup(id.Character, id.Host, id.Port, id.State)
+            ? StatusBarMarkup(id.Character, id.State)
             : NotConnectedMarkup());
     }
 
@@ -2568,7 +2568,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return;
         }
 
-        SetStatus(StatusBarMarkup(id.Character, id.Host, id.Port, id.State));
+        SetStatus(StatusBarMarkup(id.Character, id.State));
     }
 
     /// <summary>The <c>world.character</c> key of the character whose windows the rail expands.</summary>
@@ -6868,11 +6868,6 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>Formats an <see cref="Rgb"/> as <c>#rrggbb</c> markup.</summary>
     private static string Hex(Rgb rgb) => $"#{rgb.R:x2}{rgb.G:x2}{rgb.B:x2}";
 
-    /// <summary>
-    /// The design status bar. The connection identity (● name · state) anchors the left edge; the
-    /// keepalive sparkline, host/encoding, char-count (or history hint), and palette hint form a
-    /// cluster right-aligned to the far edge — mirroring the header's left/right split.
-    /// </summary>
     /// <summary>The least space kept between the status row's identity and its right-hand cluster.</summary>
     private const int MinStatusGap = 3;
 
@@ -6907,7 +6902,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         };
     }
 
-    private string StatusBarMarkup(string character, string host, int port, string state)
+    private string StatusBarMarkup(string character, string state)
     {
         var accent = ActiveWorld() is { } world ? AccentHex(world.Accent) : "#00f5b7";
         var left = $"[{accent}]●[/] [bold]{Escape(character)}[/] [dim]{Escape(state)}[/]";
@@ -6932,8 +6927,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // or in TelnetNegotiationCore. What *is* measurable without any of that is time since the last
         // byte arrived, which is a liveness signal rather than a latency one; if this row earns a meter
         // again, that is the honest one to build.
+        // No host:port. It is a per-world setting that cannot change while you are connected to it, so a
+        // permanent cell said the same thing for the whole session — and the rail had already reached
+        // that conclusion for the same reason (RailModel omits the address deliberately, which
+        // RailModelTests pins). F5 is where a world's address is read and edited.
         var encoding = ActiveWorld() is { } enc ? enc.World.Encoding : "UTF-8";
-        right.Add($"[dim]{Escape($"{host}:{port}")}  {Escape(encoding)}[/]");
+        right.Add($"[dim]{Escape(encoding)}[/]");
 
         // The character count lives at the bottom now (the input gutter is gone); while recalling
         // history it becomes the "back to draft" hint instead. Both read the armed bar, so a count that
