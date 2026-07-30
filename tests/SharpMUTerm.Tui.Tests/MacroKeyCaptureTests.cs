@@ -61,7 +61,9 @@ public class MacroKeyCaptureTests
     [Arguments("Shift+F3", nameof(MacroKeyDelivery.Fires))]
     [Arguments("Ctrl+K", nameof(MacroKeyDelivery.Fires))]
     [Arguments("Alt+K", nameof(MacroKeyDelivery.Fires))]
-    [Arguments("Alt+5", nameof(MacroKeyDelivery.Fires))]
+    // ⌥0 is the one Alt+digit no surface claims: ⌥1–⌥9 go to numbered panes, and the tenth digit is
+    // deliberately left for a binding (the framework's own Alt+digit window selector ignores 0 too).
+    [Arguments("Alt+0", nameof(MacroKeyDelivery.Fires))]
     [Arguments("Ctrl+Up", nameof(MacroKeyDelivery.Fires))]
     [Arguments("Num5", nameof(MacroKeyDelivery.NeverArrives))]
     [Arguments("Num0", nameof(MacroKeyDelivery.NeverArrives))]
@@ -76,6 +78,10 @@ public class MacroKeyCaptureTests
     [Arguments("F9", nameof(MacroKeyDelivery.Taken))]
     [Arguments("Ctrl+Q", nameof(MacroKeyDelivery.Taken))]
     [Arguments("Ctrl+P", nameof(MacroKeyDelivery.Taken))]
+    // Was Fires. ⌥5 now goes to pane 5, so F4 has to say the binding is dead and why — the same
+    // strengthening ⌃O and Alt+R got when they were claimed, not a weakening: Taken still carries a
+    // reason, which the second assertion below checks.
+    [Arguments("Alt+5", nameof(MacroKeyDelivery.Taken))]
     [Arguments("K", nameof(MacroKeyDelivery.Taken))]
     [Arguments("Up", nameof(MacroKeyDelivery.Taken))]
     public async Task TheVerdictSaysWhatWillHappenToAChord(string descriptor, string expected)

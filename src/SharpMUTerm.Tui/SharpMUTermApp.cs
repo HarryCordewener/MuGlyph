@@ -2700,6 +2700,68 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
+    /// Goes to the <paramref name="number"/>th pane and brings it to the front — ⌥1–⌥9, and the ⌃P
+    /// <c>Go to pane N</c> entries.
+    /// <para>
+    /// <b>The number is the rail's number.</b> Panes are counted in <c>Layout.Panes</c> order
+    /// (left-to-right, then top-to-bottom), which is the order the connection rail's hosting column
+    /// numbers them in, so ⌥3 goes to the pane the sidebar labels <c>pane 3</c>. There is no second
+    /// numbering to reconcile any more: the drag and move overlays used to call the first pane
+    /// <c>main</c> while the rail called it <c>pane 1</c> (see <see cref="PaneLabel"/>), which is a
+    /// mismatch a chord cannot survive — a key that lands somewhere other than the label says is worse
+    /// than no key.
+    /// </para>
+    /// <para>
+    /// <b>Why Alt, and why the framework had to be outranked.</b> Ctrl+digit was what was asked for and it
+    /// is not a chord this terminal has: the digit row has no control bytes of its own, so a terminal
+    /// sends the bare digit for 1/9/0 and, for the rest, a byte already spelt Escape, Backspace or NUL
+    /// (<c>MacroKeys</c>'s <c>DigitBytes</c>, read off a real pty). Alt+digit is <c>ESC</c> + the digit and
+    /// arrives cleanly. But <em>SharpConsoleUI already claims Alt+1–9</em>:
+    /// <c>InputCoordinator.HandleAltInput</c> selects among top-level windows by index, and unlike the
+    /// move and resize handlers beside it, it is not gated on <c>IsMovable</c>/<c>IsResizable</c> — so
+    /// <c>Movable(false)</c> did not switch it off. It is reached only from the fall-through taken when
+    /// the active window did not handle the key, and a global shortcut (which this is, registered from
+    /// <see cref="MacroKeys.AppShortcuts"/>) runs before the window is offered the key at all. All nine
+    /// digits are claimed for that reason, in range or not: an out-of-range ⌥7 reports here and stops,
+    /// rather than falling through to a window selector that would silently do something else.
+    /// </para>
+    /// <para>
+    /// <b>Zoom follows.</b> "Bring it to the forefront" over a zoomed workspace means the pane you named
+    /// is the one filling the screen, so an existing zoom is carried to the target
+    /// (<see cref="WorkspaceLayout.CarryZoomToFocused"/>) instead of leaving the selection — and the
+    /// session, and the caret — on a pane that is not rendered. The zoom is not <em>started</em> and not
+    /// cancelled; ⌃B z still means what it meant.
+    /// </para>
+    /// </summary>
+    private void JumpToPane(int number)
+    {
+        var panes = _workspace.Layout.Panes;
+        if (number < 1 || number > panes.Count)
+        {
+            // Never silent. A digit with no pane behind it is the commonest way to press this chord
+            // wrong, and the count is the whole answer — ⌃P's Go to pane entries list exactly the panes
+            // that exist, which is where a reader goes next.
+            Notice(
+                panes.Count == 1
+                    ? "the workspace has one pane — ⌃B | and ⌃B - split it"
+                    : $"there is no pane {number} — this workspace has {panes.Count}",
+                MessageSeverity.Warning,
+                $"⌥{number}");
+            return;
+        }
+
+        var target = panes[number - 1].Id;
+        FocusPane(target);
+
+        // After the focus move, so the zoom lands on the pane that is now selected. Rebuilding is what
+        // realises the change; FocusPane's own path only syncs the view to a pane it did not move.
+        if (_workspace.Layout.CarryZoomToFocused())
+        {
+            RebuildPaneArea();
+        }
+    }
+
+    /// <summary>
     /// Moves pane selection and brings the rest of the app in line with it, by <em>activating</em> the
     /// pane's own active window — the same path a tab click and a rail click take (see
     /// <see cref="Activate"/>), so ⌃O, the Ctrl+arrows, the ⌃P entries and the mouse cannot end up meaning
@@ -3239,7 +3301,19 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             // (AnsiInputParser.ProcessEscape), so unlike most of the alphabet's Ctrl chords it genuinely
             // arrives. A lone Escape is flushed on its own after UnixStdinReader's 50 ms timeout, so
             // pressing Esc and later typing an r is two keys and not this one.
-            return claim.Key == ConsoleKey.R ? () => { Reconnect(); return true; } : null;
+            if (claim.Key == ConsoleKey.R)
+            {
+                return () => { Reconnect(); return true; };
+            }
+
+            // ⌥1–⌥9 go to the numbered pane. Same delivery story as Alt+R and one digit over: the
+            // terminal writes ESC + the digit and the parser reads it as that digit with Alt set.
+            if (MacroKeys.PaneJumpNumber(claim.Key) is { } number)
+            {
+                return () => { JumpToPane(number); return true; };
+            }
+
+            return null;
         }
 
         if (claim.Modifiers != ConsoleModifiers.Control)
@@ -3935,7 +4009,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         {
             for (var i = 0; i < panes.Count; i++)
             {
-                paneLabels[panes[i].Id] = $"pane {i + 1}";
+                // Through PaneLabel so the sidebar, the move/drag overlays, the ⌃P entries and the ⌥N
+                // chord are all reading one spelling of one number. They were two expressions and they
+                // disagreed about the first pane.
+                paneLabels[panes[i].Id] = PaneLabel(panes[i].Id);
             }
         }
 
@@ -4189,6 +4266,25 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             }
 
             return true;
+        }
+
+        // A numbered pane entry runs the chord's own action, refusal and all — the surface is another
+        // door onto ⌥N, not a second way of focusing a pane. Parsed rather than switched on because the
+        // catalog emits one id per live pane and there is no fixed set of them.
+        if (id.StartsWith(CommandIds.PanePrefix, StringComparison.Ordinal))
+        {
+            if (int.TryParse(
+                    id[CommandIds.PanePrefix.Length..],
+                    System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var paneNumber))
+            {
+                JumpToPane(paneNumber);
+                return true;
+            }
+
+            RefuseCommand($"{id} does not name a pane number");
+            return false;
         }
 
         // A settings entry opens the very screen its F-key opens, through the same Toggle: the palette
@@ -5906,6 +6002,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>Every pane's id in layout order, for the tests that walk a geometry end to end.</summary>
     internal IReadOnlyList<string> PaneIds => _workspace.Layout.Panes.Select(p => p.Id).ToArray();
 
+    /// <summary>
+    /// The zoomed pane's id, or null when nothing is zoomed. Internal because the ordinal movers carry a
+    /// zoom with them, and "the pane jumped to is the one rendered" is a claim about this field as much as
+    /// about the frame.
+    /// </summary>
+    internal string? ZoomedPaneId => _workspace.Layout.ZoomedPaneId;
+
     /// <summary>The pane hosting a window, or null when no pane does. Internal so a test can find the pane
     /// a split put a window in rather than assuming which side it landed on.</summary>
     internal string? PaneIdOf(string windowId) => _workspace.Layout.FindWindow(windowId)?.Id;
@@ -6563,7 +6666,18 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         };
     }
 
-    /// <summary>The rail's friendly name for a pane ("main" for the first, "pane N" after it).</summary>
+    /// <summary>
+    /// The name every surface in this client gives a pane: <c>pane N</c>, counting
+    /// <see cref="WorkspaceLayout.Panes"/> in order from one.
+    /// <para>
+    /// It used to call the first pane <c>main</c> — the spelling the rail's hosting column abandoned
+    /// because <c>▪ main   main</c> put two meanings in one line, the <em>window</em> named main beside
+    /// the pane also called main. The move and drag overlays kept it, so the same pane was <c>pane 1</c>
+    /// in the sidebar and <c>main</c> under the cursor. That was survivable while nothing depended on the
+    /// number; ⌥1 is a chord that lands on the pane a label names, and two spellings of one pane is
+    /// exactly the mismatch that makes such a chord read as broken.
+    /// </para>
+    /// </summary>
     private string PaneLabel(string paneId)
     {
         var index = 0;
@@ -6571,7 +6685,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         {
             if (pane.Id == paneId)
             {
-                return index == 0 ? "main" : $"pane {index + 1}";
+                return $"pane {index + 1}";
             }
 
             index++;
@@ -6900,6 +7014,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // command line talks to and its drafts the ones in the bars. The keyboard stays where it was —
         // typing belongs to the armed command line, wherever the selection is.
         ActivateFocusedWindow();
+
+        // An existing zoom follows, exactly as it does for ⌥N: both are *ordinal* movers, and a zoomed
+        // workspace realises one pane, so cycling without this left the selection, the session the bar
+        // talks to and the caret on a pane that was not on screen. (The directional movers cannot have
+        // this: while one pane is realised there is no neighbour to ask for, and ⌃← refuses out loud.)
+        if (_workspace.Layout.CarryZoomToFocused())
+        {
+            RebuildPaneArea();
+        }
     }
 
     /// <summary>Closes the focused pane's active window (Ctrl+W). The main window can't be closed.</summary>
