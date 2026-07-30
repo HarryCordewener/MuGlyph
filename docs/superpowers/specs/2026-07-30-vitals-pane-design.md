@@ -79,9 +79,12 @@ is a per-window setting rather than a global mode — a user with one character 
 and a user with three wants three bound panes, not one that follows them around.
 
 **It reports no window size.** `ReportPaneSizes` iterates `_sessionWindows` — the map from a session to
-**its own main window id**, written by `BindSession` — and resolves the pane hosting *that* window. A
-window that is not a session's main window is never in that map, so a vitals window is excluded from
-NAWS **by construction**, not by a check. That is worth stating because it is the safe property and it
+"the window a session's output lands in", written by exactly one method, `AttachSession`, called from
+`BindSession` — and resolves the pane hosting *that* window. A vitals window is never passed to
+`AttachSession`, so it is not in the map, so it is excluded from NAWS **by construction**, not by a
+check. The same absence is what makes `WindowSession` resolve it correctly: `SessionFor(windowId)`
+searches that map, finds nothing, and the resolver falls through to the owner the workspace records —
+which is the arm a vitals window is *supposed* to take. That is worth stating because it is the safe property and it
 would be easy to break: any future change that made `ReportPaneSizes` iterate *panes* instead of
 *sessions* would start telling a server its window is the size of a gauge strip.
 
