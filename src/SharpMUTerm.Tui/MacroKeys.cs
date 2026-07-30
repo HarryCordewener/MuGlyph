@@ -184,6 +184,18 @@ internal static class MacroKeys
 
         if (Navigation.Contains(parts.Key))
         {
+            // Ctrl+Shift+←/→ is `kitty_mod+left`/`right` — previous_tab and next_tab — and kitty's
+            // dispatcher consumes an action that returns nothing, so those two bytes are never written to
+            // the pty at all. This is not the parser's doing (it decodes CSI 1;6 D perfectly, which is what
+            // TerminalKeyArrivalTests checks) and no ordering in this app can reach a key the terminal kept:
+            // the pane-resize chord was on it, was reported dead, and moved to Alt+Shift because of this.
+            // The vertical pair is not listed: kitty_mod+up/down is scroll_line_up/down, which returns
+            // "passthrough" while the alternate screen is up, so those do arrive.
+            if (parts.Ctrl && parts.Shift && !parts.Alt && parts.Key is "Left" or "Right")
+            {
+                return Never("the terminal keeps ⌃⇧←/→ for its tabs");
+            }
+
             return parts.Ctrl || parts.Alt || parts.Shift
                 ? new MacroKeyVerdict(MacroKeyDelivery.Fires)
                 : new MacroKeyVerdict(MacroKeyDelivery.Taken, "unmodified, this belongs to the prompt");

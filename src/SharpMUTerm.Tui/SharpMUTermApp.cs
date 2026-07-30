@@ -2320,9 +2320,21 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// Handles ↑/↓ as draft-safe history recall. A command line tall enough to have another row keeps
     /// the arrows for the caret — recall only happens where the caret has nowhere further to go, which
     /// is the single-row case it has always been plus the top and bottom of a grown one.
+    /// <para>
+    /// <b>The bare arrows only.</b> This used to look at the key and never at the modifiers, which is how
+    /// it came to swallow Shift+↑ from the scrollback work — repaired then by putting the scrollback keys
+    /// ahead of it, which fixes the one chord that had already been reported and leaves the next one to
+    /// be found the same way. Ordering still matters and is unchanged; declining what is not ours is the
+    /// half that was missing.
+    /// </para>
     /// </summary>
     private bool TryRecallKey(KeyPressedEventArgs e)
     {
+        if (e.KeyInfo.Modifiers != 0)
+        {
+            return false;
+        }
+
         var bar = ActiveBar();
         var kind = BarKind(bar);
         var history = HistoryFor(kind);
@@ -2544,15 +2556,23 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
-    /// Handles Ctrl+Shift+←/→/↑/↓ — makes the focused pane wider, narrower, taller or shorter by
+    /// Handles Alt+Shift+←/→/↑/↓ — makes the focused pane narrower, wider, taller or shorter by
     /// <see cref="PaneResize.StepCells"/> cells.
     /// <para>
-    /// The chord is the deliberate sibling of the one above it: Ctrl+arrow moves <em>between</em> panes,
-    /// so Ctrl+Shift+arrow resizing <em>the</em> pane is the pairing a reader can guess. It is also one
-    /// this host actually delivers, which is not a given here — <c>CLAUDE.md</c> lists four chords that
-    /// collapse onto their ASCII bytes and cannot be bound at all. <c>CSI 1;6 &lt;final&gt;</c> decodes to
-    /// the arrow with both modifier bits set, distinctly from the plain, Shift, Alt and Ctrl forms, and
-    /// <see cref="SharpMUTerm.Tui.Tests"/>' <c>TerminalKeyArrivalTests</c> asks the framework's own parser
+    /// <b>It was Ctrl+Shift+arrow, and half of that chord never arrived.</b> The parser decodes
+    /// <c>CSI 1;6 &lt;final&gt;</c> perfectly — which is what the original evidence checked, and it is a
+    /// different claim from the terminal sending it. <c>kitty_mod</c> is <c>ctrl+shift</c> and kitty binds
+    /// all four by default: <c>ctrl+shift+left</c>/<c>right</c> are <c>previous_tab</c>/<c>next_tab</c>,
+    /// which return <c>None</c> from kitty's dispatcher and so are <em>consumed by the terminal</em> and
+    /// never written to the pty at all; <c>ctrl+shift+up</c>/<c>down</c> are <c>scroll_line_up</c>/
+    /// <c>_down</c>, which return <c>True</c> when the alternate screen is up and are therefore passed
+    /// through. That asymmetry is the whole of the reported bug — the horizontal pair was dead in the
+    /// user's terminal and no app-side code could have reached it — and the vertical pair only worked by
+    /// an accident of one emulator's implementation (VTE binds the same two to its own scrolling and does
+    /// not pass them on). So the family moved, whole, to a chord nothing else claims:
+    /// <c>CSI 1;4 &lt;final&gt;</c> is decoded as the arrow with Alt and Shift set, distinctly from the
+    /// plain arrow, from Shift alone (scrollback), from Alt alone (word movement in the command line) and
+    /// from Ctrl alone (pane selection). <c>TerminalKeyArrivalTests</c> asks the framework's own parser
     /// that question rather than assuming it.
     /// </para>
     /// <para>
@@ -2562,7 +2582,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private bool TryResizeKey(KeyPressedEventArgs e)
     {
-        if (e.KeyInfo.Modifiers != (ConsoleModifiers.Control | ConsoleModifiers.Shift))
+        if (e.KeyInfo.Modifiers != (ConsoleModifiers.Alt | ConsoleModifiers.Shift))
         {
             return false;
         }
@@ -2595,7 +2615,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// The rectangles handed to <see cref="PaneResize"/> are <see cref="FocusRects"/>, the same arranged
     /// geometry pane navigation answers from, so the border moves the number of cells the user can count.
     /// Rebuilding the pane area is all the announcing this needs: NAWS rides the frame
-    /// (<c>PostBufferPaint → ReportPaneSizes</c>) and is rate-limited there, so a held Ctrl+Shift+→
+    /// (<c>PostBufferPaint → ReportPaneSizes</c>) and is rate-limited there, so a held Alt+Shift+→
     /// costs the server at most one report per <see cref="WindowSizeReportInterval"/> plus the trailing
     /// flush that carries the size the resize settled on — the same throttle a drag goes through, reached
     /// by the same route rather than around it.
@@ -2613,7 +2633,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         Notice(
             PaneResize.Describe(result.Outcome, direction),
             MessageSeverity.Warning,
-            $"⌃⇧{PaneResize.Arrow(direction)}");
+            $"⌥⇧{PaneResize.Arrow(direction)}");
     }
 
     /// <summary>
@@ -4162,10 +4182,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 ResizePane(PaneDirection.Left);
                 return true;
             case "layout:taller":
-                ResizePane(PaneDirection.Down);
+                ResizePane(PaneDirection.Up); // ↑ is bigger and ↓ is smaller — the pane's size, not the divider's way
                 return true;
             case "layout:shorter":
-                ResizePane(PaneDirection.Up);
+                ResizePane(PaneDirection.Down);
                 return true;
             case "layout:cycle":
                 if (_workspace.Layout.Panes.Count <= 1)
@@ -6110,9 +6130,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 return sent;
             }
 
-            // Ctrl+Shift+arrows: resize the focused pane. Immediately before its sibling because the two
-            // are one gesture family, and before the scrollback keys because Shift+↑/↓ is theirs and
-            // TryScrollKey would otherwise have to be trusted not to take the Ctrl+Shift form of it.
+            // Alt+Shift+arrows: resize the focused pane. Immediately before its sibling because the two
+            // are one gesture family, and before both the scrollback keys (Shift+↑/↓ is theirs) and the
+            // command line (Alt+←/→ is word movement there) — neither of which looks at the *other*
+            // modifier, so either would otherwise have to be trusted not to take the Alt+Shift form.
             if (TryResizeKey(e))
             {
                 return null;
@@ -7634,12 +7655,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         {
             (true, true) => new[]
             {
-                "[dim]⌃←→↑↓ pane · ⌃⇧←→↑↓ size · ⇥ line[/]",
+                "[dim]⌃←→↑↓ pane · ⌥⇧←→↑↓ size · ⇥ line[/]",
                 "[dim]⌃←→↑↓ pane · ⇥ line[/]",
             },
             (true, false) => new[]
             {
-                "[dim]⌃←→↑↓ pane · ⌃⇧←→↑↓ size[/]",
+                "[dim]⌃←→↑↓ pane · ⌥⇧←→↑↓ size[/]",
                 "[dim]⌃←→↑↓ pane[/]",
             },
             (false, true) => new[] { "[dim]⇥ · ⌃↑↓ line[/]" },

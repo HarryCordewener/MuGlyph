@@ -163,14 +163,16 @@ public static class CommandCatalog
 
         // Pane size, in the plain words the request used ("increase/decrease a pane's horizontal or
         // vertical character size") rather than in the chord's terms. Listed for the same reason the
-        // directional entries and the newline chord are: ⌃⇧+arrow is not a chord anybody guesses, and a
+        // directional entries and the newline chord are: ⌥⇧+arrow is not a chord anybody guesses, and a
         // feature reachable only by a chord nobody knows is the state ⌃L's newline sat in until it was
         // reported as missing. Listed unconditionally too — each refuses out loud when the focused pane
         // has no border to move that way, which is how a reader learns the workspace resizes at all.
-        items.Add(new CommandItem(CommandGroup.Layout, "Make this pane wider", "layout:wider", "⌃⇧→"));
-        items.Add(new CommandItem(CommandGroup.Layout, "Make this pane narrower", "layout:narrower", "⌃⇧←"));
-        items.Add(new CommandItem(CommandGroup.Layout, "Make this pane taller", "layout:taller", "⌃⇧↓"));
-        items.Add(new CommandItem(CommandGroup.Layout, "Make this pane shorter", "layout:shorter", "⌃⇧↑"));
+        // The arrow names what happens to *this* pane — ↑ taller, ↓ shorter — from either side of the
+        // split; it named the direction the divider travelled until that was reported as inverted.
+        items.Add(new CommandItem(CommandGroup.Layout, "Make this pane wider", "layout:wider", "⌥⇧→"));
+        items.Add(new CommandItem(CommandGroup.Layout, "Make this pane narrower", "layout:narrower", "⌥⇧←"));
+        items.Add(new CommandItem(CommandGroup.Layout, "Make this pane taller", "layout:taller", "⌥⇧↑"));
+        items.Add(new CommandItem(CommandGroup.Layout, "Make this pane shorter", "layout:shorter", "⌥⇧↓"));
 
         // SETTINGS — one entry per configuration screen, in the order the host lists them (its F-key
         // order). Every screen or none: a surface offering one of them and hiding the rest would read

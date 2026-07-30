@@ -225,6 +225,12 @@ internal sealed class InputBarControl : BaseControl, IInteractiveControl, IFocus
     /// a selection you can only create and never adjust is worse than none. It wants its own chord, one
     /// this host <em>can</em> deliver: a function key, or a ⌃B-prefixed one. Do not half-build it.
     /// </para>
+    /// <para>
+    /// <b>Every arm below matches the modifiers it wants exactly, and declines everything else.</b> The
+    /// navigation keys are the caret's only bare; word movement is Alt and nothing else. Returning
+    /// <c>true</c> for a chord this control has no meaning for is how it swallowed <c>Alt+Shift+←</c> —
+    /// the pane-resize chord — as a caret move, on any line with a character to the left of the caret.
+    /// </para>
     /// </summary>
     public bool ProcessKey(ConsoleKeyInfo key)
     {
@@ -242,7 +248,9 @@ internal sealed class InputBarControl : BaseControl, IInteractiveControl, IFocus
             return ctrl || shift || alt ? Edit(Buffer.InsertNewline()) : Send();
         }
 
-        if (alt)
+        // Alt and nothing else. Alt+Shift+←/→ is the pane-resize chord and Alt+Ctrl+← is nobody's here;
+        // a `HasFlag` test claimed both, which is the defect the block below is guarded against.
+        if (key.Modifiers == ConsoleModifiers.Alt)
         {
             switch (key.Key)
             {
@@ -267,15 +275,32 @@ internal sealed class InputBarControl : BaseControl, IInteractiveControl, IFocus
         {
             case ConsoleKey.Backspace: return Edit(Buffer.Backspace());
             case ConsoleKey.Delete: return Edit(Buffer.Delete());
-            case ConsoleKey.Home: return Move(Buffer.MoveHome(FieldWidth()));
-            case ConsoleKey.End: return Move(Buffer.MoveEnd(FieldWidth()));
-            case ConsoleKey.LeftArrow: return Move(Buffer.MoveLeft());
-            case ConsoleKey.RightArrow: return Move(Buffer.MoveRight());
-            case ConsoleKey.UpArrow: return TryMoveRow(-1);
-            case ConsoleKey.DownArrow: return TryMoveRow(1);
             case ConsoleKey.Tab when HasSibling():
                 CycleRequested?.Invoke();
                 return true;
+        }
+
+        // The navigation keys are the caret's only when nothing is held down. This switch had no modifier
+        // test at all, so every modified arrow was a plain caret move — and returning true for one is a
+        // claim, not a shrug: Move(Buffer.MoveLeft()) is true whenever there is a character to the left of
+        // the caret. That is the defect this project has now paid for three times (TryRecallKey swallowing
+        // Shift+↑ from the scrollback work; the framework's move-mode handler taking every unclaimed Ctrl+
+        // chord until Movable(false)), and here it was a second cause standing behind the terminal's in the
+        // pane-resize report: on an empty command line ←/→ declined and the chord fell through, and one
+        // typed character made them claim it — while TryMoveRow hid the vertical half by returning false on
+        // a one-row bar. A control that does not handle a chord has to decline it; the window's own key
+        // handler is the one with the whole keyboard in view.
+        if (key.Modifiers == 0)
+        {
+            switch (key.Key)
+            {
+                case ConsoleKey.Home: return Move(Buffer.MoveHome(FieldWidth()));
+                case ConsoleKey.End: return Move(Buffer.MoveEnd(FieldWidth()));
+                case ConsoleKey.LeftArrow: return Move(Buffer.MoveLeft());
+                case ConsoleKey.RightArrow: return Move(Buffer.MoveRight());
+                case ConsoleKey.UpArrow: return TryMoveRow(-1);
+                case ConsoleKey.DownArrow: return TryMoveRow(1);
+            }
         }
 
         // Alt chords are the app's or a macro's, never text: the parser spells them ESC + the character,

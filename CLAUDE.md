@@ -329,10 +329,36 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   navigated away from. Keep the two separate and keep both.
   `TryFocusKey` sits in `HandleWindowKey` **after** `DispatchMacro` (so `MacroKeys.Verdict` reporting a
   macro on `Ctrl+Left` as live stays true) and **before** `TryScrollKey`/`TryRecallKey` and the command
-  line (which would otherwise eat them — `TryRecallKey` ignores modifiers). Word movement moved from
-  `Ctrl+←/→` to `Alt+←/→` to make room. Vertically the panes and the bars are one ladder: ⌃↓ off the
-  last pane arms the second command line, ⌃↑ leaves it (the second bar is per *window*, so the ladder is
-  taken from a pane whose window has one).
+  line. Word movement moved from `Ctrl+←/→` to `Alt+←/→` to make room. Vertically the panes and the bars
+  are one ladder: ⌃↓ off the last pane arms the second command line, ⌃↑ leaves it (the second bar is per
+  *window*, so the ladder is taken from a pane whose window has one).
+- **A handler that does not handle a chord must *decline* it, not claim it — ordering is the second line
+  of defence, never the first.** Three separate defects have been the same sentence: `TryRecallKey`
+  looked at the key and never the modifiers and swallowed `Shift+↑`; the framework's move-mode handler
+  took every unclaimed `Ctrl+` chord until `Movable(false)`; and `InputBarControl.ProcessKey` reached an
+  **unguarded** arrow switch below its `alt`/`ctrl` blocks, so every modified arrow was a plain caret
+  move — claimed with `return true`, because `Move(Buffer.MoveLeft())` is true whenever there is a
+  character to the left of the caret. That last one had a signature worth remembering: it worked on an
+  empty command line and died on the first thing you typed, and `TryMoveRow` returning false on a
+  one-row bar hid the vertical half of it entirely. Both now match on **exact** modifiers
+  (`key.Modifiers == 0` for the bare navigation keys, `== ConsoleModifiers.Alt` for word movement).
+- **The pane-resize chord is `Alt+Shift+arrow`, and it is `Alt` because of the *terminal*, not the
+  parser.** It was `Ctrl+Shift+arrow`, chosen on the strength of a test proving `AnsiInputParser` decodes
+  `CSI 1;6 <final>` — a true claim, and a smaller one than it was read as. `kitty_mod` is `ctrl+shift`
+  and kitty binds all four arrows by default: `ctrl+shift+left`/`right` are `previous_tab`/`next_tab`,
+  whose handlers return `None`, which kitty's `dispatch_action` treats as *consumed* — those bytes are
+  never written to the pty and no app-side ordering can reach them. `ctrl+shift+up`/`down` are
+  `scroll_line_up`/`_down`, which return `True` (pass through) while the alternate screen is up, which
+  is the whole reason the vertical half appeared to work and the horizontal half looked broken. Nothing
+  in kitty's default map claims `alt+shift+arrow`; its encoder writes `CSI 1;4 <final>` for it (observed
+  with `kitten @ send-key`), the parser reads Alt+Shift out of that, and it is distinct from Shift alone
+  (scrollback), Alt alone (word movement) and Ctrl alone (pane selection). **A decode test is not an
+  arrival test** — check the emulator's keymap before spending a chord, and record the answer in
+  `MacroKeys.Verdict`.
+- **A resize arrow names what happens to the focused pane, never which way the divider travels**:
+  ⌥⇧↑ taller, ⌥⇧↓ shorter, ⌥⇧→ wider, ⌥⇧← narrower, from either end of the split. The vertical pair was
+  once read off the divider, so the bottom pane's ↑ made it shorter — and the test only exercised the
+  top pane, where the two rules agree. `PaneResize.StepCells` is **1**, the same on both axes.
 - **`SharpMUTermApp.Activate` is the one activation path, and activating a window activates its session.**
   Every gesture that brings a window forward goes through it: a tab click (`OnTabChanged`), a rail or ⌃P
   entry, a character switch, an MXP `PROMPT`, the web view, and both movers of pane selection (`FocusPane`
