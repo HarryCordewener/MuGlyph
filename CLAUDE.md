@@ -86,6 +86,23 @@ fallbacks) for inline images/maps.
   single-line dividers) and the **connection rail** now rendered as well — and **clickable**: a world,
   character or window row switches to it, dispatched through the rail control's *own* `LinkClicked`
   (never the output panes' handler, so a world cannot drive the client's UI from the wire).
+- **Panes come back after a restart, and the log that does it is keyed by *window*** (`RestoreLog`,
+  Core; `restore/` beside `config.json`, one `0600` file per window, 500 lines each). This is the third
+  thing in the repository that puts session text on disk and it is none of the other two: the spill is
+  an ephemeral cache purged next launch, the transcripts are opt-in files a user keeps, and this is a
+  small bounded tail nothing but startup reads. **It cannot be built on `WorldSession.Scrollback`** — a
+  spawn window's lines never go there (`ProcessOutputLine` raises `SpawnLine`, and a gagging capture
+  rule keeps the line out of the transcript entirely), so a session-keyed restore refills the main
+  windows and leaves every channel pane empty, which is the exact failure it exists to remove. It is
+  therefore fed from the shell, at `OnLine`/`OnSpawnLine`, and **not** from `AppendWindowLine`: that
+  seam also carries the client's own chrome and the restore *replay*, so logging there would have each
+  launch re-record its own history. Payload is `StyledLineCodec`, not markup, so the game's colours and
+  a span's interaction survive and the current theme still renders them. Appends flush to the OS per
+  line (a crash loses nothing; there is deliberately no `fsync` per line), the bound is in **lines**
+  and never bytes, and space is reclaimed by compaction — a byte-range copy through an atomic rename.
+  Restored content is closed off by one `RestoreBarRenderer` row and the lines themselves are left
+  alone. Restoring 3,000 lines costs ~18 ms before the first frame. `restore:` is the third member of
+  the `save:`/`logRoot:` family — **null by default, so no test and no snapshot owns one**.
 - **A launch connects nothing unless it is told to** (`StartupConnections.Resolve`, Core). A host on the
   command line wins outright; otherwise it is every character with `ConnectAtStartup` (F5's `at start`),
   in configuration order; otherwise none, and the client says which of the two empty states it is in.

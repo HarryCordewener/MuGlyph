@@ -42,6 +42,25 @@ public sealed class LoggingSettings
 
     /// <summary>Directory for log files. Defaults to a per-session folder under the config dir.</summary>
     public string? Directory { get; set; }
+
+    /// <summary>
+    /// Whether this character's panes come back with their previous session's content after a restart
+    /// (<see cref="SharpMUTerm.Core.Text.RestoreLog"/>). On by default, and the per-character opt-out for
+    /// somebody who does not want one world's text on disk between sessions.
+    /// <para>
+    /// It sits beside <see cref="Format"/> because F9 is where a character's "what of mine is written
+    /// down" questions are answered, and it is a separate switch from it because the two settings are
+    /// different things: a transcript is a file <em>you</em> keep, read and choose a format for, and this
+    /// is a small bounded tail nothing but the client's own startup ever reads. Turning one off has never
+    /// implied anything about the other.
+    /// </para>
+    /// <para>
+    /// Clearing it stops the writing <em>and</em> drops whatever is already stored for that character's
+    /// windows on the next launch — an opt-out that left the last session's text lying there would be
+    /// answering a different question from the one it was asked.
+    /// </para>
+    /// </summary>
+    public bool RestoreLog { get; set; } = true;
 }
 
 /// <summary>

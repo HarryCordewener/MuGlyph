@@ -154,7 +154,12 @@ public sealed class CharacterDefinition
         OnConnect = OnConnect,
         OnDisconnect = OnDisconnect,
         TriggerSets = new List<string>(TriggerSets),
-        Logging = new LoggingSettings { Format = Logging.Format, Directory = Logging.Directory },
+        Logging = new LoggingSettings
+        {
+            Format = Logging.Format,
+            Directory = Logging.Directory,
+            RestoreLog = Logging.RestoreLog,
+        },
     };
 
     /// <summary>

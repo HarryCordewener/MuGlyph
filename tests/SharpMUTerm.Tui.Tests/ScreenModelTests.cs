@@ -463,18 +463,24 @@ public class ScreenModelTests
     }
 
     /// <summary>
-    /// Logging is two more fields of the character's own row — the format (whose <c>None</c> is "off",
-    /// so one control covers one stored value) and the folder. This replaces F9's screen, whose rows
-    /// edited whichever character happened to be active.
+    /// Logging is three more fields of the character's own row — the format (whose <c>None</c> is "off",
+    /// so one control covers one stored value), the folder, and <c>restore</c>. This replaces F9's
+    /// screen, whose rows edited whichever character happened to be active.
     /// <para>
-    /// The count is seven because the password, the connect line and <c>at start</c> are fields of this
+    /// The count is eight because the password, the connect line and <c>at start</c> are fields of this
     /// row too, drawn between the name and the log values. The ordinals are addressed by name, which is
     /// what let them be inserted in drawn order rather than appended past the log values — see
     /// <see cref="WorldsScreenRenderer.PasswordField"/>.
     /// </para>
+    /// <para>
+    /// <c>restore</c> is a separate switch from the format and not a fourth value of it, because the two
+    /// are different things: a transcript is a file the user keeps and reads, and the restore log is a
+    /// bounded tail nothing but the client's own startup ever opens. Turning one off has never implied
+    /// anything about the other.
+    /// </para>
     /// </summary>
     [Test]
-    public async Task Worlds_TheCharacterRowCarriesItsLogFormatAndFolder()
+    public async Task Worlds_TheCharacterRowCarriesItsLogFormatFolderAndRestoreSwitch()
     {
         var worlds = Worlds();
         var character = worlds[0].Characters[0];
@@ -482,7 +488,7 @@ public class ScreenModelTests
         var model = WorldsScreenRenderer.Model(worlds, Sets(), 0, 0);
         var row = model.RowAt(WorldsScreenRenderer.CharactersPane, 0);
 
-        await Assert.That(row.FieldCount).IsEqualTo(7);
+        await Assert.That(row.FieldCount).IsEqualTo(8);
         await Assert.That(row.FieldAt(WorldsScreenRenderer.CharacterNameField)!.Value.Get()).IsEqualTo("Kaz");
         await Assert.That(row.FieldAt(WorldsScreenRenderer.LogFormatField)!.Value.Get()).IsEqualTo("Html");
         await Assert.That(row.FieldAt(WorldsScreenRenderer.LogDirectoryField)!.Value.Get()).IsEqualTo("/logs/kaz");
@@ -490,6 +496,16 @@ public class ScreenModelTests
         // The format cycles like every other enum field, and None is how logging is turned off.
         await Assert.That(row.FieldAt(WorldsScreenRenderer.LogFormatField)!.Value.Choices)
             .IsEquivalentTo(new[] { "None", "Plain", "Html", "Both" });
+
+        // On by default, a closed two-value choice like `at start`, and it writes through to the
+        // character it was drawn for.
+        var restore = row.FieldAt(WorldsScreenRenderer.RestoreLogField)!.Value;
+        await Assert.That(restore.Get()).IsEqualTo(WorldsScreenRenderer.RestoreOn);
+        await Assert.That(restore.Choices)
+            .IsEquivalentTo(new[] { WorldsScreenRenderer.RestoreOn, WorldsScreenRenderer.RestoreOff });
+
+        restore.Set(WorldsScreenRenderer.RestoreOff);
+        await Assert.That(character.Logging.RestoreLog).IsFalse();
     }
 
     /// <summary>

@@ -39,6 +39,15 @@ public sealed class AppConfiguration
     public ScrollbackSpillOptions ScrollbackSpill { get; set; } = new();
 
     /// <summary>
+    /// How much of each pane's recent content is kept so that restarting the client refills the panes it
+    /// came from. Unlike <see cref="ScrollbackSpill"/> this is <em>meant</em> to survive — it is the one
+    /// thing in <see cref="LastSession"/>'s neighbourhood that persists text rather than structure — and
+    /// unlike the session transcripts it is on by default and read only by the client itself. See
+    /// <see cref="SharpMUTerm.Core.Text.RestoreLog"/>.
+    /// </summary>
+    public RestoreLogOptions RestoreLog { get; set; } = new();
+
+    /// <summary>
     /// Forces a graphics protocol regardless of capability detection: one of
     /// <c>none</c>, <c>halfblock</c>, <c>sixel</c>, <c>kitty</c>. Null means auto-detect.
     /// </summary>
@@ -71,7 +80,10 @@ public sealed class AppConfiguration
     /// <summary>
     /// The last workspace layout (panes, windows, focus) so the app can resume where it left off.
     /// Null on a fresh config; the shell rebuilds a live workspace from it at startup via
-    /// <see cref="WorkspaceState.Restore"/>. Scrollback is not persisted — only structure.
+    /// <see cref="WorkspaceState.Restore"/>. Only structure lives here — the <em>content</em> of each
+    /// window is the restore log's business (<see cref="RestoreLog"/>), keyed by the same window ids
+    /// this records, and deliberately not in <c>config.json</c>: a hundred thousand lines of chat would
+    /// make the one file people hand-edit and paste into bug reports unreadable and unshareable.
     /// </summary>
     public WorkspaceState? LastSession { get; set; }
 

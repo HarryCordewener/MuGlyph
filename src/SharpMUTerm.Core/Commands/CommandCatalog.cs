@@ -117,6 +117,18 @@ public static class CommandCatalog
                 CommandGroup.Terminal, "Back to live output", "term:scroll-live", "⌃End"));
         }
 
+        // The restore log's one control that is not a settings field. It is listed unconditionally, and
+        // it is listed *here* rather than only on F9, because "delete what this client has written down
+        // about my session" is a thing a person wants to do now — after saying something they would
+        // rather was not on disk — and a purge you have to find in a settings screen is a purge that
+        // happens tomorrow. The per-character switch on F9 is the other half: this one is immediate and
+        // total, that one is a standing preference.
+        items.Add(new CommandItem(
+            CommandGroup.Terminal,
+            "Purge the restore log",
+            "term:restore-purge",
+            "deletes every pane's saved content"));
+
         // The client's own messages — the status-line notices that dismiss themselves — kept out of the
         // output window (and so out of the session log) and readable here instead.
         items.Add(new CommandItem(

@@ -27,6 +27,12 @@ internal static class Glyphs
     public const string World = "\uf0ac"; // nf-fa-globe — world/server accent (paired with the spine)
 
     /// <summary>
+    /// The bar marking where the previous session's content ends and this one begins — see
+    /// <see cref="RestoreBarRenderer"/>. A clock rewinding, because that is exactly what the rows above it are.
+    /// </summary>
+    public const string Restored = "\uf1da"; // nf-fa-history
+
+    /// <summary>
     /// The focused pane's marker, drawn on the active tab of the pane every workspace key acts on. Box
     /// drawing rather than a Nerd Font icon, deliberately: it is the one glyph here whose job is to be
     /// legible when nothing else is, so it must not be the character that degrades to a tofu box on a
