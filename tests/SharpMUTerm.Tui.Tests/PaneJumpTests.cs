@@ -372,10 +372,10 @@ public class PaneJumpTests
         var app = App();
         app.RenderSnapshot("split");
 
-        // ⌃B m lifts the active window; 'a' targets the first pane.
+        // ⌃B m lifts the active window; '1' targets the first pane — the same digit ⌥1 uses.
         app.SimulateKey(Ctrl(ConsoleKey.B));
         app.SimulateKey(Plain('m', ConsoleKey.M));
-        app.SimulateKey(Plain('a', ConsoleKey.A));
+        app.SimulateKey(Plain('1', ConsoleKey.D1));
 
         await Assert.That(app.StatusMarkup).Contains("pane 1");
         await Assert.That(app.StatusMarkup)
@@ -384,6 +384,48 @@ public class PaneJumpTests
         await Assert.That(app.RailLines.Any(l => l.Contains("pane 1", StringComparison.Ordinal))).IsTrue();
 
         app.SimulateKey(Plain('\x1b', ConsoleKey.Escape)); // leave move mode
+    }
+
+    /// <summary>
+    /// <b>Move mode targets by the same number as everything else.</b> It used to letter the panes
+    /// <c>a</c>–<c>j</c> while the prompt one line below named the target <c>pane N</c> — one ordering
+    /// spelt in two alphabets, which meant translating <c>B</c> into <c>pane 2</c> in your head to use
+    /// the feature the prompt was explaining.
+    /// <para>
+    /// Driven for every pane: press the digit, and the target the prompt reports is the pane the rail
+    /// numbers with that digit. The prompt is read rather than the badge because the prompt is what
+    /// names the pane in words; the badge is asserted separately by the digit having worked at all — an
+    /// unmapped digit leaves the target alone, so a wrong badge cannot produce a right prompt.
+    /// </para>
+    /// </summary>
+    [Test]
+    public async Task MoveModeTargetsThePaneTheRailNumbersWithTheSameDigit()
+    {
+        var three = await ThreePanes();
+
+        three.App.SimulateKey(Ctrl(ConsoleKey.B));
+        three.App.SimulateKey(Plain('m', ConsoleKey.M));
+
+        for (var n = 1; n <= 3; n++)
+        {
+            three.App.SimulateKey(Plain((char)('0' + n), ConsoleKey.D0 + n));
+
+            await Assert.That(three.App.StatusMarkup)
+                .Contains($"pane {n}")
+                .Because($"pressing {n} in move mode must target the pane the sidebar calls pane {n}");
+        }
+
+        // A digit past the last pane leaves the target where it was rather than clearing it.
+        three.App.SimulateKey(Plain('9', ConsoleKey.D9));
+        await Assert.That(three.App.StatusMarkup)
+            .Contains("pane 3")
+            .Because("an out-of-range digit must not drop the target you already picked");
+
+        // And the letters are gone: 'b' is not a pane picker any more.
+        three.App.SimulateKey(Plain('b', ConsoleKey.B));
+        await Assert.That(three.App.StatusMarkup).Contains("pane 3");
+
+        three.App.SimulateKey(Plain('\x1b', ConsoleKey.Escape));
     }
 
     // --- honesty ------------------------------------------------------------------------------------

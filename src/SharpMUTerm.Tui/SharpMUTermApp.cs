@@ -288,7 +288,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private string? _moveWindowId;
     private string? _moveTargetPaneId;
     private Edge? _moveEdge;
-    private readonly Dictionary<string, char> _moveLetters = new(StringComparer.Ordinal);
+    /// <summary>
+    /// The digit that targets each pane in move mode, which is the pane's own ordinal — the number
+    /// <see cref="PaneLabel"/> spells and ⌥N jumps to. It was a separate a–j alphabet, so the badge on
+    /// a pane and the prompt beside it named the same pane two ways (<c>MOVE Corvid → split pane 2
+    /// left</c> under a badge reading <c>B</c>). Only panes 1–9 get an entry: there is no tenth digit,
+    /// and a badge whose key does not exist is worse than no badge. A tenth pane is still a drop target
+    /// for the mouse.
+    /// </summary>
+    private readonly Dictionary<string, int> _moveOrdinals = new(StringComparer.Ordinal);
 
     /// <summary>
     /// The chords the app claims globally, by the action each runs. It is the same delegate
@@ -5459,8 +5467,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             }
 
             return OnSurface(
-                _moveMode && _moveLetters.TryGetValue(pane.Id, out var letter)
-                    ? BuildMovePane(pane, letter)
+                _moveMode && _moveOrdinals.TryGetValue(pane.Id, out var ordinal)
+                    ? BuildMovePane(pane, ordinal)
                     : BuildPaneTabs(pane),
                 pane.Id);
         }
@@ -6544,32 +6552,36 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
-    /// Enters move mode (⌃B m): the active window lifts, every pane dims and shows a target letter
-    /// (a–j), and the status bar becomes the move prompt. a–j pick the destination, arrows toggle an
-    /// edge (split there), ⏎ commits, Esc cancels.
+    /// Enters move mode (⌃B m): the active window lifts, every pane dims and shows its own number, and
+    /// the status bar becomes the move prompt. 1–9 pick the destination, arrows toggle an edge (split
+    /// there), ⏎ commits, Esc cancels.
+    /// <para>
+    /// The digits are the pane ordinals, so the badge on a pane, the <c>pane N</c> the prompt names as
+    /// the target, the sidebar's hosting column and ⌥N are all one numbering.
+    /// </para>
     /// </summary>
     private void EnterMoveMode()
     {
         _moveWindowId = ActiveWindowId();
         _moveMode = true;
         _moveTargetPaneId = null;
-        _moveLetters.Clear();
-        var letter = 'a';
+        _moveOrdinals.Clear();
+        var ordinal = 1;
         foreach (var pane in _workspace.Layout.Panes)
         {
-            if (letter > 'j')
+            if (ordinal > CommandIds.PaneJumpDigits)
             {
                 break;
             }
 
-            _moveLetters[pane.Id] = letter++;
+            _moveOrdinals[pane.Id] = ordinal++;
         }
 
         RebuildPaneArea();
         SetStatus(MovePromptMarkup(), displace: true);
     }
 
-    /// <summary>Handles a key while in move mode: pick pane (a–j), edge (arrows), commit (⏎), cancel (Esc).</summary>
+    /// <summary>Handles a key while in move mode: pick pane (1–9), edge (arrows), commit (⏎), cancel (Esc).</summary>
     private void HandleMoveKey(KeyPressedEventArgs e)
     {
         e.Handled = true;
@@ -6598,10 +6610,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return;
         }
 
-        if (ch is >= 'a' and <= 'j')
+        if (ch is >= '1' and <= '9')
         {
-            // Only retarget on a real match — an unmapped letter must not clear the current target.
-            var match = _moveLetters.FirstOrDefault(kv => kv.Value == ch);
+            // Only retarget on a real match — a digit past the last pane must not clear the current target.
+            var match = _moveOrdinals.FirstOrDefault(kv => kv.Value == ch - '0');
             if (match.Key is not null)
             {
                 _moveTargetPaneId = match.Key;
@@ -6634,7 +6646,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _moveWindowId = null;
         _moveTargetPaneId = null;
         _moveEdge = null;
-        _moveLetters.Clear();
+        _moveOrdinals.Clear();
         RebuildPaneArea();
         UpdateStatus();
     }
@@ -6644,7 +6656,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     {
         var name = _moveWindowId is { } id && _workspace.FindWindow(id) is { } w ? Escape(w.Title) : "window";
         return $"[#e5c07b]MOVE[/] [bold]{name}[/] [dim]→[/] [#00f5b7]{DropLabel(_moveTargetPaneId, _moveEdge)}[/]"
-            + "   [dim]a–j pane · ←↑↓→ edge · ⏎ commit · Esc cancel[/]";
+            + "   [dim]1–9 pane · ←↑↓→ edge · ⏎ commit · Esc cancel[/]";
     }
 
     /// <summary>Human-readable description of a pending drop, for the move prompt and drag preview.</summary>
@@ -6972,14 +6984,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _system.EnqueueOnUIThread(action);
     }
 
-    /// <summary>A pane rendered as a move-mode target: a big letter over the dimmed window list.</summary>
-    private IWindowControl BuildMovePane(PaneNode pane, char letter)
+    /// <summary>A pane rendered as a move-mode target: its own number over the dimmed window list.</summary>
+    private IWindowControl BuildMovePane(PaneNode pane, int ordinal)
     {
         var selected = pane.Id == _moveTargetPaneId;
         var color = selected ? "#00f5b7" : "#e5c07b";
         var lines = new List<string> { string.Empty, string.Empty };
         lines.Add($"     [bold {color}]▛▀▀▜[/]");
-        lines.Add($"     [bold {color}]▌ {char.ToUpperInvariant(letter)} ▐[/]");
+        lines.Add($"     [bold {color}]▌ {ordinal} ▐[/]");
         lines.Add($"     [bold {color}]▙▄▄▟[/]");
         lines.Add(string.Empty);
         if (selected)
