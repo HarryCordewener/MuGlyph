@@ -17,8 +17,14 @@ public class QuitPromptTests
     private static ConsoleKeyInfo Chord(ConsoleKey key, bool ctrl = false, bool alt = false) =>
         new('\0', key, false, alt, ctrl);
 
+    /// <summary>
+    /// Two connections on <em>one</em> world, which is the shape that exposed the undercount: the prompt
+    /// used to reduce its connections to distinct world names, so this state announced "1 world connected"
+    /// over two live characters. The unit is the character, matching the header's fraction — see
+    /// <c>SharpMUTermApp.ConnectedCharacters</c>.
+    /// </summary>
     private static QuitFacts Busy() => new(
-        new[] { "Aetherfall", "Grapevine" },
+        new[] { "Aetherfall.Corvid", "Aetherfall.Rookery" },
         2,
         new[] { "main", "Chat" });
 
@@ -147,20 +153,20 @@ public class QuitPromptTests
     {
         var consequences = QuitPrompt.Consequences(Busy());
 
-        await Assert.That(consequences[0]).IsEqualTo("2 worlds connected — Aetherfall, Grapevine");
+        await Assert.That(consequences[0]).IsEqualTo("2 characters connected — Aetherfall.Corvid, Aetherfall.Rookery");
         await Assert.That(consequences[1]).IsEqualTo("2 unsent drafts — main, Chat");
         await Assert.That(consequences).Count().IsEqualTo(2);
     }
 
-    /// <summary>One of each is singular. A prompt reading "1 worlds connected" is a prompt nobody proofread.</summary>
+    /// <summary>One of each is singular. A prompt reading "1 characters connected" is one nobody proofread.</summary>
     [Test]
     public async Task OneOfEachReadsAsOne()
     {
-        var facts = new QuitFacts(new[] { "Aetherfall" }, 1, new[] { "main" });
+        var facts = new QuitFacts(new[] { "Aetherfall.Corvid" }, 1, new[] { "main" });
 
         await Assert.That(QuitPrompt.Consequences(facts)).IsEquivalentTo(new[]
         {
-            "1 world connected — Aetherfall",
+            "1 character connected — Aetherfall.Corvid",
             "1 unsent draft — main",
         });
     }
@@ -171,9 +177,9 @@ public class QuitPromptTests
     [Test]
     public async Task ALongListIsCappedAndCounted()
     {
-        var facts = QuitFacts.Nothing with { ConnectedWorlds = new[] { "A", "B", "C", "D", "E" } };
+        var facts = QuitFacts.Nothing with { ConnectedCharacters = new[] { "A", "B", "C", "D", "E" } };
 
-        await Assert.That(QuitPrompt.Consequences(facts)[0]).IsEqualTo("5 worlds connected — A, B, C +2 more");
+        await Assert.That(QuitPrompt.Consequences(facts)[0]).IsEqualTo("5 characters connected — A, B, C +2 more");
     }
 
     /// <summary>

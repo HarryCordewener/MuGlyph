@@ -31,37 +31,65 @@ public sealed class AliasResult
         new(true, alias, commands, match);
 }
 
-/// <summary>Expands user input through an ordered set of <see cref="Alias"/>es (first match wins).</summary>
+/// <summary>
+/// Expands user input through an ordered set of <see cref="Alias"/>es (first match wins).
+/// <para>
+/// Split into configured and runtime rules for the reason <see cref="TriggerEngine"/> is: the F3 screen
+/// can add an alias to a set while a session is connected, and <see cref="ReplaceConfigured"/> is how
+/// that reaches the session without dropping whatever the scripting layer added.
+/// </para>
+/// </summary>
 public sealed class AliasEngine
 {
-    private readonly List<Alias> _aliases = new();
+    private readonly List<Alias> _configured = new();
+    private readonly List<Alias> _runtime = new();
     private readonly object _gate = new();
 
     public AliasEngine(IEnumerable<Alias>? aliases = null)
     {
         if (aliases is not null)
         {
-            _aliases.AddRange(aliases);
+            _configured.AddRange(aliases);
         }
     }
 
+    /// <summary>
+    /// Points the engine at the aliases the configuration holds now, leaving <see cref="Add"/>'s alone.
+    /// See <see cref="TriggerEngine.ReplaceConfigured"/> for why this is a push and not a read-through.
+    /// </summary>
+    public void ReplaceConfigured(IEnumerable<Alias> aliases)
+    {
+        ArgumentNullException.ThrowIfNull(aliases);
+        var replacement = aliases.ToArray();
+        lock (_gate)
+        {
+            _configured.Clear();
+            _configured.AddRange(replacement);
+        }
+    }
+
+    /// <summary>Configured aliases first, in the order F3 shows them, then the runtime ones.</summary>
     public IReadOnlyList<Alias> Aliases
     {
         get
         {
             lock (_gate)
             {
-                return _aliases.ToArray();
+                var all = new List<Alias>(_configured.Count + _runtime.Count);
+                all.AddRange(_configured);
+                all.AddRange(_runtime);
+                return all;
             }
         }
     }
 
+    /// <summary>Adds an alias at runtime — the scripting layer's route in. A reload does not remove it.</summary>
     public void Add(Alias alias)
     {
         ArgumentNullException.ThrowIfNull(alias);
         lock (_gate)
         {
-            _aliases.Add(alias);
+            _runtime.Add(alias);
         }
     }
 
@@ -69,7 +97,7 @@ public sealed class AliasEngine
     {
         lock (_gate)
         {
-            return _aliases.Remove(alias);
+            return _runtime.Remove(alias) || _configured.Remove(alias);
         }
     }
 
@@ -77,7 +105,8 @@ public sealed class AliasEngine
     {
         lock (_gate)
         {
-            _aliases.Clear();
+            _configured.Clear();
+            _runtime.Clear();
         }
     }
 
@@ -92,7 +121,9 @@ public sealed class AliasEngine
         Alias[] snapshot;
         lock (_gate)
         {
-            snapshot = _aliases.ToArray();
+            snapshot = new Alias[_configured.Count + _runtime.Count];
+            _configured.CopyTo(snapshot, 0);
+            _runtime.CopyTo(snapshot, _configured.Count);
         }
 
         foreach (var alias in snapshot)

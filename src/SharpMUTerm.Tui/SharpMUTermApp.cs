@@ -79,7 +79,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     // the live tail. Kept here (not read back from the controls) so freeze can rebuild both regions.
     private readonly Dictionary<string, List<string>> _lines = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _freezePoints = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _connectedKeys = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Connections the <em>demo scene</em> declares live, by session key. It opens no sockets at all, so
+    /// there is nothing for <see cref="ConnectedCharacters"/> to ask and this is the answer it falls back
+    /// to. It is not a cache of live state: it used to be one, maintained for
+    /// <see cref="_active"/> alone inside <see cref="UpdateStatus"/>, so a background world connecting or
+    /// dropping never reached the rail's dots and never reached the header's count either.
+    /// </summary>
+    private readonly HashSet<string> _demoConnectedKeys = new(StringComparer.Ordinal);
 
     /// <summary>
     /// The output window each open session prints into. This is the session ↔ pane link NAWS resolves
@@ -738,18 +746,43 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         // The ⌃Q confirmation, over a workspace that has something to lose: a second world marked
-        // connected (the demo scene's own way of saying so, and what the header's "n/m connected" reads),
+        // connected (the demo scene's own way of saying so, and what the header's "n/m characters" reads),
         // a line typed into the command line through the bar's real change notification, and then the
         // registered shortcut itself — so the frame shows what pressing ⌃Q does, not an impression of it.
         if (string.Equals(view, "quit", StringComparison.OrdinalIgnoreCase))
         {
             if (_config.Worlds.ElementAtOrDefault(1) is { Characters.Count: > 0 } second)
             {
-                _connectedKeys.Add($"{second.Name}.{second.Characters[0].Name}");
-                _header.SetContent(new List<string> { HeaderMarkup() }); // the band counts them: 2/2
+                _demoConnectedKeys.Add($"{second.Name}.{second.Characters[0].Name}");
+                _header.SetContent(new List<string> { HeaderMarkup() }); // the band counts them: 2/3
             }
 
             _input.SetAndNotify("say back in a moment — kettle's on");
+            _shortcuts[(ConsoleModifiers.Control, ConsoleKey.Q)]();
+        }
+
+        // The same confirmation with the shape that hid two counting bugs: two connections on *one* world.
+        // Every other view has at most one character connected per world, so a header dividing connections
+        // by worlds and a prompt reducing connections to distinct world names both looked right — the first
+        // read 1/2 where the truth was 2/3, the second said "1 world connected" over two live characters.
+        // This is the one frame where both halves of the fraction and both ends of the sentence are visible
+        // and wrong if either reverts.
+        if (string.Equals(view, "connections", StringComparison.OrdinalIgnoreCase))
+        {
+            if (_config.Worlds.FirstOrDefault() is { Characters.Count: > 1 } first)
+            {
+                foreach (var character in first.Characters)
+                {
+                    _demoConnectedKeys.Add($"{first.Name}.{character.Name}");
+                }
+
+                // Both surfaces, explicitly. The `quit` view gets its rail repaint by accident — its
+                // SetAndNotify runs RefreshTabTitles, which refreshes the rail on the way past — and a
+                // frame where the header counts a connection the rail draws as offline is unreadable.
+                RefreshHeader();
+                RefreshRail();
+            }
+
             _shortcuts[(ConsoleModifiers.Control, ConsoleKey.Q)]();
         }
 
@@ -1026,7 +1059,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             world.Characters.FirstOrDefault() is { } character)
         {
             _demoActiveKey = $"{world.Name}.{character.Name}";
-            _connectedKeys.Add(_demoActiveKey);
+            _demoConnectedKeys.Add(_demoActiveKey);
         }
     }
 
@@ -1071,8 +1104,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <para>
     /// This is the seam the F2/F3/F5/F6 screens all hang off: the session holds the <em>same</em>
     /// <see cref="Trigger"/>/<see cref="Alias"/>/<see cref="TimerDefinition"/> objects the screens
-    /// edit, so editing one is seen by the next line without a reload. Adding or removing a rule is
-    /// not — the engines were handed the list at construction — so that still needs a reconnect.
+    /// edit, so editing one is seen by the next line without a reload. <strong>Adding or removing a rule,
+    /// and assigning or unassigning a whole set, are live too</strong> — see
+    /// <see cref="ReloadAutomation"/>, which every committed settings change runs. That used to need a
+    /// reconnect, and it is the defect the reported "captures never fire" was: a session opened before its
+    /// character had the capture set assigned ran an empty trigger engine for the rest of its life. The one
+    /// thing still deferred to the next connect is a <em>timer's period</em>, for the reason
+    /// <see cref="WorldSession.ReloadAutomation"/> gives.
     /// </para>
     /// <para>
     /// Picking a <em>different</em> character is <see cref="SwitchToCharacter"/>: it opens a second
@@ -1207,7 +1245,20 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
         session.LinePrinted += (_, line) => OnUi(() => OnLine(windowId, line));
         session.PromptChanged += (_, _) => OnUi(UpdateStatus);
-        session.StateChanged += (_, _) => OnUi(UpdateStatus);
+
+        // Every connect reports the automation it is running — see ReportAutomation. Hung off the state
+        // change rather than off the two call sites that dial (StartAsync and ReconnectAsync), for the
+        // reason this whole block is per-session and in one place: a third path would otherwise be a
+        // third thing to remember, which is how a session that printed fine came to route no captures.
+        session.StateChanged += (_, e) => OnUi(() =>
+        {
+            if (e.State == ConnectionState.Connected)
+            {
+                ReportAutomation(session);
+            }
+
+            UpdateStatus();
+        });
         session.GmcpReceived += (_, e) => OnUi(() =>
         {
             if (_stats.Update(e.Package, e.Json))
@@ -1218,6 +1269,49 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         session.SpawnLine += (_, e) => OnUi(() => OnSpawnLine(session, e.Target, e.Line));
         RefreshTabTitles();
         UpdateStatus();
+    }
+
+    /// <summary>
+    /// Records what automation a connection came up with — which sets resolved for its character and how
+    /// many rules they hold — and warns about a set it is assigned that does not exist.
+    /// <para>
+    /// It is here because the client used to say nothing about this anywhere, which is what made "my
+    /// captures do not work" unanswerable from the screen: an empty trigger engine and a full one that
+    /// happens not to match look identical, and
+    /// <see cref="AppConfiguration.ResolveTriggerSets"/> skips a name it cannot find without a word. Three
+    /// surfaces now cover it — this one at connect, the <see cref="Notice"/> in
+    /// <see cref="ReloadAutomation"/> when an edit changes what is live, and <c>/triggers</c> for the
+    /// detail including how often each rule has actually fired.
+    /// </para>
+    /// <para>
+    /// The summary goes to the client message log (⌃P ▸ <c>Show client messages</c>) and <em>not</em> to the
+    /// output pane, for the reason <see cref="Notice"/> gives: the pane is the server's stream and
+    /// <see cref="WorldSession.PrintSystem"/> writes into the character's transcript, so client chrome
+    /// about rule counts would land in a log someone keeps. It is also not a status-row notice, because a
+    /// character connecting with the automation it was configured with is not news. Only the misnamed set
+    /// is, and that one is loud.
+    /// </para>
+    /// </summary>
+    private void ReportAutomation(WorldSession session)
+    {
+        if (session.Character is not { } character)
+        {
+            return; // anonymous: no character, so no trigger sets to resolve or misname
+        }
+
+        var who = SessionTitle(session);
+        var sets = _config.ResolveTriggerSets(character);
+        _diagnostics.Logger.LogInformation(
+            "{Notice:l}",
+            $"{who}: {TriggerReport.Summary(who, character.TriggerSets, sets)} (/triggers for detail)");
+
+        foreach (var orphan in TriggerReport.Orphans(character.TriggerSets, sets))
+        {
+            Notice(
+                $"{who} is assigned a trigger set called {orphan}, and no such set exists — F2 defines sets, F5 assigns them",
+                MessageSeverity.Warning,
+                "⌃P");
+        }
     }
 
     /// <summary>
@@ -1507,7 +1601,38 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return;
         }
 
+        // `/triggers` answers "why did no window open?" — see TriggerReport. Appended to the window rather
+        // than routed through the session, like `/graphics`, so it still answers with nothing connected.
+        if (command.Trim().Equals("/triggers", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var line in TriggerReportNow())
+            {
+                AppendWindowLine(windowId, $"[dim]*** {Escape(line)}[/]");
+            }
+
+            return;
+        }
+
         _ = _active?.SendUserInputAsync(command);
+    }
+
+    /// <summary>
+    /// The active session's trigger report, or the one line there is to say when there is no session to
+    /// report on. Internal so a headless test can read what <c>/triggers</c> says without parsing a pane.
+    /// </summary>
+    internal IReadOnlyList<string> TriggerReportNow()
+    {
+        if (_active is not { } session)
+        {
+            return new[] { "No connection is active, so no capture rules are loaded — ⌃P ▸ Switch to …" };
+        }
+
+        var character = session.Character;
+        return TriggerReport.Describe(
+            SessionTitle(session),
+            character?.TriggerSets ?? (IReadOnlyList<string>)Array.Empty<string>(),
+            character is null ? Array.Empty<TriggerSet>() : _config.ResolveTriggerSets(character),
+            session.Triggers);
     }
 
     /// <summary>Tracks the per-window input draft and the <c>✎</c> unsent-input marker as you type.</summary>
@@ -2605,25 +2730,100 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // — 3 unsaved edits", which was true while closing a screen could throw its edits away; now every
         // committed value is already written to disk when it is committed, so the count is always zero and a
         // line that could never appear is a line to delete rather than to leave hanging.
-        return new QuitFacts(ConnectedWorlds(), drafts, holding.Select(w => w.Title).ToList());
+        return new QuitFacts(ConnectedCharacters(), drafts, holding.Select(w => w.Title).ToList());
     }
 
     /// <summary>
-    /// The worlds a quit would disconnect. Live sessions are the truth; the demo scene opens no sockets
-    /// at all, so when there is no session to ask, the rail's connected keys — which are what the header
-    /// counts and the snapshot frame shows — answer instead.
+    /// What is connected right now, by <see cref="WorldSession.SessionKey"/> — <c>world.character</c>, or
+    /// the world's own name for an anonymous connection. <strong>The one derivation</strong> the header's
+    /// fraction, the rail's connected dots and the quit prompt's consequence line all read, so the three
+    /// cannot disagree about what is connected.
+    /// <para>
+    /// They did. The header counted a stale set of keys maintained only for the active session and divided
+    /// it by the number of configured <em>worlds</em> — two connected characters across three worlds read
+    /// <c>2/3</c>. The quit prompt counted the same connections but reduced them to distinct world names,
+    /// so two characters on one world read "1 world connected" while the user was looking at two. Both
+    /// halves of a fraction and both ends of a warning now count the same thing.
+    /// </para>
+    /// <para>
+    /// The unit is the <em>character</em>, because in this client a connection <em>is</em> a character:
+    /// F5 says so in as many words, you connect as a character rather than as a world, and a world with
+    /// two characters logged in is two things a quit would drop. Live sessions are the truth; the demo
+    /// scene opens no sockets at all, so when there is no session to ask, the keys it declares
+    /// (<see cref="_demoConnectedKeys"/>) answer instead.
+    /// </para>
     /// </summary>
-    private IReadOnlyList<string> ConnectedWorlds() =>
-        _sessions.Sessions.Count > 0
-            ? _sessions.Sessions.Where(s => s.IsConnected)
-                .Select(s => s.World.Name)
-                .Distinct(StringComparer.Ordinal)
-                .ToList()
-            : _config.Worlds
-                .Where(w => _connectedKeys.Contains(w.Name)
-                    || w.Characters.Any(c => _connectedKeys.Contains($"{w.Name}.{c.Name}")))
-                .Select(w => w.Name)
-                .ToList();
+    internal IReadOnlyList<string> ConnectedCharacters()
+    {
+        var sessions = _sessions.Sessions;
+        if (sessions.Count == 0)
+        {
+            return _demoConnectedKeys.ToList();
+        }
+
+        return sessions
+            .Where(s => s.IsConnected)
+            .Select(s => s.SessionKey)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    /// <summary>
+    /// How many connections the configuration offers — the denominator of the header's fraction, in the
+    /// same unit as <see cref="ConnectedCharacters"/>. A world with characters offers one per character; a
+    /// world with none still offers one, because it can be connected to anonymously (what a host typed on
+    /// the command line is), and a fraction whose denominator ignored it could be exceeded by its own
+    /// numerator.
+    /// </summary>
+    private int ConfiguredConnections() => _config.Worlds.Sum(w => Math.Max(1, w.Characters.Count));
+
+    /// <summary>
+    /// Re-resolves every live session's trigger sets and hands them to it, so a rule added on F2, an alias
+    /// on F3, a binding on F4 or a set assigned to a character on F5 reaches the connection that is
+    /// already open. Called from <see cref="SaveConfiguration"/>, which is the single funnel every
+    /// settings screen commits through (<see cref="ScreenEdits"/>) — one hook rather than one per screen,
+    /// because "every path remembered to call it" is the assumption this client has already been bitten by.
+    /// <para>
+    /// This is the fix for the reported bug: <c>WorldSession</c> composed its engines from the sets it was
+    /// handed at construction, so a session opened before its character had the capture set assigned ran an
+    /// empty trigger engine for its whole life, no line ever matched, and no spawn window ever appeared —
+    /// with nothing anywhere in the client saying so. The alternative, having the engines read through to
+    /// the configuration on every line, is rejected in <see cref="TriggerEngine.ReplaceConfigured"/>: the
+    /// engine runs on the telnet read loop and these lists are mutated on the UI thread.
+    /// </para>
+    /// <para>
+    /// A reload that changes <em>what is live</em> says so on the status row and in the ⌃P log. An edit that
+    /// only retypes a pattern changes no count and is silent, because the rule was already live — that is
+    /// the case <see cref="Trigger.Pattern"/> handles by dropping its compiled regex.
+    /// </para>
+    /// </summary>
+    private void ReloadAutomation()
+    {
+        foreach (var session in _sessions.Sessions)
+        {
+            if (session.Character is not { } character)
+            {
+                continue; // an anonymous connection has no character, so nothing resolves for it
+            }
+
+            var before = session.Triggers.Triggers.Count
+                + session.Aliases.Aliases.Count
+                + session.Macros.Macros.Count;
+
+            var sets = _config.ResolveTriggerSets(character);
+            session.ReloadAutomation(sets);
+
+            var after = session.Triggers.Triggers.Count
+                + session.Aliases.Aliases.Count
+                + session.Macros.Macros.Count;
+            if (before != after)
+            {
+                Notice(
+                    $"{SessionTitle(session)}: {TriggerReport.Summary(SessionTitle(session), character.TriggerSets, sets)}",
+                    MessageSeverity.Info);
+            }
+        }
+    }
 
     /// <summary>
     /// Persists the configuration the settings screens edit. It runs after <em>every</em> change a screen
@@ -2632,15 +2832,26 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// session; a failed write is swallowed for the same reason startup's is (the config is a
     /// convenience, not the session).
     /// <para>
-    /// An app with no <c>save</c> writes nothing at all — see the constructor. The live bars are still
-    /// re-synced, because that is the change taking effect and not a record of it.
+    /// An app with no <c>save</c> writes nothing at all — see the constructor. The live bars and the live
+    /// sessions' automation are still re-synced, because those are the change <em>taking effect</em> and
+    /// not a record of it.
     /// </para>
     /// </summary>
-    private void SaveConfiguration()
+    internal void SaveConfiguration()
     {
         // F8 edits the live InputSettings, so a committed height applies to the bars immediately rather
         // than at the next launch.
         SyncInputBars();
+
+        // And F2/F3/F4/F5 edit the trigger sets, so a rule added or a set assigned applies to the next
+        // line rather than the next reconnect. See ReloadAutomation.
+        ReloadAutomation();
+
+        // F5 also adds and removes worlds and characters, which are what the header's fraction and the
+        // rail are drawn from. Neither is repainted by anything else here, so a world added on F5 used to
+        // leave both reading the configuration as it was before.
+        RefreshHeader();
+        RefreshRail();
 
         if (_save is null)
         {
@@ -3088,6 +3299,9 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     {
         var activeKey = ActiveCharacterKey();
 
+        // The same set the header's fraction counts, so a dot and the count cannot disagree.
+        var connected = new HashSet<string>(ConnectedCharacters(), StringComparer.Ordinal);
+
         // Where each window is, for the window rows' second column — and only when there is more than one
         // answer. On a single-pane workspace a window can only be in the one pane, so the column says
         // nothing; it also used to call that pane "main", which collided head-on with the *window* named
@@ -3120,7 +3334,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 characters.Add(new RailCharacter(
                     character.Name,
                     key,
-                    Connected: _connectedKeys.Contains(key),
+                    Connected: connected.Contains(key),
                     Active: active,
                     Unread: windows.Sum(w => w.Unread),
                     windows));
@@ -6526,25 +6740,23 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return;
         }
 
-        // Keep the rail's connected dot in sync with the live session state.
-        if (session.SessionKey is { } key)
-        {
-            if (session.IsConnected)
-            {
-                _connectedKeys.Add(key);
-            }
-            else
-            {
-                _connectedKeys.Remove(key);
-            }
-        }
-
+        // Nothing to record: the rail's dots, the header's fraction and the quit prompt all ask
+        // ConnectedCharacters() for the live answer. This used to maintain a set here, for the *active*
+        // session only, which is why a background world connecting or dropping changed none of the three.
         var character = session.Character?.Name ?? session.World.Name;
         _statusIdentity = (character, session.World.Host, session.World.Port, session.State.ToString().ToLowerInvariant());
         RefreshStatusBar();
         _header.SetContent(new List<string> { HeaderMarkup() });
         RefreshRail();
     }
+
+    /// <summary>
+    /// Repaints the header band. Needed wherever something the band <em>counts</em> changes without a
+    /// session event behind it — adding or removing a world on F5, for one, which used to leave the
+    /// connected fraction reading the old denominator until the next connect or disconnect happened to
+    /// repaint it.
+    /// </summary>
+    private void RefreshHeader() => _header.SetContent(new List<string> { HeaderMarkup() });
 
     /// <summary>
     /// The design header row: the brand affordance on the left, the active world (with its accent)
@@ -6592,8 +6804,20 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return $"{leftBar}  [#e5c07b]⌃B — awaiting[/]  [dim]| - z o x b m i < > ← →[/]";
         }
 
-        var connected = _connectedKeys.Count;
-        var conn = _config.Worlds.Count > 0 ? $"{connected}/{_config.Worlds.Count} connected   " : string.Empty;
+        // Both halves count characters — see ConnectedCharacters for why that is the unit and what it used
+        // to read. The unit is *named* rather than left to be guessed: "2/5 connected" beside a world
+        // ribbon reads just as easily as two of five worlds, which is exactly the ambiguity that let this
+        // fraction compare two different things for as long as it did.
+        //
+        // It is abbreviated because this row has no width to spare. At 80 columns the demo's ribbon
+        // (35 cells) plus the minimum 3-cell gap plus this cluster came to precisely 80 — the full word
+        // "characters" is one cell too many and wraps the header onto a second row.
+        // InputAreaLayoutTests.TheFirstFrameFitsTheTerminalItIsOn(80) is the test that says so; it caught
+        // this, and anything added here has to keep it passing.
+        var connected = ConnectedCharacters().Count;
+        var conn = _config.Worlds.Count > 0
+            ? $"{connected}/{ConfiguredConnections()} chars   "
+            : string.Empty;
         var logFormat = ActiveLogging().Format;
         var log = logFormat == LogFormat.None
             ? $"[dim]{Glyphs.Log} LOG off[/]"

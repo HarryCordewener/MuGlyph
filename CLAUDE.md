@@ -43,6 +43,17 @@ fallbacks) for inline images/maps.
   trigger/alias/macro engines + `IntervalScheduler`, plain-text + HTML logging, versioned JSON
   config (worlds → characters + shared trigger sets, with migration),
   `Theme`/`ThemeLibrary`, and `WorldSession`/`SessionManager` orchestration.
+  - **Automation is live, and that is a push rather than a read-through.** Each engine holds its rules in
+    two lists: *configured* (what the active `TriggerSet`s contribute, swapped wholesale by
+    `ReplaceConfigured`) and *runtime* (what the Lua bridge's `Triggers.Add` contributed, which a reload
+    must not delete). `WorldSession.ReloadAutomation(sets)` re-points all three engines, and
+    `SharpMUTermApp.SaveConfiguration` — the single funnel every settings screen commits through
+    (`ScreenEdits`) — calls it, so adding a rule on F2 or assigning a set on F5 reaches a *connected*
+    session on its next line. It is **not** read-through to the configuration: `Process` runs on the telnet
+    read loop and those lists are mutated on the UI thread, so enumerating them there would throw. Reading
+    a rule's own fields per match (`Trigger.Pattern` drops its compiled regex on write) is safe and is a
+    different thing from reading its membership. A timer's *period* still applies at the next connect —
+    re-periodising a running one resets every other timer's phase, and this runs on every committed change.
 - **Graphics** — Kitty encoder + Unicode placeholders, Sixel + half-block fallbacks, capability
   probe, and `InlineImagePolicy` — the Kitty → Sixel → half-block → text degradation chain (no UI
   dependency). Inside the TUI the *pixels* are drawn by SharpConsoleUI's `ImageControl`; ours
@@ -113,7 +124,11 @@ python3 tools/ansi_frame_to_image.py frame.ansi frame.html   # or .svg
 - **Views:** `worlds`/`settings`, `triggers`, `route`, `highlight`, `aliases`, `timers`, `keypad`,
   `set`, `textansi`, `input`, `logging`, `password`, `freeze`, `spawn`, `split`, `move`, `drag`,
   `history`, `history-search`, `history-search-filter`, `draft`, `draft2`, `menu`, `menu-split`,
-  `messages`, `quit`, `deletions`, `web`, `rail-long`, `scrollback`, `scrollback-up`, `freeze-scrollback`,
+  `messages`, `quit`, `connections` (**two connections on one world** — the one view where the header's
+  fraction, the rail's dots and the quit prompt's count are all visible together and all have to agree;
+  every other view has at most one character connected per world, which is what hid a header dividing
+  connections by *worlds* and a quit prompt reducing them to distinct world names), `deletions`, `web`,
+  `rail-long`, `scrollback`, `scrollback-up`, `freeze-scrollback`,
   `focus`/`focus-moved` (a split *and* a second command line — the one geometry showing a focused pane
   beside an unfocused one and an armed bar above an idle one, before and after a real ⌃→), plus the
   default workspace
