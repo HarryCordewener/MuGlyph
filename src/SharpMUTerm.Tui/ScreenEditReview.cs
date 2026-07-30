@@ -1,3 +1,4 @@
+using System.Globalization;
 using static SharpMUTerm.Tui.MarkupText;
 using static SharpMUTerm.Tui.ScreenPalette;
 
@@ -53,8 +54,9 @@ internal readonly record struct ReviewDecision(ReviewAction Action, ReviewChoice
 /// </para>
 /// <para>
 /// Both answers <b>close the screen</b>. Esc was a navigation gesture — the user is leaving — and
-/// hijacking it into "actually, stay here" would answer a question they didn't ask. ⏎ Save is the way to
-/// close while skipping this question, and it means keep, which is the same answer as the default.
+/// hijacking it into "actually, stay here" would answer a question they didn't ask. There is no third
+/// answer for the same reason: a screen kept open by its own confirmation is a screen you have to leave
+/// twice.
 /// </para>
 /// </summary>
 internal static class ScreenEditReview
@@ -141,7 +143,7 @@ internal static class ScreenEditReview
 
         if (deletions.Count > named)
         {
-            lines.Add($"[{Muted}]  + {(deletions.Count - named).ToString(System.Globalization.CultureInfo.InvariantCulture)} more[/]");
+            lines.Add($"[{Muted}]  + {(deletions.Count - named).ToString(CultureInfo.InvariantCulture)} more[/]");
         }
 
         lines.Add(string.Empty);
