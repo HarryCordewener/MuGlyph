@@ -116,13 +116,18 @@ public class MarkupFormatterTests
         await Assert.That(markup).Contains("[link=mux:prompt:look]");
     }
 
+    /// <summary>
+    /// A hyperlink gets a scheme of its own, like the other two kinds. It used to be emitted as the raw
+    /// <c>href</c>, which is what let a world write <c>&lt;A HREF="mux:send:@shutdown"&gt;</c> and have the
+    /// click handler send it — see <c>LinkSchemeSecurityTests</c> and <see cref="LinkPayload"/>.
+    /// </summary>
     [Test]
-    public async Task Hyperlink_UsesTheRawUrl()
+    public async Task Hyperlink_UsesTheWebScheme()
     {
         var span = new StyledSpan("site", TextStyle.Default, SpanInteraction.Link("https://example.org"));
         var markup = Formatter.ToMarkup(new StyledLine(new[] { span }));
 
-        await Assert.That(markup).Contains("[link=https://example.org]");
+        await Assert.That(markup).Contains("[link=mux:web:https://example.org]");
     }
 
     [Test]
@@ -201,7 +206,7 @@ public class MarkupFormatterTests
         var markup = formatter.ToMarkup(LinkLine());
 
         await Assert.That(markup).DoesNotContain("underline");
-        await Assert.That(markup).Contains("[link=https://example.org]");
+        await Assert.That(markup).Contains("[link=mux:web:https://example.org]"); // still clickable, just unstyled
     }
 
     /// <summary>It underlines links, not everything — plain text is untouched either way.</summary>

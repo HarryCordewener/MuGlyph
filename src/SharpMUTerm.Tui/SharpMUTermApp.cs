@@ -354,7 +354,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _header.FocusedLinkForegroundColor = ToColor(_theme.Resolve(TerminalColor.Default, isBackground: true));
 
         var main = new MarkupControl(new List<string>());
-        main.LinkClicked += (_, e) => OnLinkClicked(e.Url);
+        main.LinkClicked += (_, e) => OnLinkClicked(MainWindowId, e.Url);
         _panes[MainWindowId] = main;
 
         // The connection rail (worlds → characters → windows) sits left of the pane area, joined by
@@ -1158,7 +1158,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 UpdateStatus();
             }
         });
-        session.SpawnLine += (_, e) => OnUi(() => OnSpawnLine(e.Target, e.Line));
+        session.SpawnLine += (_, e) => OnUi(() => OnSpawnLine(session, e.Target, e.Line));
         RefreshTabTitles();
         UpdateStatus();
     }
@@ -1382,13 +1382,22 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
     }
 
-    /// <summary>Routes a trigger-spawned line to its spawn window (creating the tab on first use).</summary>
-    private void OnSpawnLine(string target, StyledLine line)
+    /// <summary>
+    /// Routes a trigger-spawned line to its spawn window (creating the tab on first use).
+    /// <para>
+    /// The owner recorded on a first-seen window is the <paramref name="session"/> whose trigger fired,
+    /// not <c>_active</c>. It used to be the latter, so a background world's capture opened a window
+    /// labelled and owned by whichever character happened to be focused — and ownership is not
+    /// cosmetic: the rail lists a character's windows by it, and <see cref="LinkSession"/> resolves
+    /// which world a link clicked in a spawn window sends to by it.
+    /// </para>
+    /// </summary>
+    private void OnSpawnLine(WorldSession session, string target, StyledLine line)
     {
         var existed = _workspace.FindWindow(Workspace.SpawnWindowId(target)) is not null;
-        var window = _workspace.RouteSpawn(target, _active?.SessionKey);
+        var window = _workspace.RouteSpawn(target, session.SessionKey);
         window.CapturePattern ??= CaptureFor(target); // label the pane with the trigger that feeds it
-        window.OwnerLabel ??= _active?.Character?.Name ?? _workspace.FindWindow(MainWindowId)?.Title;
+        window.OwnerLabel ??= session.Character?.Name ?? _workspace.FindWindow(MainWindowId)?.Title;
         PaneContentFor(window.Id, window.Title); // ensure the live control exists before buffering
         AppendWindowLine(window.Id, _formatter.ToMarkup(line, Stamp()));
 
@@ -1417,7 +1426,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // `/web <url>` opens the in-TUI web view; everything else goes to the world.
         if (command.StartsWith("/web ", StringComparison.OrdinalIgnoreCase))
         {
-            OpenWeb(command[5..].Trim());
+            OpenWeb(windowId, command[5..].Trim());
             return;
         }
 
@@ -2881,6 +2890,37 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             new List<MouseFlags> { MouseFlags.Button1Clicked }, local, onWindow, onWindow, _window));
     }
 
+    /// <summary>
+    /// Clicks a window's output pane at a cell measured from that control's own top-left, the same way
+    /// <see cref="SimulateRailClick"/> clicks the rail — real hit-test geometry from the last paint, the
+    /// control's own <c>LinkClicked</c>, and so the real <see cref="OnLinkClicked"/> with the real window
+    /// id. It is the only way to drive a server-supplied link the whole distance (MXP bytes → parser →
+    /// <see cref="MarkupFormatter"/> → the framework's markup parse and unescape → the handler), which is
+    /// exactly the chain the link-forgery defect lived in.
+    /// </summary>
+    internal bool SimulatePaneClick(string windowId, int x, int y)
+    {
+        if (!_panes.TryGetValue(windowId, out var pane))
+        {
+            return false;
+        }
+
+        var local = new System.Drawing.Point(x, y);
+        var onWindow = new System.Drawing.Point(pane.ActualX + x, pane.ActualY + y);
+        return pane.ProcessMouseEvent(new MouseEventArgs(
+            new List<MouseFlags> { MouseFlags.Button1Clicked }, local, onWindow, onWindow, _window));
+    }
+
+    /// <summary>
+    /// The markup a window's output pane currently holds, one string per row. Internal so a test can read
+    /// a link payload off the pane the app really drew instead of writing the expected one down — the
+    /// payload is the thing under test, and a hand-copied one would pass whatever the formatter emitted.
+    /// </summary>
+    internal IReadOnlyList<string> PaneLines(string windowId) =>
+        _panes.TryGetValue(windowId, out var pane)
+            ? pane.Text.Split('\n')
+            : Array.Empty<string>();
+
     /// <summary>The live configuration this app is running on.</summary>
     internal AppConfiguration Configuration => _config;
 
@@ -3228,7 +3268,9 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return;
         }
 
-        OnLinkClicked(url); // anything else in the chrome is an ordinary link
+        // Anything else in the chrome is an ordinary link, attributed to the window on show: the header
+        // is not a world's output, so the active window is the only owner it can honestly claim.
+        OnLinkClicked(ActiveWindowId(), url);
     }
 
     /// <summary>
@@ -3276,22 +3318,71 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// The link handler for the <em>output panes</em> and the web view — everything whose content can
     /// come from a server. Internal only so <c>RailClickTests</c> can hand it a rail payload and prove
     /// it does not act on one; nothing outside this class calls it.
+    /// <para>
+    /// <paramref name="windowId"/> is the window whose control was clicked, and it is why this takes a
+    /// parameter at all. Every pane, spawn window and frozen region shared one closure that acted on
+    /// <c>_active</c>, so a link clicked in a <em>background</em> spawn window sent to whichever
+    /// character happened to be focused — a command delivered to the wrong world. The owning session is
+    /// resolved through <see cref="LinkSession"/> instead, and a window that belongs to no world sends
+    /// nowhere rather than guessing.
+    /// </para>
+    /// <para>
+    /// Which payloads mean what is <see cref="LinkPayload"/>'s business, and the schemes are disjoint by
+    /// construction there — a world cannot make an <c>&lt;A HREF&gt;</c> arrive as a
+    /// <c>mux:send:</c>. An untagged payload is refused out loud; it used to be opened as a URL, and
+    /// that fallback is the other half of what made a forged scheme work.
+    /// </para>
     /// </summary>
-    internal void OnLinkClicked(string url)
+    internal void OnLinkClicked(string windowId, string url)
     {
-        if (url.StartsWith(MarkupFormatter.SendScheme, StringComparison.Ordinal))
+        switch (LinkPayload.Parse(url))
         {
-            _ = _active?.SendRawAsync(Uri.UnescapeDataString(url[MarkupFormatter.SendScheme.Length..]));
-        }
-        else if (url.StartsWith(MarkupFormatter.PromptScheme, StringComparison.Ordinal))
-        {
-            ActiveBar().SetAndNotify(Uri.UnescapeDataString(url[MarkupFormatter.PromptScheme.Length..]));
-        }
-        else
-        {
-            OpenWeb(url);
+            case (LinkAction.Send, var command):
+                if (LinkSession(windowId) is { } session)
+                {
+                    _ = session.SendRawAsync(command);
+                }
+                else
+                {
+                    RefuseCommand("that window belongs to no connection, so there is nowhere to send that link");
+                }
+
+                break;
+
+            case (LinkAction.Prompt, var text):
+                // The command line is shared, so the text has to land with the window the link lives in
+                // showing — otherwise MXP's PROMPT fills in a command for a world you are not looking at.
+                if (!string.Equals(windowId, ActiveWindowId(), StringComparison.Ordinal))
+                {
+                    Activate(windowId);
+                }
+
+                ActiveBar().SetAndNotify(text);
+                break;
+
+            case (LinkAction.Web, var target):
+                OpenWeb(windowId, target);
+                break;
+
+            default:
+                RefuseCommand($"that link carries no scheme this client writes ({Snippet(url)}) — nothing here handles it");
+                break;
         }
     }
+
+    /// <summary>
+    /// The session a link clicked in a window should act on: the session printing into it, or — for a
+    /// spawn window, which is not a session's own output window — the character the workspace records as
+    /// owning it. Null for a window that belongs to no connection (the web view), which is a refusal and
+    /// never a reason to fall back on <c>_active</c>.
+    /// </summary>
+    private WorldSession? LinkSession(string windowId) =>
+        SessionFor(windowId)
+        ?? (_workspace.FindWindow(windowId)?.SessionKey is { Length: > 0 } key ? _sessions.Find(key) : null);
+
+    /// <summary>A bounded piece of untrusted text, for a message that has to name what it refused.</summary>
+    private static string Snippet(string text) =>
+        text.Length <= 60 ? text : text[..60] + "…";
 
     private void OnTabChanged(string paneId, TabPage? newTab)
     {
@@ -3308,18 +3399,29 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
     }
 
-    private void OpenWeb(string url)
+    /// <summary>
+    /// Opens a URL in the web view, reporting progress into the transcript of the world that
+    /// <paramref name="windowId"/> belongs to — the window the link was clicked in, or the one
+    /// <c>/web</c> was typed in — rather than whichever session is active by the time it resolves.
+    /// <para>
+    /// The scheme gate is <c>WebPageFetcher</c>'s and stays there: anything that is not
+    /// <c>http</c>/<c>https</c> comes back as a rendered error page, so <c>file://</c> is refused by the
+    /// one component that would otherwise read it. Nothing here routes around that.
+    /// </para>
+    /// </summary>
+    private void OpenWeb(string windowId, string url)
     {
         if (string.IsNullOrWhiteSpace(url))
         {
             return;
         }
 
-        _active?.PrintSystem($"*** Opening {url} in the web view...");
-        _ = LoadWebAsync(url);
+        var owner = LinkSession(windowId) ?? _active;
+        owner?.PrintSystem($"*** Opening {url} in the web view...");
+        _ = LoadWebAsync(owner, url);
     }
 
-    private async Task LoadWebAsync(string url)
+    private async Task LoadWebAsync(WorldSession? owner, string url)
     {
         var width = Math.Max(20, _window.Width - 4);
         try
@@ -3329,7 +3431,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            OnUi(() => _active?.PrintSystem($"*** Failed to load {url}: {ex.Message}"));
+            OnUi(() => owner?.PrintSystem($"*** Failed to load {url}: {ex.Message}"));
         }
     }
 
@@ -3546,7 +3648,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                         // Later runs mirror PaneContentFor's plain control, link routing included,
                         // so a link reads the same wherever on the page it sits.
                         var markup = new MarkupControl(text.Lines.ToList());
-                        markup.LinkClicked += (_, e) => OnLinkClicked(e.Url);
+                        markup.LinkClicked += (_, e) => OnLinkClicked(WebWindowId, e.Url);
                         panel.Add(markup);
                     }
 
@@ -3608,7 +3710,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         var control = new MarkupControl(new List<string>());
-        control.LinkClicked += (_, e) => OnLinkClicked(e.Url);
+        control.LinkClicked += (_, e) => OnLinkClicked(id, e.Url);
         _panes[id] = control;
         return control;
     }
@@ -4037,7 +4139,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         var control = new MarkupControl(new List<string>());
-        control.LinkClicked += (_, e) => OnLinkClicked(e.Url);
+        control.LinkClicked += (_, e) => OnLinkClicked(windowId, e.Url);
         _frozenPanes[windowId] = control;
         return control;
     }

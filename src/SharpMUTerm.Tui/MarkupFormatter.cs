@@ -21,10 +21,6 @@ namespace SharpMUTerm.Tui;
 /// </summary>
 internal sealed class MarkupFormatter(Theme theme, TextSettings? text = null)
 {
-    // Custom link schemes so LinkClicked can tell an MXP/Pueblo command from a web hyperlink.
-    public const string SendScheme = "mux:send:";
-    public const string PromptScheme = "mux:prompt:";
-
     private readonly Theme _theme = theme;
     private readonly TextSettings _text = text ?? new TextSettings();
 
@@ -67,7 +63,9 @@ internal sealed class MarkupFormatter(Theme theme, TextSettings? text = null)
             return;
         }
 
-        var link = LinkFor(span.Interaction);
+        // Every clickable span's payload is scheme-tagged by kind, in LinkPayload, which owns both ends
+        // of that round trip — see its remarks for why no kind may be passed through bare.
+        var link = LinkPayload.For(span.Interaction);
         if (link is not null)
         {
             sb.Append("[link=").Append(link).Append(']');
@@ -166,18 +164,6 @@ internal sealed class MarkupFormatter(Theme theme, TextSettings? text = null)
         // A foreground token is always present (the resolved fg above), so the tag is never empty.
         return $"[{string.Join(' ', tokens)}]";
     }
-
-    private static string? LinkFor(SpanInteraction? interaction) => interaction?.Kind switch
-    {
-        InteractionKind.SendCommand when interaction.PromptOnly =>
-            PromptScheme + Uri.EscapeDataString(interaction.Target),
-        InteractionKind.SendCommand =>
-            SendScheme + Uri.EscapeDataString(interaction.Target),
-        // Remote MXP/Pueblo/HTML can put a ']' in a URL (legal in query/fragment); percent-encode the
-        // markup metacharacters so a server can't close the [link=…] tag early and inject markup.
-        InteractionKind.Hyperlink => interaction.Target.Replace("[", "%5B").Replace("]", "%5D"),
-        _ => null,
-    };
 
     private static string Hex(Rgb rgb) => $"#{rgb.R:x2}{rgb.G:x2}{rgb.B:x2}";
 }

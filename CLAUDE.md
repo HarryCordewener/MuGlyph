@@ -65,6 +65,14 @@ fallbacks) for inline images/maps.
   single-line dividers) and the **connection rail** now rendered as well — and **clickable**: a world,
   character or window row switches to it, dispatched through the rail control's *own* `LinkClicked`
   (never the output panes' handler, so a world cannot drive the client's UI from the wire).
+- **Every `[link=…]` payload a pane carries is scheme-tagged by `InteractionKind`** (`LinkPayload`:
+  `mux:send:` / `mux:prompt:` / `mux:web:`), and the panes' handler takes the *window id* the click
+  came from. Both are security properties, not tidiness. The tagging is disjoint because the
+  **parser** decides the kind (`<SEND>` → `SendCommand`, `<A HREF>` → `Hyperlink`) and a world cannot
+  choose that — while the hyperlink case passed `href` through bare, `<A HREF="mux:send:@shutdown">`
+  was byte-identical to a real `<SEND>` and the click sent it. Never re-introduce a bare passthrough,
+  and never add a "probably a URL" fallback for an untagged payload. The window id is what stops a
+  link clicked in a background pane sending to whichever character is focused.
 
 ## Building and testing
 
