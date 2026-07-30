@@ -62,6 +62,23 @@ public class QuitConfirmationEndToEndTests
         await Assert.That(App().FrameworkExitKey).IsNull();
     }
 
+    /// <summary>
+    /// The same class of door, one category wider. `IsMovable` and `IsResizable` both default to true,
+    /// and the framework treats an unhandled chord on such a window as window management: a Ctrl+key we
+    /// do not claim reaches <c>InputCoordinator.HandleMoveInput</c>, where <c>ConsoleKey.X</c> calls
+    /// <c>CloseWindow</c>. This is the only window there is, so ⌃X blanked the client — reported from a
+    /// live session. Shift+arrows reach the resize handler by the same route.
+    /// <para>
+    /// Pinned rather than fixed key-by-key on purpose: claiming ⌃X would close this one door and leave
+    /// the category open for whichever chord we fail to bind next.
+    /// </para>
+    /// </summary>
+    [Test]
+    public async Task TheWindowDeclinesTheFrameworksWindowManagement()
+    {
+        await Assert.That(App().WindowManagementFlags).IsEqualTo((Movable: false, Resizable: false));
+    }
+
     /// <summary>y ends it, and closes the prompt on the way out rather than leaving it painted.</summary>
     [Test]
     public async Task ConfirmingQuits()

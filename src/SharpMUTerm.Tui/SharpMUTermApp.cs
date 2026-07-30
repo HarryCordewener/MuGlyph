@@ -417,6 +417,16 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             .WithTitle("SharpMUTerm")
             .Maximized()
             .Frameless() // no outer chrome — the workspace fills the whole screen for maximum room
+            // Neither movable nor resizable, and this is not cosmetic. Both default to true, and the
+            // framework treats an unhandled chord on a movable window as window management: any Ctrl+key
+            // we do not claim falls into InputCoordinator.HandleMoveInput (Input/InputCoordinator.cs:837,
+            // reached at :165), where `case ConsoleKey.X` calls CloseWindow — and this is the only window
+            // there is, so ⌃X blanked the client. Shift+arrows reach HandleResizeInput the same way.
+            // A window that fills the desktop has nowhere to move to and no size to be but this one, so
+            // the honest fix is to decline the whole category rather than to claim every chord it eats.
+            // Same shape as ExitKey: the framework's built-in bindings win anything we leave unhandled.
+            .Movable(false)
+            .Resizable(false)
             .WithColors(fg, bg)
             .AddControl(_header)
             .AddControl(_workspaceRow)
@@ -5379,6 +5389,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// only way out. Read back by test, because the default is the exact chord we intercept.
     /// </summary>
     internal ConsoleKey? FrameworkExitKey => _system.Options.ExitKey;
+
+    /// <summary>
+    /// Whether the one window accepts the framework's built-in window management. Both must stay false:
+    /// an unhandled Ctrl+chord on a movable window reaches <c>InputCoordinator.HandleMoveInput</c>, whose
+    /// <c>ConsoleKey.X</c> arm closes the window — and closing the only window blanks the client.
+    /// </summary>
+    internal (bool Movable, bool Resizable) WindowManagementFlags => (_window.IsMovable, _window.IsResizable);
 
     /// <summary>
     /// The main window's key handler: move mode, the drag escape, the ⌃B prefix, then a bound macro,
