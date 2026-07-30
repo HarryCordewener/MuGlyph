@@ -135,6 +135,34 @@ public class WorkspaceLayoutTests
         await Assert.That(w.ZoomedPaneId).IsNull();
     }
 
+    /// <summary>
+    /// A zoom carried onto whichever pane is now focused — what the ordinal movers (⌃O, ⌥N) do, so the
+    /// selection never lands on a pane a zoom is hiding. It never starts a zoom and never ends one.
+    /// </summary>
+    [Test]
+    public async Task CarryZoomToFocused_FollowsTheSelection_AndOnlyWhenSomethingIsZoomed()
+    {
+        var w = new WorkspaceLayout(new[] { "a", "b" });
+        w.SplitFocused(SplitDirection.Row);
+        var first = w.FocusedPaneId;
+
+        // Nothing zoomed: nothing to carry, and it must not invent one.
+        await Assert.That(w.CarryZoomToFocused()).IsFalse();
+        await Assert.That(w.ZoomedPaneId).IsNull();
+
+        w.ToggleZoom();
+        w.CycleFocus();
+        await Assert.That(w.FocusedPaneId).IsNotEqualTo(first);
+        await Assert.That(w.ZoomedPaneId).IsEqualTo(first); // the state the carry exists to fix
+
+        await Assert.That(w.CarryZoomToFocused()).IsTrue();
+        await Assert.That(w.ZoomedPaneId).IsEqualTo(w.FocusedPaneId);
+
+        // Already where it belongs: no change, and it says so.
+        await Assert.That(w.CarryZoomToFocused()).IsFalse();
+        await Assert.That(w.ZoomedPaneId).IsEqualTo(w.FocusedPaneId);
+    }
+
     [Test]
     public async Task ReorderActiveTab_MovesWithinPane_AndClampsAtEdges()
     {

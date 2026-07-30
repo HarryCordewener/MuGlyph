@@ -60,12 +60,18 @@ secrets.json
 # A user's own configuration and session data must never be committable. None of these are
 # written inside the repository today — config.json and the diagnostics log live beside each
 # other under the per-user config directory, session transcripts go wherever a character's
-# logging settings point, and the scrollback spill is an ephemeral cache under XDG_CACHE_HOME.
+# logging settings point, the scrollback spill is an ephemeral cache under XDG_CACHE_HOME, and
+# the restore log is a `restore/` directory beside config.json holding one bounded file per pane.
 # They are listed because a character's password is persisted in config.json in plaintext, so
 # the one realistic route into git is a human copying a real config in to reproduce something.
 config.json
 client-diagnostics-*.log
 *.log
+
+# The restore log's own directory. Its files are already covered by the `*.log` above — that is why
+# they carry that extension — but the directory is named too, because "why is this ignored" should be
+# answerable by reading this file rather than by knowing which extension the format happened to pick.
+restore/
 
 # Python bytecode cache
 __pycache__/

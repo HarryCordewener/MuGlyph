@@ -288,7 +288,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private string? _moveWindowId;
     private string? _moveTargetPaneId;
     private Edge? _moveEdge;
-    private readonly Dictionary<string, char> _moveLetters = new(StringComparer.Ordinal);
+    /// <summary>
+    /// The digit that targets each pane in move mode, which is the pane's own ordinal — the number
+    /// <see cref="PaneLabel"/> spells and ⌥N jumps to. It was a separate a–j alphabet, so the badge on
+    /// a pane and the prompt beside it named the same pane two ways (<c>MOVE Corvid → split pane 2
+    /// left</c> under a badge reading <c>B</c>). Only panes 1–9 get an entry: there is no tenth digit,
+    /// and a badge whose key does not exist is worse than no badge. A tenth pane is still a drop target
+    /// for the mouse.
+    /// </summary>
+    private readonly Dictionary<string, int> _moveOrdinals = new(StringComparer.Ordinal);
 
     /// <summary>
     /// The chords the app claims globally, by the action each runs. It is the same delegate
@@ -310,6 +318,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <c>logRoot</c> constructor parameter for why it is handed in rather than resolved here.
     /// </summary>
     private readonly string? _logRoot;
+
+    /// <summary>
+    /// Where each pane's recent content is kept so a restart refills it, or null for an app that owns
+    /// no restore log — which is the default, and is what every test and every snapshot gets. Third of
+    /// the same family as <see cref="_save"/> and <see cref="_logRoot"/>, for the same reason.
+    /// </summary>
+    private readonly RestoreLog? _restore;
 
     /// <summary>The pane the live mouse drag is hovering, and the edge it would split — null when idle.</summary>
     private string? _dragTargetPaneId;
@@ -364,6 +379,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// and a fixture naming an absolute path is still a test reaching outside itself.
     /// </para>
     /// </param>
+    /// <param name="restore">
+    /// The <see cref="RestoreLog"/> this app reads its panes' previous content out of and writes their
+    /// new content into, or null for an app that owns no restore log — which is the default, and is
+    /// what every test and every snapshot gets. The third member of the <paramref name="save"/> /
+    /// <paramref name="logRoot"/> family, handed in for exactly their reason: this one writes a file
+    /// per window under the user's configuration directory, and an app that is not the live entry point
+    /// has no business creating those. It is also what keeps the demo scene honest — a
+    /// <c>--demo-config</c> snapshot would otherwise restore <em>your</em> panes into the demo's.
+    /// </param>
     public SharpMUTermApp(
         AppConfiguration config,
         TerminalCapabilities capabilities,
@@ -371,11 +395,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         TimeProvider? time = null,
         ClientDiagnostics? diagnostics = null,
         Action<AppConfiguration>? save = null,
-        string? logRoot = null)
+        string? logRoot = null,
+        RestoreLog? restore = null)
     {
         _config = config;
         _save = save;
         _logRoot = string.IsNullOrWhiteSpace(logRoot) ? null : logRoot;
+        _restore = restore;
         _capabilities = capabilities;
         _time = time ?? TimeProvider.System;
         _diagnostics = diagnostics ?? ClientDiagnostics.InMemory();
@@ -555,6 +581,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // desktop cells, which is exactly what a drag between panes needs.
         _system.ConsoleDriver.MouseEvent += OnDriverMouseEvent;
         RegisterGlobalShortcuts();
+
+        // Before the window is shown, so the first frame already has the panes' previous content in
+        // them — a pane that filled itself in a frame or two later would read as a glitch, and this is
+        // also the last moment at which no live line has arrived to be restored *above*.
+        RestorePreviousSession();
         _system.AddWindow(_window);
     }
 
@@ -1197,6 +1228,101 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
+    /// Refills every pane with what it was showing when the client last ran, and marks where that ends.
+    /// <para>
+    /// <b>It is the content half of <see cref="ResumeOrNew"/>.</b> That rebuilds the workspace — which
+    /// windows exist, which pane each sits in, which was focused — from
+    /// <see cref="AppConfiguration.LastSession"/>; this refills those windows from the restore log,
+    /// keyed by the same window ids. Both halves are needed and neither implies the other: a client that
+    /// resumed its layout and showed every pane empty is what the whole feature is about.
+    /// </para>
+    /// <para>
+    /// <b>The two halves are joined loosely, on purpose.</b> A window in the log that the saved
+    /// workspace no longer holds — a spawn window whose pane was closed — is still buffered, because
+    /// <see cref="_lines"/> is keyed by window and not by anything the workspace has to agree with; if
+    /// that channel speaks again its pane reopens with its history already in it
+    /// (<see cref="PaneContentFor"/>). A window in the saved workspace with no log simply starts empty.
+    /// Neither is an error and neither throws, which is the property that matters most here: this runs
+    /// before the first frame, and a client that will not start because of a cache of old chat lines
+    /// would be a worse client than one that starts with an empty pane.
+    /// </para>
+    /// <para>
+    /// <b>Nothing restored is written back.</b> The log is fed from <see cref="OnLine"/> and
+    /// <see cref="OnSpawnLine"/> — the two places a <em>world's</em> output reaches a pane — and this
+    /// replay goes straight to <see cref="AppendWindowLine"/>, so a restart cannot echo its own history
+    /// into the log and double every pane.
+    /// </para>
+    /// </summary>
+    private void RestorePreviousSession()
+    {
+        if (_restore is null || !_config.RestoreLog.Enabled)
+        {
+            return;
+        }
+
+        var restoredWindows = 0;
+        var restoredLines = 0;
+        foreach (var window in _restore.Read())
+        {
+            // A character who opted out gets their content dropped rather than merely un-drawn: an
+            // opt-out that left the last session's text lying in the config directory would be
+            // answering a different question from the one it was asked.
+            if (!RestoreLogWanted(_workspace.FindWindow(window.WindowId)?.SessionKey))
+            {
+                _restore.Forget(window.WindowId);
+                continue;
+            }
+
+            if (window.Lines.Count == 0)
+            {
+                continue;
+            }
+
+            foreach (var line in window.Lines)
+            {
+                AppendWindowLine(window.WindowId, _formatter.ToMarkup(line.Line), line.Stamp);
+            }
+
+            // The boundary marker carries no stamp: it did not arrive, it was drawn, and a timestamp
+            // gutter beside it would be claiming a time for a row the game never sent.
+            AppendWindowLine(
+                window.WindowId,
+                RestoreBarRenderer.Bar(window.Lines.Count, window.LastWritten, FrozenAccentHex()));
+
+            restoredWindows++;
+            restoredLines += window.Lines.Count;
+        }
+
+        if (restoredWindows == 0)
+        {
+            return;
+        }
+
+        _diagnostics.Logger.LogInformation(
+            "Restored {Lines} line(s) into {Windows} pane(s) from the previous session",
+            restoredLines,
+            restoredWindows);
+    }
+
+    /// <summary>
+    /// Whether a window owned by <paramref name="sessionKey"/> takes part in the restore log. An
+    /// unowned window — the main window before any session adopts it, the web view — is allowed: no
+    /// character has said otherwise, and the app-wide switch is checked by the caller.
+    /// </summary>
+    private bool RestoreLogWanted(string? sessionKey) =>
+        sessionKey is null || CharacterFor(sessionKey)?.Logging.RestoreLog != false;
+
+    /// <summary>
+    /// The configured character behind a <c>world.character</c> session key, or null when the key names
+    /// no character this configuration still holds (an anonymous connection, or one whose character has
+    /// since been renamed or deleted).
+    /// </summary>
+    private CharacterDefinition? CharacterFor(string sessionKey) => _config.Worlds
+        .SelectMany(world => world.Characters.Select(character => (Key: $"{world.Name}.{character.Name}", character)))
+        .FirstOrDefault(pair => string.Equals(pair.Key, sessionKey, StringComparison.Ordinal))
+        .character;
+
+    /// <summary>
     /// Sets the demo's focused/connected character from the resumed config (snapshot chrome). It asks
     /// <see cref="StartupConnections"/> rather than reaching for the first world's first character,
     /// because that is now what a launch actually does — and the demo faking a connection the live
@@ -1495,7 +1621,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             AppendWindowLine(windowId, _formatter.ToMarkup(line));
         }
 
-        session.LinePrinted += (_, line) => OnUi(() => OnLine(windowId, line));
+        session.LinePrinted += (_, line) => OnUi(() => OnLine(session, windowId, line));
         session.PromptChanged += (_, _) => OnUi(UpdateStatus);
 
         // Every connect reports the automation it is running — see ReportAutomation. Hung off the state
@@ -1518,7 +1644,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 UpdateStatus();
             }
         });
-        session.SpawnLine += (_, e) => OnUi(() => OnSpawnLine(session, e.Target, e.Line));
+        session.SpawnLine += (_, e) => OnUi(() => OnSpawnLine(session, e.Target, e.Pattern, e.Line));
 
         // The status row's encoding cell is live, so it has to be repainted when the thing it reports
         // changes. WorldSession has already put the change in the client message log by the time this
@@ -1773,6 +1899,46 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
+    /// Records one of a world's lines in the restore log, so the pane it landed in comes back holding
+    /// it next launch.
+    /// <para>
+    /// It is called from <see cref="OnLine"/> and <see cref="OnSpawnLine"/> and from nowhere else, and
+    /// deliberately <em>not</em> from <see cref="AppendWindowLine"/> even though that is the seam every
+    /// line goes through. Two reasons, and both are bugs avoided rather than tidiness. That seam also
+    /// carries the client's own chrome — <c>/graphics</c>, <c>/triggers</c>, the restore bar itself —
+    /// which is not session content and has no business surviving into a later run. And it carries the
+    /// restore <em>replay</em>, so logging there would have each launch re-record its own history and
+    /// double every pane against the bound.
+    /// </para>
+    /// <para>
+    /// The <see cref="StyledLine"/> is what is stored rather than the markup it was rendered to, because
+    /// markup is the theme's answer and not the world's: a line logged as markup would come back frozen
+    /// in whatever colours were configured the day it arrived, and would have lost the palette indices,
+    /// the rule colour and each span's interaction on the way (see <see cref="StyledLineCodec"/>).
+    /// </para>
+    /// </summary>
+    private void RecordForRestore(WorldSession session, string windowId, string title, StyledLine line, string? stamp)
+    {
+        if (_restore is null || !_config.RestoreLog.Enabled)
+        {
+            return;
+        }
+
+        // Read off the session rather than the window's recorded owner: it is the character whose line
+        // this is, it cannot be stale, and a session with no character (a host typed on the command
+        // line) has nobody to have opted out.
+        if (session.Character?.Logging.RestoreLog == false)
+        {
+            return;
+        }
+
+        _restore.Append(windowId, title, line, stamp);
+    }
+
+    /// <summary>A window's title, or its id when the workspace does not (yet) know it.</summary>
+    private string WindowTitle(string windowId) => _workspace.FindWindow(windowId)?.Title ?? windowId;
+
+    /// <summary>
     /// Puts <paramref name="count"/> lines of a window's buffer, starting at <paramref name="from"/>,
     /// into one output control.
     /// <para>
@@ -1878,12 +2044,6 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
     }
 
-    /// <summary>The trigger pattern that routes to a spawn <paramref name="target"/>, for its capture line.</summary>
-    private string? CaptureFor(string target) =>
-        _config.TriggerSets.SelectMany(s => s.Triggers)
-            .FirstOrDefault(t => string.Equals(t.Actions.SpawnTarget, target, StringComparison.Ordinal))
-            ?.Pattern;
-
     /// <summary>
     /// Appends a line to a window's pane and badges it unread when the reader cannot see where it landed.
     /// <para>
@@ -1893,9 +2053,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// badge is the only thing that could tell them.
     /// </para>
     /// </summary>
-    private void OnLine(string windowId, StyledLine line)
+    private void OnLine(WorldSession session, string windowId, StyledLine line)
     {
-        AppendWindowLine(windowId, _formatter.ToMarkup(line), StampNow());
+        var stamp = StampNow();
+        AppendWindowLine(windowId, _formatter.ToMarkup(line), stamp);
+        RecordForRestore(session, windowId, WindowTitle(windowId), line, stamp);
 
         if (!_workspace.IsCaughtUp(windowId))
         {
@@ -1914,16 +2076,27 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// which world a link clicked in a spawn window sends to by it.
     /// </para>
     /// </summary>
-    private void OnSpawnLine(WorldSession session, string target, StyledLine line)
+    private void OnSpawnLine(WorldSession session, string target, string pattern, StyledLine line)
     {
         var existed = _workspace.FindWindow(Workspace.SpawnWindowId(target)) is not null;
         var window = _workspace.RouteSpawn(target, session.SessionKey);
-        window.CapturePattern ??= CaptureFor(target); // label the pane with the trigger that feeds it
+
+        // Label the pane with the rule that feeds it. The pattern comes with the line rather than being
+        // looked up from the target: a route of "Channel $1" resolves to a different name every time, so
+        // finding the rule by comparing its SpawnTarget to this window's name would find nothing.
+        window.CapturePattern ??= pattern;
+
         // Its owner's own name, which for a session with no character is its world's. It used to fall back on
         // the *main window's* title, which is a different session's name as soon as more than one is open.
         window.OwnerLabel ??= SessionTitle(session);
         PaneContentFor(window.Id, window.Title); // ensure the live control exists before buffering
-        AppendWindowLine(window.Id, _formatter.ToMarkup(line), StampNow());
+
+        // The restore log is fed here as well as in OnLine, and that is the crux of the whole feature:
+        // a spawn window's content never reaches WorldSession.Scrollback, so a restore built on session
+        // scrollback would bring the main windows back and leave every channel pane empty.
+        var stamp = StampNow();
+        AppendWindowLine(window.Id, _formatter.ToMarkup(line), stamp);
+        RecordForRestore(session, window.Id, window.Title, line, stamp);
 
         // A first-seen spawn adds a tab to its pane, so rebuild; otherwise just refresh badges.
         if (existed)
@@ -2700,6 +2873,77 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
+    /// Goes to the <paramref name="number"/>th pane and brings it to the front — ⌥1–⌥9, and the ⌃P
+    /// <c>Go to pane N</c> entries.
+    /// <para>
+    /// <b>The number is the rail's number.</b> Panes are counted in <c>Layout.Panes</c> order
+    /// (<em>creation</em> order), which is the order the connection rail's hosting column numbers them
+    /// in, so ⌥3 goes to the pane the sidebar labels <c>pane 3</c>. There is no second numbering to
+    /// reconcile any more: the drag and move overlays used to call the first pane <c>main</c> while the
+    /// rail called it <c>pane 1</c> (see <see cref="PaneLabel"/>), which is a mismatch a chord cannot
+    /// survive — a key that lands somewhere other than the label says is worse than no key.
+    /// </para>
+    /// <para>
+    /// <b>The numbering is global, and it is stable.</b> Global because it always was: a workspace has
+    /// one split tree whoever is connected in it, so ⌥3 has always reached a pane holding another
+    /// character's window — which is what makes these nine chords a character switcher as well as a pane
+    /// switcher. Stable is the part that had to be built. Panes used to be counted in tree order, so
+    /// creating one renumbered every pane after the insertion point and ⌥2 stopped meaning what it meant
+    /// while the user was doing something else entirely. That the rail now says which character is in
+    /// each pane (<see cref="BuildRail"/>) is the other half: a number nobody can see is a number nobody
+    /// presses.
+    /// </para>
+    /// <para>
+    /// <b>Why Alt, and why the framework had to be outranked.</b> Ctrl+digit was what was asked for and it
+    /// is not a chord this terminal has: the digit row has no control bytes of its own, so a terminal
+    /// sends the bare digit for 1/9/0 and, for the rest, a byte already spelt Escape, Backspace or NUL
+    /// (<c>MacroKeys</c>'s <c>DigitBytes</c>, read off a real pty). Alt+digit is <c>ESC</c> + the digit and
+    /// arrives cleanly. But <em>SharpConsoleUI already claims Alt+1–9</em>:
+    /// <c>InputCoordinator.HandleAltInput</c> selects among top-level windows by index, and unlike the
+    /// move and resize handlers beside it, it is not gated on <c>IsMovable</c>/<c>IsResizable</c> — so
+    /// <c>Movable(false)</c> did not switch it off. It is reached only from the fall-through taken when
+    /// the active window did not handle the key, and a global shortcut (which this is, registered from
+    /// <see cref="MacroKeys.AppShortcuts"/>) runs before the window is offered the key at all. All nine
+    /// digits are claimed for that reason, in range or not: an out-of-range ⌥7 reports here and stops,
+    /// rather than falling through to a window selector that would silently do something else.
+    /// </para>
+    /// <para>
+    /// <b>Zoom follows.</b> "Bring it to the forefront" over a zoomed workspace means the pane you named
+    /// is the one filling the screen, so an existing zoom is carried to the target
+    /// (<see cref="WorkspaceLayout.CarryZoomToFocused"/>) instead of leaving the selection — and the
+    /// session, and the caret — on a pane that is not rendered. The zoom is not <em>started</em> and not
+    /// cancelled; ⌃B z still means what it meant.
+    /// </para>
+    /// </summary>
+    private void JumpToPane(int number)
+    {
+        var panes = _workspace.Layout.Panes;
+        if (number < 1 || number > panes.Count)
+        {
+            // Never silent. A digit with no pane behind it is the commonest way to press this chord
+            // wrong, and the count is the whole answer — ⌃P's Go to pane entries list exactly the panes
+            // that exist, which is where a reader goes next.
+            Notice(
+                panes.Count == 1
+                    ? "the workspace has one pane — ⌃B | and ⌃B - split it"
+                    : $"there is no pane {number} — this workspace has {panes.Count}",
+                MessageSeverity.Warning,
+                $"⌥{number}");
+            return;
+        }
+
+        var target = panes[number - 1].Id;
+        FocusPane(target);
+
+        // After the focus move, so the zoom lands on the pane that is now selected. Rebuilding is what
+        // realises the change; FocusPane's own path only syncs the view to a pane it did not move.
+        if (_workspace.Layout.CarryZoomToFocused())
+        {
+            RebuildPaneArea();
+        }
+    }
+
+    /// <summary>
     /// Moves pane selection and brings the rest of the app in line with it, by <em>activating</em> the
     /// pane's own active window — the same path a tab click and a rail click take (see
     /// <see cref="Activate"/>), so ⌃O, the Ctrl+arrows, the ⌃P entries and the mouse cannot end up meaning
@@ -2982,8 +3226,17 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // three-cell gap, so a wordier phrasing wrapped the status line onto a second row at 120 columns
         // — and a status line that grows a row takes one off the workspace (SyncInputHeights counts the
         // chrome), which is a pane getting shorter because you scrolled it.
+        //
+        // The *number* is the same hazard and was not guarded: it counts lines below the viewport, which
+        // grows unbidden from the wire while a reader sits in their scrollback, so the segment widened at
+        // 9 → 10 and again at 99 → 100 with nobody touching a key. At 80 columns that second step took the
+        // row from 80 cells to 81, it wrapped, and every pane lost a row — which per-pane NAWS then
+        // re-announced to every connected server, reflowing the game's output. It is now written into a
+        // reserved field capped the way the sidebar's unread badge is (RailRenderer.UnreadField), so the
+        // segment is the same width whatever it says.
         var below = Math.Max(1, panel.TotalContentHeight - panel.ViewportHeight - panel.VerticalScrollOffset);
-        return $"[#e5c07b]{Glyphs.Scrollback} scrollback[/] [dim]{below} · ⌃End live[/]";
+        var distance = UnreadBadge.Format(below).PadLeft(UnreadBadge.FieldWidth);
+        return $"[#e5c07b]{Glyphs.Scrollback} scrollback[/] [dim]{distance} · ⌃End live[/]";
     }
 
     /// <summary>
@@ -3239,7 +3492,19 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             // (AnsiInputParser.ProcessEscape), so unlike most of the alphabet's Ctrl chords it genuinely
             // arrives. A lone Escape is flushed on its own after UnixStdinReader's 50 ms timeout, so
             // pressing Esc and later typing an r is two keys and not this one.
-            return claim.Key == ConsoleKey.R ? () => { Reconnect(); return true; } : null;
+            if (claim.Key == ConsoleKey.R)
+            {
+                return () => { Reconnect(); return true; };
+            }
+
+            // ⌥1–⌥9 go to the numbered pane. Same delivery story as Alt+R and one digit over: the
+            // terminal writes ESC + the digit and the parser reads it as that digit with Alt set.
+            if (MacroKeys.PaneJumpNumber(claim.Key) is { } number)
+            {
+                return () => { JumpToPane(number); return true; };
+            }
+
+            return null;
         }
 
         if (claim.Modifiers != ConsoleModifiers.Control)
@@ -3935,7 +4200,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         {
             for (var i = 0; i < panes.Count; i++)
             {
-                paneLabels[panes[i].Id] = $"pane {i + 1}";
+                // Through PaneOrdinal so the sidebar, the move/drag overlays, the ⌃P entries and the ⌥N
+                // chord are all reading one number. They were two expressions and they disagreed about
+                // the first pane.
+                paneLabels[panes[i].Id] = RailPaneLabel(i + 1);
             }
         }
 
@@ -3959,7 +4227,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                     Connected: connected.Contains(key),
                     Active: active,
                     Unread: windows.Sum(w => w.Unread),
-                    windows));
+                    windows,
+                    Pane: CharacterPaneLabel(key, paneLabels)));
             }
 
             worlds.Add(new RailWorld(world.Name, world.Host, world.Port, accent, characters));
@@ -4006,6 +4275,81 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         return windows;
+    }
+
+    /// <summary>
+    /// Which pane a character's session is in — the <c>pane N</c> its rail row carries, whether or not
+    /// it is the active character.
+    /// <para>
+    /// <b>This is what makes ⌥N usable as a character switch.</b> The chord has always been global
+    /// (<see cref="JumpToPane"/> indexes the workspace's one pane tree, not the active character's
+    /// windows), but the rail lists window rows for the active character only — so a reader looking at
+    /// Ann could see <c>pane 1</c> and nothing else, while ⌥2 and ⌥3 sat on the screen holding Bob and
+    /// Cal. The pane number was global; only the way to read it was not.
+    /// </para>
+    /// <para>
+    /// The <em>character</em> row rather than more window rows, because <see cref="BuildRailWindows"/>'s
+    /// owner filter is load-bearing: a window row under a character means that window is that
+    /// character's, and listing everyone's windows everywhere would take that reading away for the sake
+    /// of a fact one column can carry. One row per character already exists, it is exactly the row a
+    /// user clicks to reach that character, and the answer belongs on it.
+    /// </para>
+    /// <para>
+    /// The session window when there is one, else any window the character owns that a pane still holds
+    /// — a character with a spawn window open and its main window closed is still somewhere, and the row
+    /// should say where rather than go blank. Null when the workspace has one pane, because
+    /// <paramref name="paneLabels"/> is empty then and "which of the one pane" is not information.
+    /// </para>
+    /// </summary>
+    /// <summary>
+    /// What the sidebar's hosting column calls pane <paramref name="ordinal"/>: the chord that goes there,
+    /// <c>⌥3</c>, rather than the words <c>pane 3</c>.
+    /// <para>
+    /// The sidebar's width comes out of the pane area and is reported to every connected session over
+    /// NAWS, so four cells on every row is four cells off every pane. This is the one surface where the
+    /// noun is redundant — the column's position already says "where this is" — and dropping it pays for
+    /// itself twice: it is shorter, and <c>⌥3</c> names the key that goes there, which <c>pane 3</c> left
+    /// the reader to infer.
+    /// </para>
+    /// <para>
+    /// It is not a second spelling of the number. <see cref="PaneLabel"/> still says <c>pane N</c>
+    /// everywhere the noun carries meaning — <c>split pane 2 left</c>, <c>Go to pane 3</c>, <c>there is no
+    /// pane 7</c> — and both read the same ordinal. What changed is the abbreviation, not the count.
+    /// </para>
+    /// <para>
+    /// The sigil is also what keeps the column legible beside the unread badge. A bare <c>3</c> after a
+    /// count of <c>2</c> is <c>2  3</c>, two numbers with nothing to tell them apart; the word used to do
+    /// that work, and something has to.
+    /// </para>
+    /// </summary>
+    private static string RailPaneLabel(int ordinal) => $"⌥{ordinal}";
+
+    private string? CharacterPaneLabel(string sessionKey, IReadOnlyDictionary<string, string> paneLabels)
+    {
+        if (paneLabels.Count == 0)
+        {
+            return null;
+        }
+
+        string? fallback = null;
+        foreach (var window in _workspace.Windows)
+        {
+            if (!string.Equals(window.SessionKey, sessionKey, StringComparison.Ordinal) ||
+                _workspace.Layout.FindWindow(window.Id) is not { } pane ||
+                paneLabels.GetValueOrDefault(pane.Id) is not { } label)
+            {
+                continue;
+            }
+
+            if (window.Kind == WindowKind.Main)
+            {
+                return label;
+            }
+
+            fallback ??= label;
+        }
+
+        return fallback;
     }
 
     /// <summary>
@@ -4191,6 +4535,25 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return true;
         }
 
+        // A numbered pane entry runs the chord's own action, refusal and all — the surface is another
+        // door onto ⌥N, not a second way of focusing a pane. Parsed rather than switched on because the
+        // catalog emits one id per live pane and there is no fixed set of them.
+        if (id.StartsWith(CommandIds.PanePrefix, StringComparison.Ordinal))
+        {
+            if (int.TryParse(
+                    id[CommandIds.PanePrefix.Length..],
+                    System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var paneNumber))
+            {
+                JumpToPane(paneNumber);
+                return true;
+            }
+
+            RefuseCommand($"{id} does not name a pane number");
+            return false;
+        }
+
         // A settings entry opens the very screen its F-key opens, through the same Toggle: the palette
         // is another door onto that key, not a second way of building the screen.
         if (id.StartsWith(ScreenCommandPrefix, StringComparison.Ordinal))
@@ -4271,6 +4634,9 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 return true;
             case "term:messages":
                 _messageLog.Toggle();
+                return true;
+            case "term:restore-purge":
+                PurgeRestoreLog();
                 return true;
             case "term:history":
                 ToggleHistorySearch();
@@ -4459,6 +4825,34 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <c>*** Logging to …</c> over a client that opened no file is the defect this gate exists to stop.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// ⌃P ▸ <c>Purge the restore log</c>: deletes every window's saved content, now.
+    /// <para>
+    /// It is "forget what is on disk", not "switch the feature off" — a pane that goes on printing
+    /// starts a fresh file on its next line, and the standing preference is F9's per-character
+    /// <c>restore</c> row. Nor does it blank the panes: what has already been drawn is on your screen
+    /// and clearing it would be answering a question nobody asked, while leaving it would be leaving a
+    /// file. The count comes back so the entry reports what it actually did rather than claiming
+    /// success at nothing, which is the difference between a purge and a placebo.
+    /// </para>
+    /// </summary>
+    private void PurgeRestoreLog()
+    {
+        if (_restore is null)
+        {
+            RefuseCommand("nothing to purge — this client owns no restore log");
+            return;
+        }
+
+        var removed = _restore.Purge();
+        Notice(
+            removed == 0
+                ? "restore log purged — there was nothing saved"
+                : $"restore log purged — {removed} window{(removed == 1 ? string.Empty : "s")} forgotten",
+            MessageSeverity.Info,
+            "⌃P");
+    }
+
     private void StartLogging()
     {
         if (_logRoot is null)
@@ -5003,7 +5397,18 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         return control;
     }
 
-    /// <summary>The content control for a window, created (with link routing) on first use.</summary>
+    /// <summary>
+    /// The content control for a window, created (with link routing) on first use — and filled from
+    /// that window's line buffer if one is already there.
+    /// <para>
+    /// The fill is what makes a control and its buffer the same thing at every moment rather than only
+    /// after the next re-feed. It matters because a buffer can now outlive every control for its window
+    /// and predate the first one: the restore log fills <see cref="_lines"/> for a window the saved
+    /// workspace no longer holds, and the control only comes into being later, when a capture reopens
+    /// that spawn window. Without this the pane would open holding one line — the one that reopened it
+    /// — with its restored history sitting invisibly in the buffer behind it.
+    /// </para>
+    /// </summary>
     private MarkupControl PaneContentFor(string id, string title)
     {
         if (_panes.TryGetValue(id, out var existing))
@@ -5014,6 +5419,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         var control = new MarkupControl(new List<string>());
         control.LinkClicked += (_, e) => OnLinkClicked(id, e.Url);
         _panes[id] = control;
+
+        if (_lines.TryGetValue(id, out var buffer) && buffer.Count > 0)
+        {
+            FeedRange(control, buffer, 0, buffer.Count);
+        }
+
         return control;
     }
 
@@ -5363,8 +5774,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             }
 
             return OnSurface(
-                _moveMode && _moveLetters.TryGetValue(pane.Id, out var letter)
-                    ? BuildMovePane(pane, letter)
+                _moveMode && _moveOrdinals.TryGetValue(pane.Id, out var ordinal)
+                    ? BuildMovePane(pane, ordinal)
                     : BuildPaneTabs(pane),
                 pane.Id);
         }
@@ -5906,6 +6317,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>Every pane's id in layout order, for the tests that walk a geometry end to end.</summary>
     internal IReadOnlyList<string> PaneIds => _workspace.Layout.Panes.Select(p => p.Id).ToArray();
 
+    /// <summary>
+    /// The zoomed pane's id, or null when nothing is zoomed. Internal because the ordinal movers carry a
+    /// zoom with them, and "the pane jumped to is the one rendered" is a claim about this field as much as
+    /// about the frame.
+    /// </summary>
+    internal string? ZoomedPaneId => _workspace.Layout.ZoomedPaneId;
+
     /// <summary>The pane hosting a window, or null when no pane does. Internal so a test can find the pane
     /// a split put a window in rather than assuming which side it landed on.</summary>
     internal string? PaneIdOf(string windowId) => _workspace.Layout.FindWindow(windowId)?.Id;
@@ -6336,7 +6754,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 var tabs = _workspace.Layout.FocusedPane.Tabs.Count;
                 if (_workspace.Layout.ReorderActiveTab(key == '<' ? -1 : 1))
                 {
-                    RefreshTabTitles();
+                    // The strip has to be rebuilt, not retitled. A reorder changes the *order* of the
+                    // pane's tabs, and `TabControl` has no way to move a page — `TabPages` is a copy and
+                    // the only mutators are Add/Insert — so `RefreshTabTitles`, which repaints each page
+                    // by its own `Tag`, left the strip exactly as it was. That is not a cosmetic lag: the
+                    // model then holds an order the screen does not, and the *refusal* is read against the
+                    // model. Reordering the middle of three tabs looked like nothing happened, and the
+                    // next press — genuinely at the end, in a strip still showing it in the middle — said
+                    // "the tab is already at that end of the strip", which is how it was reported.
+                    RebuildPaneArea();
                     break;
                 }
 
@@ -6441,32 +6867,36 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
-    /// Enters move mode (⌃B m): the active window lifts, every pane dims and shows a target letter
-    /// (a–j), and the status bar becomes the move prompt. a–j pick the destination, arrows toggle an
-    /// edge (split there), ⏎ commits, Esc cancels.
+    /// Enters move mode (⌃B m): the active window lifts, every pane dims and shows its own number, and
+    /// the status bar becomes the move prompt. 1–9 pick the destination, arrows toggle an edge (split
+    /// there), ⏎ commits, Esc cancels.
+    /// <para>
+    /// The digits are the pane ordinals, so the badge on a pane, the <c>pane N</c> the prompt names as
+    /// the target, the sidebar's hosting column and ⌥N are all one numbering.
+    /// </para>
     /// </summary>
     private void EnterMoveMode()
     {
         _moveWindowId = ActiveWindowId();
         _moveMode = true;
         _moveTargetPaneId = null;
-        _moveLetters.Clear();
-        var letter = 'a';
+        _moveOrdinals.Clear();
+        var ordinal = 1;
         foreach (var pane in _workspace.Layout.Panes)
         {
-            if (letter > 'j')
+            if (ordinal > CommandIds.PaneJumpDigits)
             {
                 break;
             }
 
-            _moveLetters[pane.Id] = letter++;
+            _moveOrdinals[pane.Id] = ordinal++;
         }
 
         RebuildPaneArea();
         SetStatus(MovePromptMarkup(), displace: true);
     }
 
-    /// <summary>Handles a key while in move mode: pick pane (a–j), edge (arrows), commit (⏎), cancel (Esc).</summary>
+    /// <summary>Handles a key while in move mode: pick pane (1–9), edge (arrows), commit (⏎), cancel (Esc).</summary>
     private void HandleMoveKey(KeyPressedEventArgs e)
     {
         e.Handled = true;
@@ -6495,10 +6925,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return;
         }
 
-        if (ch is >= 'a' and <= 'j')
+        if (ch is >= '1' and <= '9')
         {
-            // Only retarget on a real match — an unmapped letter must not clear the current target.
-            var match = _moveLetters.FirstOrDefault(kv => kv.Value == ch);
+            // Only retarget on a real match — a digit past the last pane must not clear the current target.
+            var match = _moveOrdinals.FirstOrDefault(kv => kv.Value == ch - '0');
             if (match.Key is not null)
             {
                 _moveTargetPaneId = match.Key;
@@ -6531,7 +6961,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _moveWindowId = null;
         _moveTargetPaneId = null;
         _moveEdge = null;
-        _moveLetters.Clear();
+        _moveOrdinals.Clear();
         RebuildPaneArea();
         UpdateStatus();
     }
@@ -6541,7 +6971,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     {
         var name = _moveWindowId is { } id && _workspace.FindWindow(id) is { } w ? Escape(w.Title) : "window";
         return $"[#e5c07b]MOVE[/] [bold]{name}[/] [dim]→[/] [#00f5b7]{DropLabel(_moveTargetPaneId, _moveEdge)}[/]"
-            + "   [dim]a–j pane · ←↑↓→ edge · ⏎ commit · Esc cancel[/]";
+            + "   [dim]1–9 pane · ←↑↓→ edge · ⏎ commit · Esc cancel[/]";
     }
 
     /// <summary>Human-readable description of a pending drop, for the move prompt and drag preview.</summary>
@@ -6563,7 +6993,24 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         };
     }
 
-    /// <summary>The rail's friendly name for a pane ("main" for the first, "pane N" after it).</summary>
+    /// <summary>
+    /// The name every surface in this client gives a pane: <c>pane N</c>, counting
+    /// <see cref="WorkspaceLayout.Panes"/> — <b>creation order</b> — from one.
+    /// <para>
+    /// The number a pane wears is its position in that list, so it does not move while the pane is open
+    /// and it closes up behind a pane that goes away. Under the tree order this used to count in, a pane
+    /// created to the left of pane 2 made it pane 3 without the user having touched it, and ⌥2 quietly
+    /// went somewhere else.
+    /// </para>
+    /// <para>
+    /// It used to call the first pane <c>main</c> — the spelling the rail's hosting column abandoned
+    /// because <c>▪ main   main</c> put two meanings in one line, the <em>window</em> named main beside
+    /// the pane also called main. The move and drag overlays kept it, so the same pane was <c>pane 1</c>
+    /// in the sidebar and <c>main</c> under the cursor. That was survivable while nothing depended on the
+    /// number; ⌥1 is a chord that lands on the pane a label names, and two spellings of one pane is
+    /// exactly the mismatch that makes such a chord read as broken.
+    /// </para>
+    /// </summary>
     private string PaneLabel(string paneId)
     {
         var index = 0;
@@ -6571,7 +7018,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         {
             if (pane.Id == paneId)
             {
-                return index == 0 ? "main" : $"pane {index + 1}";
+                return $"pane {index + 1}";
             }
 
             index++;
@@ -6858,14 +7305,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _system.EnqueueOnUIThread(action);
     }
 
-    /// <summary>A pane rendered as a move-mode target: a big letter over the dimmed window list.</summary>
-    private IWindowControl BuildMovePane(PaneNode pane, char letter)
+    /// <summary>A pane rendered as a move-mode target: its own number over the dimmed window list.</summary>
+    private IWindowControl BuildMovePane(PaneNode pane, int ordinal)
     {
         var selected = pane.Id == _moveTargetPaneId;
         var color = selected ? "#00f5b7" : "#e5c07b";
         var lines = new List<string> { string.Empty, string.Empty };
         lines.Add($"     [bold {color}]▛▀▀▜[/]");
-        lines.Add($"     [bold {color}]▌ {char.ToUpperInvariant(letter)} ▐[/]");
+        lines.Add($"     [bold {color}]▌ {ordinal} ▐[/]");
         lines.Add($"     [bold {color}]▙▄▄▟[/]");
         lines.Add(string.Empty);
         if (selected)
@@ -6900,6 +7347,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // command line talks to and its drafts the ones in the bars. The keyboard stays where it was —
         // typing belongs to the armed command line, wherever the selection is.
         ActivateFocusedWindow();
+
+        // An existing zoom follows, exactly as it does for ⌥N: both are *ordinal* movers, and a zoomed
+        // workspace realises one pane, so cycling without this left the selection, the session the bar
+        // talks to and the caret on a pane that was not on screen. (The directional movers cannot have
+        // this: while one pane is realised there is no neighbour to ask for, and ⌃← refuses out loud.)
+        if (_workspace.Layout.CarryZoomToFocused())
+        {
+            RebuildPaneArea();
+        }
     }
 
     /// <summary>Closes the focused pane's active window (Ctrl+W). The main window can't be closed.</summary>

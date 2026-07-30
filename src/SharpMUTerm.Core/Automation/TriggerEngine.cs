@@ -6,6 +6,19 @@ namespace SharpMUTerm.Core.Automation;
 /// <summary>A script callback requested by a matched trigger, with its capture groups.</summary>
 public sealed record TriggerScriptInvocation(string Callback, Match Match);
 
+/// <summary>
+/// One line's route to a spawn window: the window's resolved name, and the pattern of the rule that
+/// sent it there.
+/// <para>
+/// The pattern rides along because the destination is no longer enough to identify the rule. A route
+/// of <c>Channel $1</c> resolves to <c>Channel Public</c>, <c>Channel Newbie</c> and so on, so a
+/// consumer that wanted to know "which rule feeds this pane" and looked the rule up by comparing its
+/// <see cref="TriggerActions.SpawnTarget"/> to the window's name would find nothing for every dynamic
+/// pane. Carrying it costs one reference and removes the lookup.
+/// </para>
+/// </summary>
+public sealed record SpawnRoute(string Target, string Pattern);
+
 /// <summary>The outcome of running the trigger engine over one output line.</summary>
 public sealed class TriggerResult
 {
@@ -13,7 +26,7 @@ public sealed class TriggerResult
         StyledLine line,
         bool suppress,
         IReadOnlyList<string> responses,
-        IReadOnlyList<string> spawnTargets,
+        IReadOnlyList<SpawnRoute> spawnTargets,
         IReadOnlyList<TriggerScriptInvocation> scriptInvocations,
         IReadOnlyList<Trigger> matched)
     {
@@ -34,8 +47,8 @@ public sealed class TriggerResult
     /// <summary>Commands to send back to the server, in order.</summary>
     public IReadOnlyList<string> Responses { get; }
 
-    /// <summary>Named spawn windows this line should be routed to.</summary>
-    public IReadOnlyList<string> SpawnTargets { get; }
+    /// <summary>The spawn windows this line should be routed to, with the rule that routed it.</summary>
+    public IReadOnlyList<SpawnRoute> SpawnTargets { get; }
 
     /// <summary>Script callbacks to invoke, with their match data.</summary>
     public IReadOnlyList<TriggerScriptInvocation> ScriptInvocations { get; }
@@ -213,7 +226,7 @@ public sealed class TriggerEngine
         var current = line;
         var suppress = false;
         List<string>? responses = null;
-        List<string>? spawns = null;
+        List<SpawnRoute>? spawns = null;
         List<TriggerScriptInvocation>? scripts = null;
         List<Trigger>? matched = null;
 
@@ -266,9 +279,10 @@ public sealed class TriggerEngine
                 (responses ??= new List<string>()).Add(match.Result(actions.SendResponse));
             }
 
-            if (!string.IsNullOrEmpty(actions.SpawnTarget))
+            if (!string.IsNullOrEmpty(actions.SpawnTarget) &&
+                ResolveSpawnTarget(actions.SpawnTarget, match) is { } target)
             {
-                (spawns ??= new List<string>()).Add(actions.SpawnTarget);
+                (spawns ??= new List<SpawnRoute>()).Add(new SpawnRoute(target, trigger.Pattern));
             }
 
             if (!string.IsNullOrEmpty(actions.ScriptCallback))
@@ -299,10 +313,82 @@ public sealed class TriggerEngine
             current,
             suppress,
             (IReadOnlyList<string>?)responses ?? Array.Empty<string>(),
-            (IReadOnlyList<string>?)spawns ?? Array.Empty<string>(),
+            (IReadOnlyList<SpawnRoute>?)spawns ?? Array.Empty<SpawnRoute>(),
             (IReadOnlyList<TriggerScriptInvocation>?)scripts ?? Array.Empty<TriggerScriptInvocation>(),
             (IReadOnlyList<Trigger>?)matched ?? Array.Empty<Trigger>());
     }
+
+    /// <summary>
+    /// The window a matched rule routes to: its <see cref="TriggerActions.SpawnTarget"/> with capture
+    /// groups substituted, or null when what came out cannot be a window name.
+    /// <para>
+    /// Rewrite and respond have always expanded <c>$1</c>; the route did not, so one rule could only ever
+    /// feed one statically-named pane. <c>^&lt;(.+?)&gt;</c> routing to <c>Channel $1</c> is the case this
+    /// exists for: one rule, a pane per channel, each created on the channel's first line.
+    /// </para>
+    /// <para>
+    /// <b>Why this is guarded and the other two are not.</b> A rewrite's output is text on a line and a
+    /// response's output is a command the user's own rule chose to send. This one becomes a
+    /// <em>durable named object</em> — a window id, a tab title, a row in the sidebar — built out of
+    /// whatever the server put between the brackets. So a resolved name is trimmed and then refused if it
+    /// is empty, carries a control character (a name holding a stray escape or newline would corrupt every
+    /// surface that draws it), or runs past <see cref="MaxTargetLength"/>. Refusing means the line is not
+    /// routed; it still prints to the main window unless the rule also gags it, which is the quiet failure
+    /// rather than a pane named after a screenful of garbage.
+    /// </para>
+    /// <para>
+    /// There is deliberately <b>no ceiling on how many panes a rule may create</b>. A pattern that captures
+    /// more loosely than its author meant will open a pane per variant, and that is the author's to fix by
+    /// tightening the pattern — a client-imposed cap would silently drop the channel you cared about.
+    /// </para>
+    /// </summary>
+    private static string? ResolveSpawnTarget(string template, Match match)
+    {
+        string resolved;
+        try
+        {
+            resolved = match.Result(template);
+        }
+        catch (FormatException)
+        {
+            // A template Regex.Result cannot parse at all. The rule is malformed rather than the line, so
+            // routing it anywhere would be a guess.
+            return null;
+        }
+
+        resolved = resolved.Trim();
+
+        if (resolved.Length == 0 || resolved.Length > MaxTargetLength)
+        {
+            return null;
+        }
+
+        for (var i = 0; i < resolved.Length; i++)
+        {
+            if (char.IsControl(resolved[i]))
+            {
+                return null;
+            }
+
+            // A group reference that survived expansion: Regex.Result leaves "$3" as the two characters
+            // "$3" when the pattern has no third group, rather than throwing, so without this a typo in
+            // the template opens a pane literally named "$3" and keeps feeding it. Refusing is the honest
+            // reading — the rule asked for something the pattern cannot give it.
+            if (resolved[i] == '$' && i + 1 < resolved.Length && char.IsAsciiDigit(resolved[i + 1]))
+            {
+                return null;
+            }
+        }
+
+        return resolved;
+    }
+
+    /// <summary>
+    /// How long a resolved window name may be. A tab strip and the sidebar both draw it, and a capture is
+    /// only bounded by what the server sent — this is the point past which a "name" is really a line of
+    /// output that matched too much.
+    /// </summary>
+    public const int MaxTargetLength = 64;
 
     private static StyledLine ApplyHighlight(StyledLine line, Match match, TriggerActions actions)
     {

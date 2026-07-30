@@ -1,4 +1,5 @@
 using SharpMUTerm.Core.Automation;
+using SharpMUTerm.Core.Commands;
 
 namespace SharpMUTerm.Tui;
 
@@ -63,7 +64,40 @@ internal static class MacroKeys
     /// this list rather than alongside it, so a key the app takes is a key the keypad screen knows is
     /// taken — there is one list, not two that agree until someone edits one.
     /// </summary>
-    internal static IReadOnlyList<AppShortcut> AppShortcuts { get; } = new AppShortcut[]
+    internal static IReadOnlyList<AppShortcut> AppShortcuts { get; } = BuildAppShortcuts();
+
+    /// <summary>
+    /// The pane number a claimed <see cref="ConsoleKey"/> stands for, or null when the key is not one of
+    /// the nine digits ⌥1–⌥9 are registered on. The one place the mapping is written down, so the
+    /// registration, the F4 screen and the app's action cannot disagree about which digit is which pane.
+    /// </summary>
+    internal static int? PaneJumpNumber(ConsoleKey key) =>
+        key >= ConsoleKey.D1 && key <= ConsoleKey.D0 + CommandIds.PaneJumpDigits
+            ? key - ConsoleKey.D0
+            : null;
+
+    /// <remarks>
+    /// The fixed claims are a local rather than a field: a static field initialiser runs in declaration
+    /// order, so a field read from this method would still be null when the property above calls it.
+    /// </remarks>
+    private static AppShortcut[] BuildAppShortcuts()
+    {
+        var claims = new List<AppShortcut>(Fixed());
+
+        // ⌥1–⌥9 — jump to a numbered pane. Generated rather than written out nine times so the digit, the
+        // pane number and the sentence F4 prints are one expression; and claimed *here*, in the list the
+        // app registers from, because the framework claims Alt+1–9 for its own top-level window selector
+        // and that handler is not gated on anything we can switch off (see SharpMUTermApp.JumpToPane).
+        // Every one of the nine is claimed, in range or not — an unclaimed digit would fall through to it.
+        for (var n = 1; n <= CommandIds.PaneJumpDigits; n++)
+        {
+            claims.Add(new AppShortcut(ConsoleModifiers.Alt, ConsoleKey.D0 + n, $"goes to pane {n}"));
+        }
+
+        return claims.ToArray();
+    }
+
+    private static AppShortcut[] Fixed() => new AppShortcut[]
     {
         new(ConsoleModifiers.Control, ConsoleKey.Q, "asks whether to quit"),
         new(ConsoleModifiers.Control, ConsoleKey.N, "picks the next window"),
@@ -206,9 +240,12 @@ internal static class MacroKeys
 
     /// <summary>
     /// What a letter or a digit is worth. Unmodified it is typing; with Ctrl it is a control byte, which
-    /// carries no Shift or Alt of its own and which four letters cannot produce at all because the
-    /// terminal spells those bytes Tab, Enter and Backspace; with Alt it is an ESC prefix, except for the
-    /// one letter the parser has already spent on its own SS3 introducer.
+    /// carries no Shift or Alt of its own, which four letters cannot produce at all because the terminal
+    /// spells those bytes Tab, Enter and Backspace, and which <em>no</em> digit produces usefully (see
+    /// <see cref="DigitBytes"/>); with Alt it is an ESC prefix, except for the one letter the parser has
+    /// already spent on its own SS3 introducer. Alt+digit is the one modifier the digit row does deliver,
+    /// which is why the pane-jump chords are on it — <see cref="AppShortcuts"/> then reports ⌥1–⌥9 as
+    /// taken through <see cref="Claimed"/>, and ⌥0 stays free for a macro.
     /// </summary>
     private static MacroKeyVerdict Chord(MacroKeyParts parts)
     {
@@ -224,9 +261,9 @@ internal static class MacroKeys
                 return Never("a Ctrl chord loses Shift");
             }
 
-            if (IsDigit(parts.Key))
+            if (DigitBytes.TryGetValue(parts.Key, out var digitSpelling))
             {
-                return Never("Ctrl+digit is dropped");
+                return Never($"the terminal sends {digitSpelling} instead");
             }
 
             return ControlBytes.TryGetValue(parts.Key, out var spelt)
@@ -238,6 +275,40 @@ internal static class MacroKeys
             ? Never("Alt+O is the terminal's own prefix")
             : new MacroKeyVerdict(MacroKeyDelivery.Fires);
     }
+
+    /// <summary>
+    /// What a terminal actually writes for <c>Ctrl</c>+each digit — the reason the pane-jump chord is
+    /// <c>Alt</c> and not <c>Ctrl</c>, which is what was asked for.
+    /// <para>
+    /// There is no Ctrl+digit encoding to speak of. The digit row has no control bytes of its own beyond
+    /// an accident of the ASCII table, so a terminal either sends the bare digit (1, 9, 0 — a chord the
+    /// app cannot even tell from typing) or a byte that already belongs to another key. Three of those are
+    /// keys this client cannot afford to lose: <c>Ctrl+3</c> is <c>Escape</c>, which is how every overlay
+    /// here is closed and half of the Alt+⏎ reassembly; <c>Ctrl+8</c> is <c>Backspace</c>; <c>Ctrl+2</c>
+    /// is NUL. Binding any of them would break the plain key rather than add a chord — the same trap
+    /// <see cref="ControlBytes"/> records for Ctrl+H/I/J/M.
+    /// </para>
+    /// <para>
+    /// Observed, not remembered: the bytes were read off a real pty by driving each chord at a raw-mode
+    /// reader with <c>kitten @ send-key</c> — <c>ESC</c>+digit for every Alt+digit, and this table for
+    /// Ctrl. A decode test could not have answered it, for the reason
+    /// <c>TerminalKeyArrivalTests</c> spells out: what the parser makes of a byte sequence is a smaller
+    /// claim than what the terminal sends.
+    /// </para>
+    /// </summary>
+    private static readonly Dictionary<string, string> DigitBytes = new(StringComparer.Ordinal)
+    {
+        ["0"] = "a bare 0",
+        ["1"] = "a bare 1",
+        ["2"] = "NUL",
+        ["3"] = "Escape",
+        ["4"] = "0x1C",
+        ["5"] = "0x1D",
+        ["6"] = "0x1E",
+        ["7"] = "0x1F",
+        ["8"] = "Backspace",
+        ["9"] = "a bare 9",
+    };
 
     /// <summary>The letters whose control byte the terminal has already spent on another key.</summary>
     private static readonly Dictionary<string, string> ControlBytes = new(StringComparer.Ordinal)

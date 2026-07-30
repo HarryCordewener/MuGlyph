@@ -175,9 +175,7 @@ public class PersistenceTests
         try
         {
             var path = Path.Combine(directory, "observations.jsonl");
-            var data = new MsspSubnegotiationParser()
-                .Consume(MsspWire.Subnegotiation(MsspWire.RepresentativeReport("peer.example.net 4000")))
-                .Single();
+            var data = MsspWire.Report(MsspWire.RepresentativeReport("peer.example.net 4000"));
 
             using (var log = new ObservationLog(path))
             {
@@ -209,7 +207,6 @@ public class PersistenceTests
             await Assert.That(root.GetProperty("observedAt").GetDateTimeOffset()).IsEqualTo(Now);
             await Assert.That(root.GetProperty("host").GetString()).IsEqualTo("a.example.org");
             await Assert.That(root.GetProperty("players").GetInt32()).IsEqualTo(17);
-            await Assert.That(root.GetProperty("source").GetString()).IsEqualTo("Wire");
 
             // Arrays survive to the file, which is the whole reason the model holds lists.
             var ports = root.GetProperty("variables").GetProperty("PORT").EnumerateArray()
@@ -311,9 +308,7 @@ public class PersistenceTests
     [Test]
     public async Task TheReportSaysWhatHappenedAndWhy()
     {
-        var data = new MsspSubnegotiationParser()
-            .Consume(MsspWire.Subnegotiation(MsspWire.RepresentativeReport("peer.example.net 4000")))
-            .Single();
+        var data = MsspWire.Report(MsspWire.RepresentativeReport("peer.example.net 4000"));
 
         var summary = new CrawlSummary
         {
@@ -370,8 +365,7 @@ public class PersistenceTests
     {
         // Every string in that table came off the wire from a stranger. A MUD called "Pipe|Dream" must
         // not be able to add a column to somebody's report.
-        var data = new MsspSubnegotiationParser()
-            .Consume(MsspWire.Subnegotiation(("NAME", ["Pipe|Dream\nSecond line"]))).Single();
+        var data = MsspWire.Report(("NAME", ["Pipe|Dream\nSecond line"]));
 
         var summary = new CrawlSummary
         {

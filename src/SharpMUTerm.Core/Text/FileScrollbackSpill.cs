@@ -919,41 +919,4 @@ public sealed class FileScrollbackSpill : IScrollbackSpill
         /// <summary>Logical length in bytes, including anything still staged in the write buffer.</summary>
         public long Length { get; set; }
     }
-
-    /// <summary>
-    /// CRC-32 (IEEE 802.3, reflected) over a record's payload. Hand-rolled rather than taking a
-    /// dependency on <c>System.IO.Hashing</c> for twenty lines of table lookup.
-    /// </summary>
-    private static class Crc32
-    {
-        private static readonly uint[] Table = BuildTable();
-
-        public static uint Compute(ReadOnlySpan<byte> data)
-        {
-            var crc = 0xFFFFFFFFu;
-            foreach (var b in data)
-            {
-                crc = Table[(crc ^ b) & 0xFF] ^ (crc >> 8);
-            }
-
-            return crc ^ 0xFFFFFFFFu;
-        }
-
-        private static uint[] BuildTable()
-        {
-            var table = new uint[256];
-            for (var i = 0u; i < 256u; i++)
-            {
-                var value = i;
-                for (var bit = 0; bit < 8; bit++)
-                {
-                    value = (value & 1) != 0 ? 0xEDB88320u ^ (value >> 1) : value >> 1;
-                }
-
-                table[i] = value;
-            }
-
-            return table;
-        }
-    }
 }

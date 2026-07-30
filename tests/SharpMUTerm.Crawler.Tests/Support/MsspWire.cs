@@ -1,4 +1,5 @@
 using System.Text;
+using SharpMUTerm.Core.Telnet.Mssp;
 
 namespace SharpMUTerm.Crawler.Tests.Support;
 
@@ -43,6 +44,16 @@ internal static class MsspWire
         return [.. bytes];
     }
 
+    /// <summary>
+    /// The same entries as an <see cref="MsspData"/>, without a socket. For the tests whose subject is
+    /// what the crawler <em>does</em> with a report — scheduling, referral following, persistence —
+    /// rather than how the report was read. Reading it is the telnet layer's job and is pinned, once,
+    /// by <c>MsspParsingTests</c> driving a real session.
+    /// </summary>
+    public static MsspData Report(params (string Variable, string[] Values)[] entries) =>
+        MsspData.From(entries.Select(entry =>
+            new KeyValuePair<string, IReadOnlyList<string>>(entry.Variable, entry.Values)));
+
     /// <summary>A server offering MSSP, then answering the client's <c>DO</c> with a report.</summary>
     public static byte[] Offer() => [Iac, Will, Mssp];
 
@@ -53,8 +64,7 @@ internal static class MsspWire
         ("PLAYERS", ["17"]),
         ("UPTIME", ["1735689600"]),
 
-        // Array notation, most important last — the case the telnet library concatenates into one
-        // meaningless integer.
+        // Array notation, most important last.
         ("PORT", ["80", "23", "4201"]),
         ("HOSTNAME", ["corvid.example.org"]),
         ("CODEBASE", ["PennMUSH", "SharpMUSH 1.0"]),
@@ -68,12 +78,12 @@ internal static class MsspWire
         // The underscore spelling the specification says clients and crawlers may substitute.
         ("MINIMUM_AGE", ["13"]),
 
-        // Booleans, which the library's model cannot bind from their string form.
+        // Booleans, in the 1/0 spelling the specification uses.
         ("ANSI", ["1"]),
         ("UTF-8", ["1"]),
         ("PAY TO PLAY", ["0"]),
 
-        // An official variable the library's model does not have at all.
+        // An official variable with no strongly typed property on the library's own model.
         ("CHARSET", ["ASCII", "UTF-8"]),
 
         // Unofficial but widely deployed.

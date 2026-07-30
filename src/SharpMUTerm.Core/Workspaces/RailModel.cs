@@ -51,8 +51,27 @@ public sealed record RailRow(
 /// <summary>A world as projected into the rail: its identity, accent, and characters.</summary>
 public sealed record RailWorld(string Name, string Host, int Port, TerminalColor Accent, IReadOnlyList<RailCharacter> Characters);
 
-/// <summary>A character in the rail: connection/active state, unread total, and its windows.</summary>
-public sealed record RailCharacter(string Name, string SessionKey, bool Connected, bool Active, int Unread, IReadOnlyList<RailWindow> Windows);
+/// <summary>
+/// A character in the rail: connection/active state, unread total, its windows, and the pane its
+/// session lives in.
+/// <para>
+/// <b><paramref name="Pane"/> is what makes the pane numbering visible across characters.</b> Only the
+/// <em>active</em> character's windows are listed (see <see cref="RailModel.Build"/>), so before this
+/// field a reader looking at character A could see that <c>pane 3</c> existed only if one of A's own
+/// windows happened to be in it — B's pane was on the screen, numbered, and reachable with ⌥3, and
+/// nothing anywhere said so. The number is useless if it cannot be read off the sidebar, and the whole
+/// point of ⌥N being global is that it switches character. Null when the workspace has a single pane
+/// (one pane is no information) or the character has no window open.
+/// </para>
+/// </summary>
+public sealed record RailCharacter(
+    string Name,
+    string SessionKey,
+    bool Connected,
+    bool Active,
+    int Unread,
+    IReadOnlyList<RailWindow> Windows,
+    string? Pane = null);
 
 /// <summary>
 /// A window in the rail: its title, the workspace id a click activates, hosting pane (or closed),
@@ -68,6 +87,15 @@ public sealed record RailWindow(string Title, string Id, string? Pane, int Unrea
 /// character only — its windows with unread/unsent/pane detail. A world with no characters prints
 /// "no characters". (A world's <c>host:port</c> is deliberately <em>not</em> a row; the rail shows
 /// name and characters only, which <c>RailModelTests</c> pins.) Pure and unit-testable.
+/// <para>
+/// <b>Every</b> character row carries its own hosting pane (<see cref="RailCharacter.Pane"/>), active or
+/// not, and that is the one thing here that is not scoped to the active character. It has to be: the
+/// pane numbering is a property of the workspace rather than of whoever is in front, ⌥3 is a character
+/// switch as much as a pane switch, and a number that is only legible once you are already there is a
+/// number nobody presses. Listing the other characters' <em>windows</em> would have said the same thing
+/// and cost the rail its one unambiguous reading — a window row means "this is yours", which is why the
+/// owner filter exists.
+/// </para>
 /// <para>
 /// Every row that names somewhere you can go also carries the <see cref="RailRow.Target"/> a click
 /// dispatches. The ids are the shell's own (<see cref="CommandIds"/>), so the rail is a second door
@@ -113,6 +141,7 @@ public static class RailModel
                     Active: character.Active,
                     Connected: character.Connected,
                     Unread: character.Unread,
+                    Pane: character.Pane,
                     Target: CommandIds.Character(character.SessionKey)));
 
                 if (!character.Active)

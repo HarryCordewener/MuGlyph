@@ -49,7 +49,7 @@ fallbacks) for inline images/maps.
   paged off an ephemeral per-session cache under `$XDG_CACHE_HOME`; absolute line indices, ranged
   reads capped at `MaxRangeLines`, and any disk failure degrades to memory-only. Emphatically **not**
   the session log — that stays `PlainTextLogSink`/`HtmlLogSink`, opt-in and kept),
-  `TcpTransport` (TLS + IPv6), `TelnetSession` (wraps TelnetNegotiationCore **2.6.0**),
+  `TcpTransport` (TLS + IPv6), `TelnetSession` (wraps TelnetNegotiationCore **2.6.5**),
   trigger/alias/macro engines + `IntervalScheduler`, plain-text + HTML logging, versioned JSON
   config (worlds → characters + shared trigger sets, with migration),
   `Theme`/`ThemeLibrary`, and `WorldSession`/`SessionManager` orchestration.
@@ -86,6 +86,23 @@ fallbacks) for inline images/maps.
   single-line dividers) and the **connection rail** now rendered as well — and **clickable**: a world,
   character or window row switches to it, dispatched through the rail control's *own* `LinkClicked`
   (never the output panes' handler, so a world cannot drive the client's UI from the wire).
+- **Panes come back after a restart, and the log that does it is keyed by *window*** (`RestoreLog`,
+  Core; `restore/` beside `config.json`, one `0600` file per window, 500 lines each). This is the third
+  thing in the repository that puts session text on disk and it is none of the other two: the spill is
+  an ephemeral cache purged next launch, the transcripts are opt-in files a user keeps, and this is a
+  small bounded tail nothing but startup reads. **It cannot be built on `WorldSession.Scrollback`** — a
+  spawn window's lines never go there (`ProcessOutputLine` raises `SpawnLine`, and a gagging capture
+  rule keeps the line out of the transcript entirely), so a session-keyed restore refills the main
+  windows and leaves every channel pane empty, which is the exact failure it exists to remove. It is
+  therefore fed from the shell, at `OnLine`/`OnSpawnLine`, and **not** from `AppendWindowLine`: that
+  seam also carries the client's own chrome and the restore *replay*, so logging there would have each
+  launch re-record its own history. Payload is `StyledLineCodec`, not markup, so the game's colours and
+  a span's interaction survive and the current theme still renders them. Appends flush to the OS per
+  line (a crash loses nothing; there is deliberately no `fsync` per line), the bound is in **lines**
+  and never bytes, and space is reclaimed by compaction — a byte-range copy through an atomic rename.
+  Restored content is closed off by one `RestoreBarRenderer` row and the lines themselves are left
+  alone. Restoring 3,000 lines costs ~18 ms before the first frame. `restore:` is the third member of
+  the `save:`/`logRoot:` family — **null by default, so no test and no snapshot owns one**.
 - **A launch connects nothing unless it is told to** (`StartupConnections.Resolve`, Core). A host on the
   command line wins outright; otherwise it is every character with `ConnectAtStartup` (F5's `at start`),
   in configuration order; otherwise none, and the client says which of the two empty states it is in.
@@ -114,8 +131,8 @@ fallbacks) for inline images/maps.
   ```bash
   dotnet run -c Release --project tests/SharpMUTerm.Core.Tests </dev/null
   ```
-  There are five: Core, Graphics, Scripting, Web, Tui. Primary signal is
-  `dotnet build SharpMUTerm.slnx` plus all five green and warning-free.
+  There are six: Core, Graphics, Scripting, Web, Tui, Crawler. Primary signal is
+  `dotnet build SharpMUTerm.slnx` plus all six green and warning-free.
 - **Building against the local SharpConsoleUI clone surfaces 2 NuGet advisory warnings** for
   AngleSharp. They are the framework's, not ours; a build against the package has none.
 
@@ -270,6 +287,60 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   those windows accepts paste — add a focusable `IPasteTarget` there and both paths will.
 - **The framework's own `ExitKey` defaults to Ctrl+Q** and calls `RequestExit` with nothing in
   between. Ours won only because application shortcuts are tried first. It is set to `null`.
+- **The framework claims `Alt+1`–`Alt+9` too** — `InputCoordinator.HandleAltInput` selects among
+  top-level windows by index. It is the third framework default found outranking us, and the one with
+  the least warning: it is reached from `ProcessInput`'s fall-through for *any* unhandled Alt chord and,
+  unlike the move and resize handlers on the two lines above it, is **not** gated on
+  `IsMovable`/`IsResizable` — so `Movable(false)`, which switched off the ⌃X-swallowing move handler,
+  did nothing here. `⌥1`–`⌥9` are ours (`JumpToPane`, go to the numbered pane) and are claimed as
+  **application shortcuts**, which `InputCoordinator` tries before it offers a key to any window at all;
+  `PreviewKeyPressed` would also have won (`WindowEventDispatcher.ProcessInput` raises it first and
+  returns immediately when handled), one step later. **All nine are claimed, in range or not**: an
+  out-of-range ⌥7 reports and stops rather than falling through to a window selector that would do
+  something else. `⌥0` is deliberately left free — the framework ignores it too, so it stays bindable.
+- **Ctrl+digit is not a chord this terminal has, and that is why the pane jump is Alt.** Read off a
+  pty with `kitten @ send-key` at a raw-mode reader, the same way `Alt+Shift+arrow` was established:
+  every `Alt+digit` is `ESC` + the digit (one Alt chord out of `ProcessEscape`), while Ctrl+digit is
+  `1`→`0x31`, `2`→NUL, `3`→**`0x1B` (Escape)**, `4`–`7`→`0x1C`–`0x1F`, `8`→**`0x7F` (Backspace)**,
+  `9`→`0x39`, `0`→`0x30`. So three of them are keys the client cannot afford to bind over and three are
+  indistinguishable from typing — binding any breaks the plain key, exactly as with Ctrl+H/I/J/M.
+  Recorded per digit in `MacroKeys.DigitBytes`, which is what F4 prints.
+- **Panes are numbered one way, everywhere: `pane N` in `Layout.Panes` order, which is *creation*
+  order.** The rail's hosting column, the ⌃P `Go to pane N` entries, the move/drag overlays
+  (`PaneLabel`) and the ⌥N chord are four spellings of that one number. `PaneLabel` used to call the
+  first pane `main` — the spelling the rail abandoned because `▪ main   main` is two meanings in one
+  line — so the same pane read `pane 1` in the sidebar and `main` under the cursor. Harmless until a
+  *chord* had to land on the pane a label names; a key that disagrees with the label is worse than no key.
+  - **`Layout.Panes` is creation order; `LayoutNode.Panes()` is tree order, and they are different
+    things.** Tree order (left-to-right, then top-to-bottom) is geometry and is what `LayoutSolver`,
+    `PaneResize` and the renderer walk. It used to be the numbering too, and a number that is a function
+    of *where a pane is* moves when a pane is inserted before it: dropping a window on the left edge of
+    pane 2 made that pane into pane 3, so ⌥2 stopped meaning what it meant while the user was doing
+    something else. `PaneNode.Sequence` is a per-workspace counter assigned at creation, persisted in
+    `LayoutNodeState`, and never reused; a pane restored without one (a config written before the field)
+    is seeded from tree order, which is the numbering it was saved under.
+  - **The number is the *index* in `Layout.Panes`, never the `Sequence` itself.** Sequences have holes
+    after a close; the numbering may not, or ⌥2 is a silent no-op with panes 1 and 3 on the screen.
+    Closing pane 2 of three leaves 1 and 2 (`PaneNumberingTests`,
+    `PaneNumberingRailTests.ClosingAPaneCompactsTheNumberingOnTheChordAndInTheSidebar`).
+  - **⌃O cycles in that same order.** It read tree order, which agreed with the numbering back when the
+    numbering *was* tree order. The two ordinal movers have to count one sequence or three presses of
+    ⌃O from pane 1 don't land where ⌥4 does.
+- **The pane number is global, and the rail is where you read it.** ⌥N has always indexed the
+  workspace's one split tree rather than the active character's windows, so it has always been able to
+  reach another character's pane — that is what makes the nine chords a character switcher. But window
+  rows are drawn for the *active* character only (`BuildRailWindows`'s owner filter, which stays: a
+  window row under a character means that window is theirs), so the other panes' numbers were invisible
+  from anywhere you could use them. Every **character** row now carries the pane its session is in
+  (`CharacterPaneLabel` → `RailCharacter.Pane`), active or not — one column on a row that already
+  exists, in the same `pane N` vocabulary, costing no width at rest because a window row is indented
+  deeper and carries the pen field as well.
+- **The ordinal pane movers carry a zoom; the directional ones cannot.** A zoomed workspace realises
+  exactly one pane, so ⌃O or ⌥N moving the selection and leaving `ZoomedPaneId` behind puts the
+  selection, the session the bar talks to and the caret on a pane that is **not on the screen** — the
+  "attention on one pane, keystrokes to another" defect again. `WorkspaceLayout.CarryZoomToFocused`
+  re-points an existing zoom (it never starts or ends one) and both movers call it. ⌃←/→/↑/↓ do not and
+  must not: with one pane realised there is no neighbour to ask for, which is why they refuse out loud.
 - **`MarkupControl` does not scroll and does not bottom-anchor.** `PaintDOM` paints rows from index 0
   until the box runs out, with no offset of its own — so a control holding 100 lines in a 10-row box
   renders lines 1–10 for ever and everything appended lands off-screen. Scrolling lives in
@@ -326,6 +397,38 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   `FocusIndicationTests.TypingDoesNotMoveAnyPaneRectangle` are the pins — the latter is the typing
   counterpart of `MovingFocusDoesNotMoveAnyPaneRectangle`, and it has to read the rail's *widest* row,
   because in the demo scene the Chat row's unread badge coincidentally masked the pen's two cells.
+- **A tab title is *markup*, and that is what makes the new-activity tint free.** `TabControl.Rendering`
+  parses each label with `MarkupParser.Parse`, and every width it is measured by — the header paint, the
+  strip's desired width, and the click hit test that picks the tab and its `×` — is
+  `MarkupParser.StripLength`. So a `[#rrggbb]` tag on a tab costs **no cells** and moves no hit test.
+  `TabTitles` claimed the opposite for as long as it existed, and the claim had two costs: the unread
+  count went out untinted, and a window title was never escaped — a window called `[Chat]`, or a web view
+  titled from the page it loaded, had that eaten as a tag by the parser *and* by the hit test. Titles are
+  `MarkupText.Escape`d now. The tint covers the name and the count only; the `▌` stays outside it, because
+  focus and activity are independent facts and a marker that changed colour on an incoming line would be
+  reporting the wrong one. **The two cues are different channels on purpose** — focus is said entirely in
+  *backgrounds* from the theme's chrome family, activity in a *foreground* no plane is painted in.
+- **One unread count, one spelling: `UnreadBadge`.** The sidebar and the tab strip are two views of
+  `WorkspaceWindow.Unread`, and they had two formatters — the rail capped at `99+`, the tab printed the
+  raw integer, so a busy channel read `99+` in one place and `(4127)` in the other. Cap, field width and
+  tint colour (the app accent, previously a `#00f5b7` literal in `RailRenderer`) now live in one type.
+  **The tab strip deliberately does *not* get the rail's reserved-width treatment**, and the asymmetry is
+  real rather than an oversight: a rail row's width sizes the sidebar's grid column and the pane area is
+  what is left over, so there a badge that appears narrows every pane; a tab strip is a `TabControl`
+  arranged `Fill`+`Stretch` inside the pane it already fills, and the framework pads the header row out to
+  the pane's own edge, so a longer label only shifts the tabs beside it. Reserving three cells per tab
+  would cost width on every strip for ever to prevent a reflow this layout cannot produce. The cap is kept
+  for the *other* two reasons: the two surfaces must agree, and an unbounded count must not push a narrow
+  pane's later tabs off the end. `TabActivityIndicatorTests.ActivityMovesNoPaneRectangle` is the pin.
+- **The status row's scrollback distance was the same bug one field over, and it was live.** That segment
+  counts lines below the viewport — a number that grows *unbidden from the wire* while a reader sits in
+  their scrollback — and it was written out raw. Its own comment already warned that a wordier phrasing
+  had once wrapped the row and that "a status line that grows a row takes one off the workspace"; the
+  number was never guarded. At 80 columns the 99 → 100 step took the row from 80 cells to 81, it wrapped,
+  every pane lost a row, and per-pane NAWS re-announced the new size to every connected server. It is now
+  in a reserved field capped by `UnreadBadge`, the same as the rail's. **The lesson generalises: any cell
+  on the chrome whose width is a function of something arriving from the wire needs a reserved field, and
+  "it is only one digit" is exactly the size of every instance of this bug so far.**
 - **A rail window row is `what` then `where`, and neither column may wear the other's word.** A
   character's own session window reads `main` (`RailWindowLabel`); its title names the *connection*, which
   the row's own ancestors — its character, under its world — have already said. The hosting-pane column
@@ -447,23 +550,49 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
 
 ## Other dependency notes
 
-- **TelnetNegotiationCore 2.6.0** (repo owner is its author — extend it by PR rather than working
+- **TelnetNegotiationCore 2.6.5** (repo owner is its author — extend it by PR rather than working
   around it). Fluent builder API; negotiates MCCP/MSDP/MXP itself; ships the keepalive interpreter
   (`WithKeepAlive(TimeSpan?, …)`, default 30s, clamped to 1s–24h). `TelnetSession` sets the
   init-only `CallbackOnByteAsync` reflectively to see raw bytes including unterminated prompts — a
   first-class `OnByte` builder hook remains a good upstream PR. It handles the option handshake
   (TELOPT, GA, TTYPE/MTTS, EOR, NAWS, CHARSET, MSSP, GMCP) — **Pueblo and all ANSI/MXP/Pueblo
   payload _parsing_ stay our layer.**
+- **MSSP is read by the library, not by us — since 2.6.5, and that is the standing example of the
+  rule above.** 2.6.0's reader destroyed the protocol's own array notation inside the library:
+  `PORT "80" "23" "4201"` arrived as the integer `80234201`, `REFERRAL` (array-only, and the whole
+  reason a crawler connects) arrived null, booleans failed to bind from `1`/`0`, `CHARSET` and every
+  invented name were dropped, `CRAWL_DELAY`/`MINIMUM_AGE` bound to nothing, and a variable with no
+  value wedged MSSP for the rest of the connection. We carried a byte-level `MsspSubnegotiationParser`
+  for exactly as long as that was true; the fix went upstream (PR #56) and the parser is **deleted**.
+  Do not re-add one. `MSSPConfig.Variables` is now an ordered name → value-**list** map,
+  `MsspData.From` projects it, and `MsspData` is a projection with **no parsing in it** — what it adds
+  is ours: `REFERRAL` as crawlable `MsspHost`s, `CRAWL DELAY` −1 as "no preference", ports validated
+  as ports. Two upstream defects remain open and are pinned by name in `MsspParsingTests`: MSSP fields
+  are decoded as **ASCII** rather than the negotiated charset (a non-ASCII `NAME` comes back as
+  question marks, one per byte), and an escaped `IAC IAC` inside a value **loses the literal byte**.
+  MSSP also has no payload size cap upstream — `SubnegotiationBuffer` guards GMCP, MSDP and CHARSET's
+  TTABLE, but not this — so a hostile server can make the crawler buffer as much as it likes.
 - **Text encoding is CHARSET's answer, not a setting** (`SessionEncoding`, `TelnetSession.CurrentEncoding`).
   A world's `encoding` is `auto` by default — state the app's `CharsetOrder`, decode with whatever RFC
   2066 settles on — and naming one is an *override*: still offered at the head of the order so a
   cooperative server agrees, but used regardless of what it says. Four things about this library will
   bite you, and all four already have:
   - **`TelnetInterpreter.CurrentEncoding` defaults to `Encoding.ASCII`**, and that default is not inert:
-    it is handed to `CallbackOnByteAsync`/`CallbackOnSubmitAsync` for every byte and used for GMCP/MSDP/
-    MSSP and everything we send. On a server that never negotiates CHARSET — most MU\* servers — every
+    it is handed to `CallbackOnByteAsync`/`CallbackOnSubmitAsync` for every byte and used for GMCP, MSDP
+    and everything we send. On a server that never negotiates CHARSET — most MU\* servers — every
     byte above 0x7F became `?`. `TelnetSession` seeds that property (reflectively, `internal set`, the
     same way `CharsetProtocol` itself writes it) with the head of the stated order.
+    **MSSP is the exception, and the seed does not reach it.** `MSSPProtocol.FlushField` decodes every
+    MSSP name and value with a hardcoded `Encoding.ASCII` (at 2.6.0 the same call was inlined at four
+    sites), so a game whose `NAME` is `Café Noir` reports `Caf? Noir` no matter what CHARSET settled on
+    and no matter what we seed. The bytes are gone by the time any callback sees them. This is arguably
+    *conformant* — RFC 2066 scopes CHARSET to text, not commands, and a subnegotiation is a command —
+    but it is lossy where it need not be, since `Encoding.Latin1` would round-trip all 256 byte values
+    and cost nothing. It is a good upstream PR, and until it lands, treat non-ASCII in an MSSP field as
+    unrecoverable. Two consequences worth knowing: the plaintext `MSSP-REQUEST` fallback does **not**
+    go through `MSSPProtocol`, so the same server read the two ways disagrees byte for byte; and 2.6.0
+    additionally `ToUpper()`s variable names with the *current culture*, which is a Turkish-I hazard in
+    the same lines.
   - **The encodings we state must be the platform provider's own instances** (`Encoding.UTF8`, *not*
     `new UTF8Encoding(false)`). `CharsetProtocol` ranks a server's offer by `IndexOf` over our list
     against encodings from `Encoding.GetEncodings()`, and `UTF8Encoding.Equals` compares the BOM flag —
@@ -496,7 +625,7 @@ Planned solution layout:
 | `SharpMUTerm.Graphics` | Kitty/Sixel encoders, capability probe, half-block fallback, `InlineImagePolicy` (no UI deps) |
 | `SharpMUTerm.Scripting` | MoonSharp host + scripting API |
 | `SharpMUTerm.Tui` | SharpConsoleUI application |
-| `*.Tests` (Core, Graphics, Scripting, Web, Tui) | TUnit |
+| `*.Tests` (Core, Graphics, Scripting, Web, Tui, Crawler) | TUnit |
 
 ## Milestone M1 — first task (delivered)
 
@@ -511,7 +640,7 @@ Kept for context; **M1 is done** (see *Repository state* above). As originally s
 
 ## Verification
 
-- Primary signal: `dotnet build SharpMUTerm.slnx` plus all five suites (see *Building and testing*).
+- Primary signal: `dotnet build SharpMUTerm.slnx` plus all six suites (see *Building and testing*).
   Keep coverage in `SharpMUTerm.Core.Tests` — ANSI/SGR parser, telnet round-trips, engines.
 - **The TUI is verifiable headlessly** via the snapshot pipeline above; a claim about layout or
   chrome should be backed by a rendered frame you actually looked at, not by reading the markup.

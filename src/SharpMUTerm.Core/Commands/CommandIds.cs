@@ -21,4 +21,31 @@ public static class CommandIds
 
     /// <summary>The id that activates the window named by <paramref name="windowId"/>.</summary>
     public static string Window(string windowId) => WindowPrefix + windowId;
+
+    /// <summary>Prefix of a "go to this numbered pane" id; the remainder is the pane's 1-based number.</summary>
+    public const string PanePrefix = "layout:pane-";
+
+    /// <summary>
+    /// How many panes have a keyboard chord of their own: ⌥1–⌥9. Nine rather than the five that were
+    /// asked for because nine is what the digit row spells with one modifier, what the terminal's Alt
+    /// encoding covers (<c>ESC</c> + a printable digit), and what the framework's own Alt+1–9 window
+    /// selector claims — leaving one of those digits unclaimed would hand it back to that selector.
+    /// Panes past the ninth are still reachable by ⌃O, the arrows and the rail; they simply have no
+    /// chord, and no surface claims otherwise.
+    /// </summary>
+    public const int PaneJumpDigits = 9;
+
+    /// <summary>
+    /// The id that focuses the <paramref name="number"/>th pane, counting the way every surface in this
+    /// client counts panes: <see cref="SharpMUTerm.Core.Workspaces.WorkspaceLayout.Panes"/> order, which is
+    /// <b>creation</b> order, which is the order the connection rail's <c>pane N</c> column numbers them
+    /// in. The chord (⌥N), the rail's label and this id are three spellings of one number.
+    /// <para>
+    /// It was tree order — left-to-right then top-to-bottom — and that renumbered panes that already
+    /// existed whenever one was inserted before them, so a number a user had learnt moved without being
+    /// touched. Creation order is stable while a pane is open, and closing one compacts the rest so the
+    /// range stays contiguous.
+    /// </para>
+    /// </summary>
+    public static string Pane(int number) => PanePrefix + number.ToString(System.Globalization.CultureInfo.InvariantCulture);
 }

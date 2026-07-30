@@ -374,10 +374,11 @@ claimed chord cancels a pending prefix before opening its own surface.
 ### Move mode (`⌃B m`) — the keyboard path for window placement
 
 Drag is an accelerator, not the only route. Move mode: the active window lifts, every pane dims
-and shows a large target letter (`a`–`j`), and the status bar becomes the prompt
-`MOVE #public → [b] split right · a–j pane · ←↑↓→ edge · ⏎ commit · Esc cancel`.
+and shows its own number (`1`–`9`, the same ordinal the sidebar labels it with and `⌥N` jumps to),
+and the status bar becomes the prompt
+`MOVE #public → split pane 2 right · 1–9 pane · ←↑↓→ edge · ⏎ commit · Esc cancel`.
 
-- `a`–`j` or Tab picks the destination pane
+- `1`–`9` or Tab picks the destination pane
 - arrows or `hjkl` toggle an edge (splits there instead of adding as a tab); pressing the same
   edge again clears it
 - ⏎ commits, Esc cancels

@@ -37,11 +37,10 @@ public class ProbeTests
         await Assert.That(result.Data).IsNotNull();
 
         var data = result.Data!;
-        await Assert.That(data.Source).IsEqualTo(MsspSource.Wire);
         await Assert.That(data.Name).IsEqualTo("Corvid Nest");
         await Assert.That(data.Players).IsEqualTo(17);
 
-        // The array-valued variables that the telnet library's own model destroys.
+        // The array-valued variables: the case a crawler exists for.
         await Assert.That(data.Ports).IsEquivalentTo(new[] { 80, 23, 4201 });
         await Assert.That(data.Referrals.Select(r => r.ToReferralString()))
             .IsEquivalentTo(new[] { "peer.example.net 4000", "2001:db8::5 4201" });
@@ -149,7 +148,7 @@ public class ProbeTests
     public async Task TheCrawlerNamesItselfWhenTheServerAsksWhatConnected()
     {
         // MTTS: the server sends IAC SB TTYPE SEND IAC SE and the client answers IAC SB TTYPE IS <name>.
-        // A crawler that did not answer with its own name would be logged as whatever the telnet library
+        // A crawler that did not answer with its own name would be logged as whatever the telnet layer
         // calls itself, which tells a server operator nothing.
         const byte ttype = 24;
         const byte send = 1;

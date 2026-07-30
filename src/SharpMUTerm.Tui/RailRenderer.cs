@@ -1,4 +1,3 @@
-using System.Globalization;
 using SharpConsoleUI.Parsing;
 using SharpMUTerm.Core.Text;
 using SharpMUTerm.Core.Workspaces;
@@ -119,12 +118,31 @@ internal static class RailRenderer
         return lines;
     }
 
+    /// <summary>
+    /// A character row: the active marker, the connected dot, the name, its unread total — and, in the
+    /// same right-hand column the window rows use, the pane its session is in.
+    /// <para>
+    /// That column is how the pane numbering is legible from anywhere. Window rows are drawn for the
+    /// active character only, so <c>pane 3</c> used to be visible only to whoever was already in it,
+    /// while ⌥3 was reaching it from every other character. It is drawn on the active character's row
+    /// too, deliberately: a column that appeared and vanished as you switched would be a third thing to
+    /// learn, and repeating "where this character is" above its window rows is redundant rather than
+    /// ambiguous — unlike <c>▪ main   main</c>, both columns here mean the same thing and say it in the
+    /// one vocabulary (<c>pane N</c>).
+    /// </para>
+    /// <para>
+    /// It costs the sidebar nothing at rest: a window row is indented one level deeper and carries the
+    /// pen field as well, so it is the wider row wherever one exists, and the model leaves
+    /// <see cref="RailRow.Pane"/> null on a single-pane workspace exactly as it does for windows.
+    /// </para>
+    /// </summary>
     private static string Character(RailRow row)
     {
         var marker = row.Active ? "[bold]▸[/]" : " ";
         var dot = row.Connected ? "●" : "○";
         var name = row.Active ? $"[bold]{Escape(row.Label)}[/]" : Escape(row.Label);
-        return $"{Indent(row)}{Link(row, $"{marker} [{Accent(row)}]{dot}[/] {name}{UnreadField(row.Unread)}")}";
+        var tail = row.Pane is { Length: > 0 } pane ? $" [dim]{Escape(pane)}[/]" : string.Empty;
+        return $"{Indent(row)}{Link(row, $"{marker} [{Accent(row)}]{dot}[/] {name}{UnreadField(row.Unread)}{tail}")}";
     }
 
     /// <summary>
@@ -142,11 +160,12 @@ internal static class RailRenderer
     /// </summary>
     private const int UnsentFieldWidth = 2;
 
-    /// <summary>Cells kept for an unread count, blank when there is none. See <see cref="UnreadField"/>.</summary>
-    private const int UnreadFieldWidth = 3;
-
-    /// <summary>The largest count drawn in full; above it the badge reads <c>99+</c> and stops growing.</summary>
-    private const int MaxUnread = 99;
+    /// <summary>
+    /// Cells kept for an unread count, blank when there is none. See <see cref="UnreadField"/>. It is
+    /// <see cref="UnreadBadge.FieldWidth"/> because the badge's own cap is what makes the field finite —
+    /// the two numbers are one fact and may not be written down twice.
+    /// </summary>
+    private const int UnreadFieldWidth = UnreadBadge.FieldWidth;
 
     /// <summary>The pen, or the same width in blanks. See <see cref="UnsentFieldWidth"/>.</summary>
     private static string Unsent(bool unsent) =>
@@ -157,16 +176,17 @@ internal static class RailRenderer
     /// the pen is (<see cref="UnsentFieldWidth"/>) and with more urgency: unread arrives <em>unbidden from
     /// the wire</em>, so an unreserved badge resizes the sidebar — and every connected server's idea of its
     /// terminal — on a line of output the reader did not ask for, and again at 9 → 10 when it takes a
-    /// second digit. The cap is what makes the field finite: a count past <see cref="MaxUnread"/> reads
-    /// <c>99+</c>, which is the same three cells and the same information at a glance.
+    /// second digit. The cap is what makes the field finite: a count past <see cref="UnreadBadge.Max"/>
+    /// reads <c>99+</c>, which is the same three cells and the same information at a glance.
+    /// <para>
+    /// Both the wording and the colour come from <see cref="UnreadBadge"/>, which the pane tab labels draw
+    /// from as well, so the sidebar and the strip cannot come to say different things about one count.
+    /// </para>
     /// </summary>
     private static string UnreadField(int unread) =>
         unread <= 0
             ? new string(' ', UnreadFieldWidth)
-            : $"[#00f5b7]{Badge(unread).PadLeft(UnreadFieldWidth)}[/]";
-
-    private static string Badge(int unread) =>
-        unread > MaxUnread ? $"{MaxUnread}+" : unread.ToString(CultureInfo.InvariantCulture);
+            : $"[{UnreadBadge.Tint}]{UnreadBadge.Format(unread).PadLeft(UnreadFieldWidth)}[/]";
 
     /// <summary>
     /// A window row: what the window is, then — when there is anything to say — where it is.
@@ -184,11 +204,12 @@ internal static class RailRenderer
         var name = Escape(row.Label);
         var where = row.Closed ? "closed" : row.Pane is { Length: > 0 } pane ? pane : null;
 
-        // Two spaces, not three. The reserved badge fields sit between the label and this column and are
-        // blank far more often than not, so they already hold the gap open; a third on top of them would
-        // be paid for in sidebar columns, which come out of the panes. Not one, though: a populated
-        // unread badge ends right here, and `2 pane 2` reads as one thing rather than two.
-        var tail = where is null ? string.Empty : $"  [dim]{Escape(where)}[/]";
+        // One space. The reserved badge fields sit between the label and this column and are blank far more
+        // often than not, so they already hold the gap open; anything on top of them is paid for in sidebar
+        // columns, which come out of the panes. Two used to be needed because the column said `pane 2` and a
+        // populated unread badge ending right here made `2 pane 2` read as one thing; the sigil in `⌥2`
+        // now does that work in a cell that carries meaning of its own.
+        var tail = where is null ? string.Empty : $" [dim]{Escape(where)}[/]";
         return $"{Indent(row)}{Link(row, $"[dim]▪[/] {name}{Unsent(row.Unsent)}{UnreadField(row.Unread)}{tail}")}";
     }
 

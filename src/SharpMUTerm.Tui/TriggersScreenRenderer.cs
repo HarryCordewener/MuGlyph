@@ -648,7 +648,10 @@ internal static class TriggersScreenRenderer
             "[dim]match pattern (regex)[/]",
             $"  {ScreenChrome.Field(Escape(trigger.Pattern), pattern)}",
             string.Empty,
-            Heading("route to", route),
+            // The caption is here as well as over the actions section because the route expands captures
+            // too: "Channel $1" against ^<(.+?)> is one rule feeding a pane per channel, and a reader who
+            // has only seen the caption below would have no reason to try it here.
+            Heading("route to", route, ScreenChrome.ReadOnly("· $1..$9 insert captures")),
 
             // The window is a name you type, not one of a fixed set — the spawn windows that exist
             // are defined by what routes to them, so a closed list could only ever re-use one. It is

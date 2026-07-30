@@ -117,6 +117,18 @@ public static class CommandCatalog
                 CommandGroup.Terminal, "Back to live output", "term:scroll-live", "⌃End"));
         }
 
+        // The restore log's one control that is not a settings field. It is listed unconditionally, and
+        // it is listed *here* rather than only on F9, because "delete what this client has written down
+        // about my session" is a thing a person wants to do now — after saying something they would
+        // rather was not on disk — and a purge you have to find in a settings screen is a purge that
+        // happens tomorrow. The per-character switch on F9 is the other half: this one is immediate and
+        // total, that one is a standing preference.
+        items.Add(new CommandItem(
+            CommandGroup.Terminal,
+            "Purge the restore log",
+            "term:restore-purge",
+            "deletes every pane's saved content"));
+
         // The client's own messages — the status-line notices that dismiss themselves — kept out of the
         // output window (and so out of the session log) and readable here instead.
         items.Add(new CommandItem(
@@ -160,6 +172,29 @@ public static class CommandCatalog
         items.Add(new CommandItem(CommandGroup.Layout, "Focus pane up", "layout:focus-up", "⌃↑"));
         items.Add(new CommandItem(CommandGroup.Layout, "Focus pane down", "layout:focus-down", "⌃↓"));
         items.Add(new CommandItem(CommandGroup.Layout, "Focus the next pane", "layout:cycle", "⌃O · ⌃B o"));
+
+        // Numbered pane jumps, one entry per pane that exists — the one group here that is *not* listed
+        // unconditionally, because "Go to pane 4" on a workspace with two panes names a place there is no
+        // way to make. The rail already numbers the panes the same way in its hosting column, so the entry
+        // and the label a user is reading off the sidebar are the same number; that is the whole point of
+        // deriving both from Panes order rather than spelling either out.
+        //
+        // Only the first nine carry a chord: ⌥0 is not claimed (it stays bindable as a macro, and the
+        // framework's own Alt+digit handler ignores it), so a tenth pane gets an entry with no subtitle
+        // rather than one naming a key that does something else. An entry with no chord is the honest
+        // shape for a place only the mouse, ⌃O and the arrows can reach.
+        var paneCount = workspace.Layout.Panes.Count;
+        if (paneCount > 1)
+        {
+            for (var n = 1; n <= paneCount; n++)
+            {
+                items.Add(new CommandItem(
+                    CommandGroup.Layout,
+                    $"Go to pane {n}",
+                    CommandIds.Pane(n),
+                    n <= CommandIds.PaneJumpDigits ? $"⌥{n}" : null));
+            }
+        }
 
         // Pane size, in the plain words the request used ("increase/decrease a pane's horizontal or
         // vertical character size") rather than in the chord's terms. Listed for the same reason the

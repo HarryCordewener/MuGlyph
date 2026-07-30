@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using SharpMUTerm.Core.Configuration;
+using SharpMUTerm.Core.Text;
 using SharpMUTerm.Graphics;
 using SharpConsoleUI.Drivers;
 
@@ -91,12 +92,27 @@ internal static class Program
             loadLogger.LogWarning("{Notice}", notice);
         }
 
+        // The panes' own memory between runs, beside the configuration whose LastSession says where each
+        // pane goes. Resolved here for the same reason logRoot is: only this code knows it is the live
+        // client, so only it hands over a directory to write in. It is created unconditionally even when
+        // the feature is off — constructing one touches no disk, and the ⌃P purge has to be able to
+        // clear what an earlier, enabled run left behind.
+        using var restore = new RestoreLog(
+            string.IsNullOrWhiteSpace(config.RestoreLog.Directory)
+                ? RestoreLog.DefaultRoot(ConfigurationStore.DefaultPath)
+                : config.RestoreLog.Directory!,
+            config.RestoreLog)
+        {
+            Logger = diagnostics.For("SharpMUTerm.RestoreLog"),
+        };
+
         var liveApp = new SharpMUTermApp(
             config,
             capabilities,
             diagnostics: diagnostics,
             save: saved => ConfigurationStore.Save(ConfigurationStore.DefaultPath, saved),
-            logRoot: logRoot);
+            logRoot: logRoot,
+            restore: restore);
         var exitCode = liveApp.Run(startup); // blocks on the SharpConsoleUI main loop until exit
 
         // Persist the workspace so the next launch resumes where this one left off.
@@ -251,6 +267,16 @@ internal static class Program
         usage.WriteLine("Focus:  Ctrl+Left/Right/Up/Down move between panes (Ctrl+Down at the bottom reaches the second");
         usage.WriteLine("        command line); Ctrl+O cycles them; Tab switches command lines. The pane you are on and");
         usage.WriteLine("        the line Enter sends from are both drawn lit, and the focused pane's tab is marked.");
+
+        // Alt, not Ctrl, and the page says why: Ctrl+digit is what a reader will try first (it is what was
+        // asked for) and it cannot work — no digit has a control byte of its own, so a terminal sends the
+        // bare digit, or one already spelt Escape or Backspace. Naming the working chord and the reason
+        // the obvious one is absent is the same honesty this page owes everywhere else.
+        usage.WriteLine("Panes:  Alt+1..Alt+9 go straight to a numbered pane and bring it forward — the numbers the");
+        usage.WriteLine("        sidebar shows beside each window ('pane 2', 'pane 3'...), counted left to right then");
+        usage.WriteLine("        top to bottom. It says so when there is no pane with that number. Ctrl+digit is not");
+        usage.WriteLine("        offered: no terminal sends a distinct Ctrl+digit — 3 and 8 arrive as Escape and");
+        usage.WriteLine("        Backspace, and 1, 9 and 0 as the bare digit.");
 
         // Alt+Shift+arrow is a chord this host does deliver — the parser reads both modifier bits out of
         // CSI 1;4 <final> — which is why it may be named here at all; see TerminalKeyArrivalTests. It is

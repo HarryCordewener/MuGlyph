@@ -139,8 +139,7 @@ public class BackoffTests
         var options = new CrawlOptions { RevisitInterval = TimeSpan.FromHours(6) };
         var (frontier, host) = Seeded(options);
 
-        var data = new MsspSubnegotiationParser()
-            .Consume(MsspWire.Subnegotiation(("CRAWL DELAY", ["23"]))).Single();
+        var data = MsspWire.Report(("CRAWL DELAY", ["23"]));
 
         frontier.Record(Result(host, CrawlOutcome.MsspReceived, data));
 
@@ -156,8 +155,7 @@ public class BackoffTests
         var options = new CrawlOptions { RevisitInterval = TimeSpan.FromHours(24) };
         var (frontier, host) = Seeded(options);
 
-        var data = new MsspSubnegotiationParser()
-            .Consume(MsspWire.Subnegotiation(("CRAWL DELAY", ["1"]))).Single();
+        var data = MsspWire.Report(("CRAWL DELAY", ["1"]));
 
         frontier.Record(Result(host, CrawlOutcome.MsspReceived, data));
 

@@ -48,6 +48,54 @@ public class CommandCatalogTests
         await Assert.That(loggingOn.Any(c => c.Title == "Resume scrollback")).IsTrue();
     }
 
+    /// <summary>
+    /// The numbered pane entries: one per pane that exists, in <c>Panes</c> order (which is the order the
+    /// shell's sidebar numbers them in), and only when there is more than one pane. The first nine carry
+    /// their chord; a tenth pane has none, and an entry naming a key that does something else would be
+    /// worse than a bare one.
+    /// </summary>
+    [Test]
+    public async Task NumberedPaneEntries_AppearOnlyOnASplit_AndOnlyTheFirstNineCarryAChord()
+    {
+        var one = CommandCatalog.Build(new Workspace(), Characters, null, new CommandContext());
+        await Assert.That(one.Any(c => c.Id.StartsWith(CommandIds.PanePrefix, StringComparison.Ordinal)))
+            .IsFalse();
+
+        var ws = new Workspace();
+        for (var i = 0; i < 10; i++)
+        {
+            ws.RouteSpawn($"w{i}");
+        }
+
+        // Ten panes. A split moves the focused pane's *other* tabs into the new one and leaves focus
+        // where it was, so the pane still holding a pile of tabs is the newest — focus that one to split
+        // again, or the second split has nothing to pull out.
+        while (ws.Layout.Panes.Count <= CommandIds.PaneJumpDigits)
+        {
+            ws.Layout.Focus(ws.Layout.Panes[^1].Id);
+            if (!ws.Layout.SplitFocused(SplitDirection.Row))
+            {
+                break;
+            }
+        }
+
+        var panes = ws.Layout.Panes.Count;
+        await Assert.That(panes).IsGreaterThan(CommandIds.PaneJumpDigits);
+
+        var entries = CommandCatalog.Build(ws, Characters, null, new CommandContext())
+            .Where(c => c.Id.StartsWith(CommandIds.PanePrefix, StringComparison.Ordinal))
+            .ToList();
+
+        await Assert.That(entries.Count).IsEqualTo(panes);
+        for (var n = 1; n <= panes; n++)
+        {
+            var entry = entries[n - 1];
+            await Assert.That(entry.Id).IsEqualTo(CommandIds.Pane(n));
+            await Assert.That(entry.Title).IsEqualTo($"Go to pane {n}");
+            await Assert.That(entry.Subtitle).IsEqualTo(n <= CommandIds.PaneJumpDigits ? $"⌥{n}" : null);
+        }
+    }
+
     [Test]
     public async Task Catalog_CoversEveryGroup()
     {
