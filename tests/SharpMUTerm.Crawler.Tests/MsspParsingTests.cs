@@ -299,29 +299,32 @@ public class MsspParsingTests
     }
 
     [Test]
-    public async Task ANonAsciiValueIsMangledBecauseTheLibraryDecodesMsspAsAscii()
+    public async Task ANonAsciiValueArrivesAsText()
     {
-        // DIVERGENCE from the parser this replaced, and an upstream defect rather than a decision:
-        // MSSPProtocol.FlushField decodes every field with Encoding.ASCII rather than the session's
-        // CurrentEncoding, so a MUD whose NAME, WEBSITE or CONTACT is not ASCII arrives as question
-        // marks — one per *byte*, so "Café" becomes "Caf??" under UTF-8. The parser deleted here read
-        // each field with whatever CHARSET had settled on.
-        //
-        // Reported upstream. When it is fixed this test fails, and the assertion below becomes
-        // "Café Noir" rather than being deleted.
+        // This used to pin the opposite: MSSPProtocol.FlushField decoded every field with
+        // Encoding.ASCII rather than the session's CurrentEncoding, so a MUD whose NAME, WEBSITE or
+        // CONTACT was not ASCII arrived as question marks - one per *byte*, so "Café" became "Caf??".
+        // Fixed upstream in TelnetNegotiationCore 2.7.0, which is what this now holds.
         var data = await Read(("NAME", ["Café Noir"]));
 
-        await Assert.That(data.Name).IsEqualTo("Caf?? Noir");
+        await Assert.That(data.Name).IsEqualTo("Café Noir");
     }
 
     [Test]
-    public async Task AnEscapedIacInsideAValueLosesTheLiteralByte()
+    public async Task AnEscapedIacInsideAValueIsNoLongerDropped()
     {
-        // DIVERGENCE, and the second upstream defect. IAC IAC inside a subnegotiation payload is an
-        // escaped 0xFF; the MSSP state machine transitions EscapingMSSPVal -> EvaluatingMSSPVal on IAC
-        // but registers no capture handler for that trigger, so the byte is dropped. The parser deleted
-        // here kept it. MSSP forbids IAC inside a value, so this is only reachable on a malformed
-        // payload — which is why it is a one-byte loss and not a lost report.
+        // This used to pin the byte being lost: the MSSP state machine transitioned
+        // EscapingMSSPVal -> EvaluatingMSSPVal on IAC but registered no capture handler for that
+        // trigger, so "a IAC IAC b" arrived as "ab". Fixed upstream in TelnetNegotiationCore 2.7.0.
+        //
+        // It arrives as U+FFFD rather than as U+00FF, and that is correct rather than a second bug:
+        // the byte now survives the state machine and is then decoded with the session's encoding,
+        // and a lone 0xFF is not valid UTF-8. What matters here is the length - three characters,
+        // not two - because a dropped byte would silently shorten every value after it.
+        //
+        // MSSP forbids IAC inside a value ("variables and values cannot contain the MSSP_VAL,
+        // MSSP_VAR, IAC, or NUL byte"), so this is only reachable on a malformed payload. The point
+        // is that a malformed payload no longer corrupts the value quietly.
         var bytes = new List<byte> { MsspWire.Iac, MsspWire.Sb, MsspWire.Mssp, MsspWire.Var };
         bytes.AddRange(Encoding.ASCII.GetBytes("NAME"));
         bytes.Add(MsspWire.Val);
@@ -330,6 +333,9 @@ public class MsspParsingTests
         bytes.AddRange(Encoding.ASCII.GetBytes("b"));
         bytes.AddRange([MsspWire.Iac, MsspWire.Se]);
 
-        await Assert.That((await ReadRaw([.. bytes])).Name).IsEqualTo("ab");
+        var name = (await ReadRaw([.. bytes])).Name;
+
+        await Assert.That(name).IsEqualTo("a\uFFFDb");
+        await Assert.That(name!.Length).IsEqualTo(3).Because("the escaped byte must not vanish");
     }
 }

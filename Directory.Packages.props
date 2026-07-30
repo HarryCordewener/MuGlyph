@@ -10,7 +10,7 @@
     <PackageVersion Include="SharpConsoleUI" Version="2.5.14" />
 
     <!-- Telnet negotiation: TELOPT/NAWS/MTTS/EOR/CHARSET/MSSP/GMCP/MSDP/MCCP/MXP negotiation. -->
-    <PackageVersion Include="TelnetNegotiationCore" Version="2.6.5" />
+    <PackageVersion Include="TelnetNegotiationCore" Version="2.7.0" />
 
     <!-- Sandboxed Lua scripting (pure-managed, no native deps). -->
     <PackageVersion Include="MoonSharp" Version="2.0.0" />
