@@ -17,26 +17,4 @@ public static class StatusFormatter
 
         return string.IsNullOrEmpty(world) ? $"{character} › " : $"{character}@{world} › ";
     }
-
-    /// <summary>
-    /// The input gutter: the destination window (<c>→ main</c>), a <c>✎</c> list of other windows
-    /// holding drafts, and the current character count. Segments are omitted when empty.
-    /// </summary>
-    public static string InputGutter(string? destination, IReadOnlyList<string> draftWindows, int charCount)
-    {
-        ArgumentNullException.ThrowIfNull(draftWindows);
-        var parts = new List<string>();
-        if (!string.IsNullOrEmpty(destination))
-        {
-            parts.Add($"→ {destination}");
-        }
-
-        if (draftWindows.Count > 0)
-        {
-            parts.Add($"✎ {string.Join(' ', draftWindows)}");
-        }
-
-        parts.Add($"{charCount} chars");
-        return string.Join("  ", parts);
-    }
 }
