@@ -37,6 +37,9 @@ internal static class Program
                 config = DemoScene.Build();
             }
 
+            // No save action: a snapshot renders, it does not edit. The settings screens persist each
+            // committed change now, and a --view that drives keys into a field would otherwise write the
+            // demo worlds straight over the real configuration.
             var (width, height) = ParseSize(args);
             var app = new SharpMUTermApp(config, capabilities, new HeadlessConsoleDriver(width, height));
             var frame = app.RenderSnapshot(GetOption(args, "--view"));
@@ -63,7 +66,11 @@ internal static class Program
         // the World.Character-*.log transcripts). Never a console sink — this app owns the screen.
         using var diagnostics = ClientDiagnostics.Create(
             Path.Combine(Path.GetDirectoryName(ConfigurationStore.DefaultPath)!, "logs"));
-        var liveApp = new SharpMUTermApp(config, capabilities, diagnostics: diagnostics);
+        var liveApp = new SharpMUTermApp(
+            config,
+            capabilities,
+            diagnostics: diagnostics,
+            save: saved => ConfigurationStore.Save(ConfigurationStore.DefaultPath, saved));
         var exitCode = liveApp.Run(world); // blocks on the SharpConsoleUI main loop until exit
 
         // Persist the workspace so the next launch resumes where this one left off.

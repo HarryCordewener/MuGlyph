@@ -252,6 +252,9 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>Assembles pane drag-and-drop out of the driver's raw mouse frames (see PaneDragTracker).</summary>
     private readonly PaneDragTracker _paneDrag = new();
 
+    /// <summary>How the configuration is written back, or null for an app that owns no file.</summary>
+    private readonly Action<AppConfiguration>? _save;
+
     /// <summary>The pane the live mouse drag is hovering, and the edge it would split — null when idle.</summary>
     private string? _dragTargetPaneId;
     private Edge? _dragEdge;
@@ -274,14 +277,28 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// memory-only one, so constructing an app in a test or a snapshot leaves no file behind; the real
     /// entry point passes one with a rolling file.
     /// </param>
+    /// <param name="save">
+    /// How to write the configuration back, or null for an app that must never write one — which is the
+    /// default, and is what every test and every snapshot gets.
+    /// <para>
+    /// It is a parameter rather than a hardcoded <c>ConfigurationStore.Save(DefaultPath, …)</c> because
+    /// the settings screens now persist each change as it is committed. That makes "which file does this
+    /// app own" a question with real consequences: a <c>--demo-config</c> snapshot that drove a key into
+    /// a field would otherwise have written the demo worlds over the developer's own configuration, and
+    /// the suites drive those keys constantly. Only the entry point knows it loaded from disk, so only
+    /// the entry point supplies the way back to it.
+    /// </para>
+    /// </param>
     public SharpMUTermApp(
         AppConfiguration config,
         TerminalCapabilities capabilities,
         IConsoleDriver? driver = null,
         TimeProvider? time = null,
-        ClientDiagnostics? diagnostics = null)
+        ClientDiagnostics? diagnostics = null,
+        Action<AppConfiguration>? save = null)
     {
         _config = config;
+        _save = save;
         _capabilities = capabilities;
         _time = time ?? TimeProvider.System;
         _diagnostics = diagnostics ?? ClientDiagnostics.InMemory();
@@ -381,7 +398,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
         _palette = new CommandPalette(_system, BuildCatalog, () => _active?.SessionKey, id => DispatchCommand(id));
         _messageLog = new MessageLogOverlay(_system, _diagnostics);
-        _settings = new SettingsOverlay(_system, SaveConfiguration);
+        _settings = new SettingsOverlay(_system);
         _quit = new QuitOverlay(_system, QuitFactsNow, Quit);
 
         // Everything the history surface needs is read at the moment it opens, so it is always the armed
@@ -689,6 +706,16 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
             _input.SetAndNotify("say back in a moment — kettle's on");
             _shortcuts[(ConsoleModifiers.Control, ConsoleKey.Q)]();
+        }
+
+        // The deletion review, reached the only way a user can reach it: open F5, take the selected world
+        // out with Delete, then leave with Esc. Everything in the frame — the wording, the count of
+        // characters going with the world, which button ⏎ is standing on — is what the real keys produce.
+        if (string.Equals(view, "deletions", StringComparison.OrdinalIgnoreCase))
+        {
+            _settings.OpenForSnapshot(ConsoleKey.F5, WorldsScreen());
+            _settings.SimulateKey(Stroke('\0', ConsoleKey.Delete));
+            _settings.SimulateKey(Stroke('\0', ConsoleKey.Escape));
         }
 
         // Settings screens (composed-control or markup — SettingsView hands back a control factory
@@ -2204,18 +2231,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         var bars = (_input.Buffer.IsEmpty ? 0 : 1) + (_second.Visible && !_second.Buffer.IsEmpty ? 1 : 0);
         var drafts = holding.Count(w => w.Id != activeId) + bars;
 
-        // A screen with nothing typed into it costs nothing to close, so the edit count travels with the
-        // title and QuitPrompt drops the line when it is zero.
-        var screen = _settings.OpenKey is { } key
-            ? SettingsScreens().FirstOrDefault(s => s.Key == key).Title
-            : null;
-
-        return new QuitFacts(
-            ConnectedWorlds(),
-            drafts,
-            holding.Select(w => w.Title).ToList(),
-            screen,
-            _settings.PendingEdits);
+        // An open settings screen is deliberately not among the facts. It used to contribute "F5 is open
+        // — 3 unsaved edits", which was true while closing a screen could throw its edits away; now every
+        // committed value is already written to disk when it is committed, so the count is always zero and a
+        // line that could never appear is a line to delete rather than to leave hanging.
+        return new QuitFacts(ConnectedWorlds(), drafts, holding.Select(w => w.Title).ToList());
     }
 
     /// <summary>
@@ -2236,20 +2256,31 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 .ToList();
 
     /// <summary>
-    /// Persists the configuration the settings screens edit — the ⏎ Save action. The workspace layout
-    /// is captured alongside it so a save never rolls back the resumed session; a failed write is
-    /// swallowed for the same reason startup's is (the config is a convenience, not the session).
+    /// Persists the configuration the settings screens edit. It runs after <em>every</em> change a screen
+    /// commits, not on the way out of one: see <see cref="ScreenEdits"/> for why that is where saving
+    /// belongs now. The workspace layout is captured alongside it so a save never rolls back the resumed
+    /// session; a failed write is swallowed for the same reason startup's is (the config is a
+    /// convenience, not the session).
+    /// <para>
+    /// An app with no <c>save</c> writes nothing at all — see the constructor. The live bars are still
+    /// re-synced, because that is the change taking effect and not a record of it.
+    /// </para>
     /// </summary>
     private void SaveConfiguration()
     {
-        // F8 edits the live InputSettings, so a saved height applies to the bars on the way out of the
-        // screen rather than at the next launch.
+        // F8 edits the live InputSettings, so a committed height applies to the bars immediately rather
+        // than at the next launch.
         SyncInputBars();
+
+        if (_save is null)
+        {
+            return;
+        }
 
         try
         {
             _config.LastSession = CaptureSession();
-            ConfigurationStore.Save(ConfigurationStore.DefaultPath, _config);
+            _save(_config);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
         {
@@ -2352,7 +2383,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _config.TriggerSets,
             selection.SelectionIn(WorldsScreenRenderer.WorldsPane),
             selection.SelectionIn(WorldsScreenRenderer.CharactersPane),
-            selection.SelectionIn(WorldsScreenRenderer.TriggerSetsPane)));
+            selection.SelectionIn(WorldsScreenRenderer.TriggerSetsPane)),
+            SaveConfiguration);
         session.Selection.Seed(WorldsScreenRenderer.WorldsPane, ActiveWorldIndex());
         session.Selection.Seed(WorldsScreenRenderer.CharactersPane, ActiveCharacterIndex());
         if (onCharacters)
@@ -2381,7 +2413,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private ScreenBinding TriggersScreen()
     {
         var session = new SettingsSession(selection =>
-            TriggersScreenRenderer.Model(_config.TriggerSets, selection.SelectionIn(0), SpawnTargets()));
+            TriggersScreenRenderer.Model(_config.TriggerSets, selection.SelectionIn(0), SpawnTargets()),
+            SaveConfiguration);
 
         return new ScreenBinding(session, () => TriggersScreenView.Build(
             _config.TriggerSets,
@@ -2396,7 +2429,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private ScreenBinding AliasesScreen()
     {
         var session = new SettingsSession(selection =>
-            AliasesScreenRenderer.Model(_config.TriggerSets, selection.SelectionIn(0)));
+            AliasesScreenRenderer.Model(_config.TriggerSets, selection.SelectionIn(0)),
+            SaveConfiguration);
 
         return new ScreenBinding(session, () => AliasesScreenView.Build(
             _config.TriggerSets,
@@ -2414,7 +2448,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private ScreenBinding KeypadScreen()
     {
         var session = new SettingsSession(selection =>
-            KeypadScreenRenderer.Model(Macros(), _config.TriggerSets, selection.SelectionIn(0)));
+            KeypadScreenRenderer.Model(Macros(), _config.TriggerSets, selection.SelectionIn(0)),
+            SaveConfiguration);
 
         return new ScreenBinding(session, () => KeypadScreenView.Build(
             Macros(),
@@ -2429,7 +2464,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private ScreenBinding TimersScreen()
     {
         var session = new SettingsSession(selection =>
-            TimersScreenRenderer.Model(_config.TriggerSets, selection.SelectionIn(0)));
+            TimersScreenRenderer.Model(_config.TriggerSets, selection.SelectionIn(0)),
+            SaveConfiguration);
 
         return new ScreenBinding(session, () => TimersScreenView.Build(
             _config.TriggerSets,
@@ -2454,7 +2490,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private ScreenBinding OptionsScreen(Func<OptionsScreenRenderer.OptionsScreen> screen)
     {
-        var session = new SettingsSession(_ => OptionsScreenRenderer.Model(screen()));
+        var session = new SettingsSession(_ => OptionsScreenRenderer.Model(screen()), SaveConfiguration);
         return new ScreenBinding(session, () => OptionsScreenView.Build(
             screen(), _system.DesktopDimensions.Width, session.Focus()));
     }
@@ -4131,6 +4167,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
     /// <summary>Feeds one key to the open settings screen, the way the <c>-edit</c> snapshot views do.</summary>
     internal void SimulateSettingsKey(ConsoleKeyInfo key) => _settings.SimulateKey(key);
+
+    /// <summary>Whether the closing deletion review is up.</summary>
+    internal bool DeletionReviewOpen => _settings.Review.IsOpen;
+
+    /// <summary>What that review is asking — the rendered markup, for a headless test to read.</summary>
+    internal IReadOnlyList<string> DeletionReviewLines => _settings.Review.Lines;
+
+    /// <summary>Feeds one key to it, for the reason <see cref="SimulateQuitKey"/> exists.</summary>
+    internal void SimulateReviewKey(ConsoleKeyInfo key) => _settings.Review.SimulateKey(key);
 
     /// <summary>Whether the ⌃R history surface is up.</summary>
     internal bool HistorySearchOpen => _historySearch.IsOpen;

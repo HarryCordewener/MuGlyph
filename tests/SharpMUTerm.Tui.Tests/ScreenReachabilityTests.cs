@@ -136,8 +136,9 @@ public class ScreenReachabilityTests
 
         session.Handle(Key(ConsoleKey.Tab));   // security
         session.Handle(Key(ConsoleKey.Tab));   // the characters pane
-        session.Handle(Key(ConsoleKey.End));   // its last row is [- remove]; [+ add character] is above
-        session.Handle(Key(ConsoleKey.UpArrow));
+        // Its last cursor stop is [⧉ duplicate]; [+ add character] is the one above. (It used to be
+        // the Del row, two above — that row is drawn but is no longer a stop.)
+        session.Handle(Key(ConsoleKey.End));
         session.Handle(Key(ConsoleKey.UpArrow));
 
         await Assert.That(session.Handle(Key(ConsoleKey.Enter))).IsEqualTo(ScreenAction.Redraw);

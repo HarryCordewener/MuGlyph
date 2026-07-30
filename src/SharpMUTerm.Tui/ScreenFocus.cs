@@ -1,5 +1,18 @@
 namespace SharpMUTerm.Tui;
 
+/// <summary>What ⏎ does on the row the cursor is on — the three things it can mean while navigating.</summary>
+internal enum ScreenEnter
+{
+    /// <summary>The row has nothing to open or run, so ⏎ leaves the screen, exactly as Esc does.</summary>
+    Close,
+
+    /// <summary>The row is a record of values; ⏎ opens the first of them.</summary>
+    Edit,
+
+    /// <summary>The row is a button; ⏎ runs it. Only the building ones are reachable.</summary>
+    Add,
+}
+
 /// <summary>
 /// What a renderer needs to know about the keyboard: which pane holds it, which row it is on, and —
 /// once ⏎ has opened one — the field edit in flight on that row. Renderers take this as an optional
@@ -10,7 +23,15 @@ namespace SharpMUTerm.Tui;
 /// <param name="Pane">The pane the keyboard is in, or -1 for "no keyboard".</param>
 /// <param name="Index">The row the cursor is on within that pane.</param>
 /// <param name="Edit">The open field edit on that row, or null when the screen is navigating.</param>
-internal readonly record struct ScreenFocus(int Pane, int Index, ScreenFieldEdit? Edit = null)
+/// <param name="Enter">
+/// What ⏎ would do on the row the cursor is on, so the action bar can name it instead of guessing. The
+/// footer used to say <c>[[⏎]] Save</c> on every row of every screen, which was wrong on most of them —
+/// ⏎ opens an editor on a world's row and runs the button on <c>[[+ world]]</c>. It is derived here
+/// rather than passed in per renderer for the reason the header's hints are: only the model knows what
+/// the row actually offers, and a claim written by hand drifts.
+/// </param>
+internal readonly record struct ScreenFocus(
+    int Pane, int Index, ScreenFieldEdit? Edit = null, ScreenEnter Enter = ScreenEnter.Close)
 {
     /// <summary>No keyboard on this screen — nothing is drawn as the cursor.</summary>
     internal static ScreenFocus None => new(-1, -1);

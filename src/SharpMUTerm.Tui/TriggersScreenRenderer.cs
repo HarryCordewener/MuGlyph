@@ -104,8 +104,6 @@ internal static class TriggersScreenRenderer
 
     internal const string DuplicateTriggerLabel = "⧉ duplicate";
 
-    internal const string RemoveTriggerLabel = "- del";
-
     /// <summary>
     /// What a brand-new rule is called and matches. The pattern is a placeholder rather than blank
     /// because <see cref="ScreenField.Pattern"/> refuses an empty regex, so a blank one could not be
@@ -378,7 +376,7 @@ internal static class TriggersScreenRenderer
             slot.Offset,
             source.Name)));
         rows.Add(ScreenRow.Of(ScreenButton.Remove(
-            RemoveTriggerLabel, slot.Items, slot.Index, slot.Offset, source.Name)));
+            slot.Items, slot.Index, slot.Offset, source.Name, () => $"trigger {source.Name}")));
 
         return rows;
     }

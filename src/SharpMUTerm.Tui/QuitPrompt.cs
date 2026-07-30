@@ -43,18 +43,20 @@ internal readonly record struct QuitDecision(QuitAction Action, QuitChoice Selec
 /// holds a line of its own, and a window counted once would hide it.
 /// </param>
 /// <param name="DraftWindows">The windows those drafts are sitting in, by title.</param>
-/// <param name="OpenScreen">The settings screen open over the workspace, or null when none is.</param>
-/// <param name="UnsavedEdits">How many edits that screen has made that were never saved.</param>
+/// <remarks>
+/// An open settings screen used to be a fact here, carrying how many edits it held that were never
+/// saved. It no longer is: a screen writes each change out as it is committed
+/// (<see cref="ScreenEdits"/>), so there is no such thing as an unsaved edit to warn about, and a
+/// consequence line that could never be reached is worse than one fact fewer.
+/// </remarks>
 internal readonly record struct QuitFacts(
     IReadOnlyList<string> ConnectedWorlds,
     int Drafts,
-    IReadOnlyList<string> DraftWindows,
-    string? OpenScreen,
-    int UnsavedEdits)
+    IReadOnlyList<string> DraftWindows)
 {
-    /// <summary>A client holding nothing: nothing connected, nothing typed, no screen open.</summary>
+    /// <summary>A client holding nothing: nothing connected and nothing typed.</summary>
     internal static QuitFacts Nothing { get; } =
-        new(Array.Empty<string>(), 0, Array.Empty<string>(), null, 0);
+        new(Array.Empty<string>(), 0, Array.Empty<string>());
 }
 
 /// <summary>
@@ -161,13 +163,6 @@ internal static class QuitPrompt
         {
             var where = facts.DraftWindows.Count > 0 ? $" — {Names(facts.DraftWindows)}" : string.Empty;
             lines.Add($"{facts.Drafts} unsent draft{Plural(facts.Drafts)}{where}");
-        }
-
-        // An open screen with nothing typed into it loses nothing, so it is not mentioned: a line that
-        // appeared whether or not there was anything to lose would be read past on the occasion it counts.
-        if (facts.OpenScreen is { Length: > 0 } screen && facts.UnsavedEdits > 0)
-        {
-            lines.Add($"{screen} is open — {facts.UnsavedEdits} unsaved edit{Plural(facts.UnsavedEdits)}");
         }
 
         return lines;

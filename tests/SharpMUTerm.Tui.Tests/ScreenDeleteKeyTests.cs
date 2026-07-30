@@ -136,7 +136,7 @@ public class ScreenDeleteKeyTests
 
         await Assert.That(session.Handle(Key(ConsoleKey.Delete))).IsEqualTo(ScreenAction.None);
         await Assert.That(sets[0].Triggers).Count().IsEqualTo(2);
-        await Assert.That(session.Edits.IsDirty).IsFalse();
+        await Assert.That(session.Edits.HasDeletions).IsFalse();
     }
 
     /// <summary>
@@ -165,7 +165,7 @@ public class ScreenDeleteKeyTests
 
         await Assert.That(session.Focus().Pane).IsEqualTo(WorldsScreenRenderer.SecurityPane);
         await Assert.That(session.Handle(Key(ConsoleKey.Delete))).IsEqualTo(ScreenAction.None);
-        await Assert.That(session.Edits.IsDirty).IsFalse();
+        await Assert.That(session.Edits.HasDeletions).IsFalse();
     }
 
     /// <summary>
@@ -260,8 +260,14 @@ public class ScreenDeleteKeyTests
     }
 
     /// <summary>
-    /// End still works and still doesn't re-anchor — Delete is the discoverable path to the common
-    /// case, not a replacement for reaching <c>[+ …]</c>, which has no key of its own.
+    /// End still reaches a pane's buttons without re-anchoring — that is what keeps <c>[⧉ duplicate]</c>
+    /// pointed at the rule the user chose — but it now stops at the last <em>building</em> button. Delete
+    /// is the only way to run a removal, so ⏎ at the end of the pane duplicates rather than deletes.
+    /// <para>
+    /// It used to land on <c>[- del]</c> (index 4: 2 rules + add + duplicate + del) and ⏎ there deleted
+    /// the rule. That was reachable only by walking the cursor over the whole list, which dragged the
+    /// selection to its last row — the bug.
+    /// </para>
     /// </summary>
     [Test]
     public async Task End_StillReachesAPanesButtonsWithoutMovingItsSelection()
@@ -273,10 +279,14 @@ public class ScreenDeleteKeyTests
         await Assert.That(session.Selection.SelectionIn(0)).IsEqualTo(0);
         session.Handle(Key(ConsoleKey.End));
 
-        await Assert.That(session.Focus().Index).IsEqualTo(4); // 2 rules + add + duplicate + del
+        await Assert.That(session.Focus().Index).IsEqualTo(3); // 2 rules + add + duplicate
         await Assert.That(session.Selection.SelectionIn(0)).IsEqualTo(0);
 
         session.Handle(Key(ConsoleKey.Enter));
-        await Assert.That(sets[0].Triggers.Select(t => t.Name)).IsEquivalentTo(new[] { "Spam" });
+
+        // The first rule duplicated — the row the selection never left — and nothing deleted.
+        await Assert.That(sets[0].Triggers.Select(t => t.Name))
+            .IsEquivalentTo(new[] { "Tell", "Spam", "Tell copy" });
+        await Assert.That(session.Edits.HasDeletions).IsFalse();
     }
 }

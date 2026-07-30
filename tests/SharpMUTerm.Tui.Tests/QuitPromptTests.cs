@@ -20,9 +20,7 @@ public class QuitPromptTests
     private static QuitFacts Busy() => new(
         new[] { "Aetherfall", "Grapevine" },
         2,
-        new[] { "main", "Chat" },
-        "Worlds & Characters",
-        3);
+        new[] { "main", "Chat" });
 
     // --- what a keystroke means ------------------------------------------------
 
@@ -151,20 +149,19 @@ public class QuitPromptTests
 
         await Assert.That(consequences[0]).IsEqualTo("2 worlds connected — Aetherfall, Grapevine");
         await Assert.That(consequences[1]).IsEqualTo("2 unsent drafts — main, Chat");
-        await Assert.That(consequences[2]).IsEqualTo("Worlds & Characters is open — 3 unsaved edits");
+        await Assert.That(consequences).Count().IsEqualTo(2);
     }
 
     /// <summary>One of each is singular. A prompt reading "1 worlds connected" is a prompt nobody proofread.</summary>
     [Test]
     public async Task OneOfEachReadsAsOne()
     {
-        var facts = new QuitFacts(new[] { "Aetherfall" }, 1, new[] { "main" }, "Input", 1);
+        var facts = new QuitFacts(new[] { "Aetherfall" }, 1, new[] { "main" });
 
         await Assert.That(QuitPrompt.Consequences(facts)).IsEquivalentTo(new[]
         {
             "1 world connected — Aetherfall",
             "1 unsent draft — main",
-            "Input is open — 1 unsaved edit",
         });
     }
 
@@ -180,15 +177,17 @@ public class QuitPromptTests
     }
 
     /// <summary>
-    /// An open screen holding no edits loses nothing by being closed, so it is not mentioned. A line that
-    /// appeared either way would be read past on the occasion it counts.
+    /// An open settings screen is no longer a consequence of quitting at all, in either direction. It
+    /// used to contribute "Timers is open — 2 unsaved edits", which was true only while closing a screen
+    /// could throw its edits away; a screen now writes each change out as it commits it
+    /// (<see cref="ScreenEdits"/>), so there is never an unsaved edit for the prompt to warn about and
+    /// the fact was removed rather than left permanently zero.
     /// </summary>
     [Test]
-    public async Task AnUneditedScreenIsNotMentioned()
+    public async Task AnOpenScreenIsNotAConsequence()
     {
-        var facts = QuitFacts.Nothing with { OpenScreen = "Timers", UnsavedEdits = 0 };
-
-        await Assert.That(QuitPrompt.Consequences(facts)).IsEmpty();
+        await Assert.That(QuitPrompt.Consequences(QuitFacts.Nothing)).IsEmpty();
+        await Assert.That(typeof(QuitFacts).GetProperty("UnsavedEdits")).IsNull();
     }
 
     /// <summary>

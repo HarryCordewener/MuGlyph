@@ -173,8 +173,30 @@ public class ScreenLayoutTests
 
         await Assert.That(column).Count().IsLessThanOrEqualTo(12);
         await Assert.That(column.Any(l => l.Contains("Rookery"))).IsTrue();
-        await Assert.That(column.Any(l => l.Contains("[[- remove]]"))).IsTrue();
+        await Assert.That(column.Any(l => l.Contains(ScreenChrome.RemovesWord))).IsTrue();
         await Assert.That(column[0]).Contains("⌃");
+    }
+
+    /// <summary>
+    /// The WORLDS column compacts and scrolls too, for the reason the detail column does: each world costs
+    /// three rows, so at 100×24 two worlds and their buttons ran to twelve rows in ten — and the two rows
+    /// that fell off the bottom were <c>[[+ world]]</c> and the row naming what Delete would take. A cursor
+    /// stop that was never drawn is the exact failure <c>ScreenChrome.Window</c> exists to prevent, and this
+    /// column was the one place on the screen still missing it.
+    /// </summary>
+    [Test]
+    public async Task WorldsList_KeepsItsAddButtonOnScreenWhenTheColumnIsShort()
+    {
+        var worlds = WorldScene();
+
+        var tall = WorldsScreenRenderer.WorldsColumn(worlds, 0);
+        await Assert.That(tall.Any(l => l.Contains(WorldsScreenRenderer.AddWorldLabel))).IsTrue();
+
+        var column = WorldsScreenRenderer.WorldsColumn(worlds, 0, ScreenFocus.None, height: 10);
+
+        await Assert.That(column).Count().IsLessThanOrEqualTo(10);
+        await Assert.That(column.Any(l => l.Contains(WorldsScreenRenderer.AddWorldLabel))).IsTrue();
+        await Assert.That(column.Any(l => l.Contains(ScreenChrome.RemovesWord))).IsTrue();
     }
 
     /// <summary>

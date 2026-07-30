@@ -105,8 +105,11 @@ public class TriggerSetManagementTests
         await Assert.That(sets[2].Triggers).IsEmpty();
         await Assert.That(select).IsEqualTo(2);
 
+        // Kept: making a set destroyed nothing, so it is not among the deletions the closing review asks
+        // about. Deleting it is how you change your mind.
+        await Assert.That(edits.HasDeletions).IsFalse();
         edits.Revert();
-        await Assert.That(sets.Select(s => s.Name)).IsEquivalentTo(new[] { "Comms", "Trade" });
+        await Assert.That(sets.Select(s => s.Name)).IsEquivalentTo(new[] { "Comms", "Trade", "New Set" });
     }
 
     /// <summary>
@@ -191,11 +194,13 @@ public class TriggerSetManagementTests
     }
 
     /// <summary>
-    /// And undo takes them back, position included. Restoring the set's own name while leaving the
-    /// characters renamed would be the same orphaning, reached from the other direction.
+    /// A rename is a committed field and is kept when the screen closes, references and all. It used to be
+    /// put back by the screen-wide revert; the reason that test existed — the two halves of a rename must
+    /// not come apart — is now pinned in the direction that can still happen: the set and every character
+    /// pointing at it are renamed together, and stay that way.
     /// </summary>
     [Test]
-    public async Task UndoingARenameRestoresTheNameAndEveryAssignmentAtItsPosition()
+    public async Task ARenameAndItsAssignmentsAreKeptTogether()
     {
         var worlds = Worlds();
         var sets = Sets();
@@ -207,8 +212,8 @@ public class TriggerSetManagementTests
         await Assert.That(edits.Apply(field, "Channels")).IsNull();
         edits.Revert();
 
-        await Assert.That(sets[0].Name).IsEqualTo("Comms");
-        await Assert.That(corvid.TriggerSets[0]).IsEqualTo("Comms");
+        await Assert.That(sets[0].Name).IsEqualTo("Channels");
+        await Assert.That(corvid.TriggerSets[0]).IsEqualTo("Channels");
         await Assert.That(corvid.TriggerSets[1]).IsEqualTo("Trade");
     }
 
@@ -270,10 +275,8 @@ public class TriggerSetManagementTests
         var sets = Sets();
         var (corvid, rookery) = (worlds[0].Characters[0], worlds[0].Characters[1]);
 
-        new ScreenEdits().Apply(ButtonNamed(
-            WorldsScreenRenderer.Model(worlds, sets, 0, 0, selectedSet: 1),
-            WorldsScreenRenderer.TriggerSetsPane,
-            WorldsScreenRenderer.RemoveSetLabel));
+        new ScreenEdits().Apply(WorldsScreenRenderer.Model(worlds, sets, 0, 0, selectedSet: 1)
+            .RemoveIn(WorldsScreenRenderer.TriggerSetsPane)!.Value);
 
         await Assert.That(sets.Select(s => s.Name)).IsEquivalentTo(new[] { "Comms" });
         await Assert.That(corvid.TriggerSets).IsEquivalentTo(new[] { "Comms" });
@@ -294,10 +297,8 @@ public class TriggerSetManagementTests
         var comms = sets[0];
         var edits = new ScreenEdits();
 
-        edits.Apply(ButtonNamed(
-            WorldsScreenRenderer.Model(worlds, sets, 0, 0, selectedSet: 0),
-            WorldsScreenRenderer.TriggerSetsPane,
-            WorldsScreenRenderer.RemoveSetLabel));
+        edits.Apply(WorldsScreenRenderer.Model(worlds, sets, 0, 0, selectedSet: 0)
+            .RemoveIn(WorldsScreenRenderer.TriggerSetsPane)!.Value);
         await Assert.That(sets.Select(s => s.Name)).IsEquivalentTo(new[] { "Trade" });
         await Assert.That(corvid.TriggerSets).IsEquivalentTo(new[] { "Trade" });
 
@@ -309,17 +310,37 @@ public class TriggerSetManagementTests
         await Assert.That(corvid.TriggerSets[1]).IsEqualTo("Trade");
     }
 
-    /// <summary>The destructive button names its victim, as every targeted button on these screens does.</summary>
+    /// <summary>
+    /// The destructive button names its victim, as every targeted button on these screens does — and
+    /// describes what goes with it, which is what the closing review reads out. A set's cost is the rules
+    /// inside it and the characters whose automation it is; neither is visible once it is gone.
+    /// </summary>
     [Test]
-    public async Task TheDeleteSetButtonNamesTheSetItWouldRemove()
+    public async Task TheDeleteSetButtonNamesTheSetItWouldRemoveAndWhatGoesWithIt()
     {
-        var button = ButtonNamed(
-            WorldsScreenRenderer.Model(Worlds(), Sets(), 0, 0, selectedSet: 1),
-            WorldsScreenRenderer.TriggerSetsPane,
-            WorldsScreenRenderer.RemoveSetLabel);
+        var button = WorldsScreenRenderer.Model(Worlds(), Sets(), 0, 0, selectedSet: 1)
+            .RemoveIn(WorldsScreenRenderer.TriggerSetsPane)!.Value;
 
         await Assert.That(button.Target).IsEqualTo("Trade");
         await Assert.That(button.Kind).IsEqualTo(ScreenButtonKind.Remove);
+
+        var described = button.Describe!();
+        await Assert.That(described).Contains("trigger set Trade");
+        await Assert.That(described).Contains("1 rule");
+        await Assert.That(described).Contains("2 characters using it");
+    }
+
+    /// <summary>
+    /// A world's removal describes the characters it takes with it, in the words the user asked for:
+    /// "Delete Aetherfall and its 2 characters?" rather than an abstract count of deletions.
+    /// </summary>
+    [Test]
+    public async Task TheDeleteWorldButtonNamesTheCharactersItWouldTakeWithIt()
+    {
+        var button = WorldsScreenRenderer.Model(Worlds(), Sets(), 0, 0)
+            .RemoveIn(WorldsScreenRenderer.WorldsPane)!.Value;
+
+        await Assert.That(button.Describe!()).IsEqualTo("world Aetherfall and its 2 characters");
     }
 
     // ---- moving an item between sets ---------------------------------------------------------------
@@ -368,12 +389,13 @@ public class TriggerSetManagementTests
     }
 
     /// <summary>
-    /// Undo puts the rule back in its own set <em>at its own index</em>, not on the end of it — the same
-    /// rule a cancelled deletion follows, and for the same reason: the list's order is what the screen
-    /// navigates by, so restoring it elsewhere is a second, invisible edit.
+    /// A move is a committed field and is kept: the rule stays in the set it was moved to, and closing the
+    /// screen does not drag it back. It replaces a test asserting the reverse — a move was undone by the
+    /// screen-wide revert — which is the behaviour the whole of this change removes. A move destroys
+    /// nothing, so there is nothing to review either.
     /// </summary>
     [Test]
-    public async Task UndoingAMoveRestoresTheRulesIndexInItsOriginalSet()
+    public async Task AMoveBetweenSetsIsKept()
     {
         var sets = Sets();
         sets[0].Triggers.Add(new Trigger { Name = "Third", Pattern = "third" });
@@ -384,12 +406,11 @@ public class TriggerSetManagementTests
         await Assert.That(edits.Apply(field, "Trade")).IsNull();
         await Assert.That(sets[0].Triggers.Select(t => t.Name)).IsEquivalentTo(new[] { "Tell", "Third" });
 
+        await Assert.That(edits.HasDeletions).IsFalse();
         edits.Revert();
 
-        await Assert.That(sets[0].Triggers.Select(t => t.Name))
-            .IsEquivalentTo(new[] { "Tell", "Spam", "Third" });
-        await Assert.That(sets[0].Triggers[1].Name).IsEqualTo("Spam");
-        await Assert.That(sets[1].Triggers.Select(t => t.Name)).IsEquivalentTo(new[] { "Offer" });
+        await Assert.That(sets[0].Triggers.Select(t => t.Name)).IsEquivalentTo(new[] { "Tell", "Third" });
+        await Assert.That(sets[1].Triggers.Select(t => t.Name)).IsEquivalentTo(new[] { "Offer", "Spam" });
     }
 
     /// <summary>

@@ -36,9 +36,10 @@ internal sealed class ScreenSelection
     /// <summary>
     /// Which of a pane's *list* rows is selected — the same thing as the cursor while the cursor is on
     /// one, and the last such row once it has moved on to the pane's buttons. That is what keeps
-    /// <c>[[- del]]</c> pointed at the world the screen is showing instead of at whichever one happens
-    /// to be last: the cursor has to leave the list to reach the button, and the selection must not
-    /// leave with it.
+    /// the detail column showing the world the screen is about instead of blanking as the cursor reaches
+    /// for <c>[[+ world]]</c>: the cursor has to leave the list to press the button, and the selection must
+    /// not leave with it. What a <em>removal</em> acts on is this same selection, and its own row is not a
+    /// stop at all — see <see cref="ScreenModel.Sizes"/>.
     /// </summary>
     internal int SelectionIn(int pane) =>
         pane >= 0 && pane < _anchors.Length ? _anchors[pane] : -1;
@@ -120,10 +121,12 @@ internal sealed class ScreenSelection
     /// <summary>
     /// Jumps the focused pane's cursor to a row, clamped to the pane's current size —
     /// <see cref="int.MaxValue"/> is End, 0 is Home. It exists for the button rows a list pane ends in:
-    /// they can only be reached by ↑↓ after walking past every row of the list, which would drag the
-    /// selection to the last one and leave <c>[[- del]]</c> pointed at something the user never chose.
-    /// End steps over the list without touching the selection, because a cursor on a button doesn't
-    /// re-anchor. Returns whether the cursor actually moved.
+    /// they can only be reached by ↑↓ after walking past every row of the list, which drags the selection
+    /// to the last one. End steps over the list without touching the selection, because a cursor on a
+    /// button doesn't re-anchor — which is what keeps <c>[[⧉ duplicate]]</c> pointed at the row the user
+    /// chose. (A <em>removal</em> is no longer reachable this way at all; it was the case this could not
+    /// fix, since walking down always leaves the selection on the last item.) Returns whether the cursor
+    /// actually moved.
     /// </summary>
     internal bool MoveTo(int index, IReadOnlyList<int> paneSizes)
     {

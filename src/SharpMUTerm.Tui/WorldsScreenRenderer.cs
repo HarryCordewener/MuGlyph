@@ -100,12 +100,19 @@ internal static class WorldsScreenRenderer
     internal const string LogFKey = "F9";
 
     /// <summary>
-    /// Which item of a list a pane's cursor has selected. The cursor also visits the pane's button
-    /// rows, which sit past the end of the list, and a cursor parked on <c>[[+ world]]</c> must not
-    /// read as "no world selected" — that would blank the detail column, empty the character pane, and
-    /// take the <c>[[- del]]</c> row out from under the very cursor trying to reach it. A cursor past
-    /// the end therefore keeps the last item selected. A negative cursor still means nothing is
-    /// selected, which is how a caller says so deliberately.
+    /// Which item of a list a pane's cursor has selected. The cursor also visits the pane's
+    /// <c>[[+ …]]</c> row, which sits past the end of the list, and a cursor parked there must not read
+    /// as "no world selected" — that would blank the detail column and empty the character pane while
+    /// the user was reaching for the add button. A cursor past the end therefore keeps the last item
+    /// selected. A negative cursor still means nothing is selected, which is how a caller says so
+    /// deliberately.
+    /// <para>
+    /// This clamp is a <em>display</em> rule and never decides what a removal acts on. The live screens
+    /// hand these blocks <see cref="ScreenSelection.SelectionIn"/> — the anchored selection, which never
+    /// runs past its list — and a removal is run by Delete on the selected row, whose own row is not a
+    /// cursor stop at all (see <see cref="ScreenModel.Sizes"/>). It was reading this clamp as the cause of
+    /// "only the last world can be deleted" that pointed one diagnosis at the wrong mechanism.
+    /// </para>
     /// </summary>
     private static int Selected(int count, int cursor) => cursor >= count ? count - 1 : cursor;
 
@@ -216,20 +223,13 @@ internal static class WorldsScreenRenderer
     /// <summary>The label the WORLDS list's add button carries, and the row the renderer draws for it.</summary>
     internal const string AddWorldLabel = "+ world";
 
-    /// <summary>The label the WORLDS list's delete button carries.</summary>
-    internal const string RemoveWorldLabel = "- del";
-
     /// <summary>The labels the character list's buttons carry, in the order they are drawn.</summary>
     internal const string AddCharacterLabel = "+ add character";
 
     internal const string DuplicateCharacterLabel = "⧉ duplicate";
 
-    internal const string RemoveCharacterLabel = "- remove";
-
-    /// <summary>The labels the trigger-set list's buttons carry, in the order they are drawn.</summary>
+    /// <summary>The label the trigger-set list's add button carries.</summary>
     internal const string AddSetLabel = "+ set";
-
-    internal const string RemoveSetLabel = "- del";
 
     /// <summary>What a brand-new trigger set is called before it is renamed.</summary>
     internal const string NewSetName = "New Set";
@@ -368,10 +368,11 @@ internal static class WorldsScreenRenderer
     };
 
     /// <summary>
-    /// A character's opt-in to one set. Assignment is list membership, and the character's own order
-    /// decides which set wins a conflict (see
-    /// <see cref="AppConfiguration.ResolveTriggerSets"/>) — so the snapshot restores the whole list
-    /// rather than re-adding the name at the end, which would silently reorder priority.
+    /// A character's opt-in to one set. Assignment is list membership rather than a boolean, and the
+    /// character's own order decides which set wins a conflict (see
+    /// <see cref="AppConfiguration.ResolveTriggerSets"/>) — so flipping it off <em>removes</em> the name
+    /// and flipping it on appends, which is what keeps the priority the user can see the priority the
+    /// resolver uses.
     /// </summary>
     private static ScreenToggle Assignment(CharacterDefinition character, string name) => new(
         () => character.TriggerSets.Contains(name),
@@ -381,15 +382,6 @@ internal static class WorldsScreenRenderer
             {
                 character.TriggerSets.Add(name);
             }
-        },
-        () =>
-        {
-            var previous = character.TriggerSets.ToList();
-            return () =>
-            {
-                character.TriggerSets.Clear();
-                character.TriggerSets.AddRange(previous);
-            };
         });
 
     /// <summary>
@@ -456,7 +448,12 @@ internal static class WorldsScreenRenderer
     /// It is a hand-built button rather than <see cref="ScreenButton.Remove{T}"/> because its undo is
     /// two restorations, not one: the set back at its index, and each stripped reference back at
     /// <em>its</em> index inside the character that held it. Restoring the set alone would be the
-    /// quieter half of a change nobody agreed to.
+    /// quieter half of a change nobody agreed to — and the closing review offers exactly that undo, so
+    /// this is the half of it that has to be complete.
+    /// </para>
+    /// <para>
+    /// It is also why the review's question names more than a set's name: what the deletion costs is the
+    /// rules inside it and the characters that used it, and neither is visible once it is gone.
     /// </para>
     /// </summary>
     private static ScreenButton RemoveSet(
@@ -464,7 +461,7 @@ internal static class WorldsScreenRenderer
     {
         var set = sets[index];
         return new ScreenButton(
-            RemoveSetLabel,
+            ScreenButton.RemoveKeyLabel,
             () =>
             {
                 var name = set.Name;
@@ -481,8 +478,43 @@ internal static class WorldsScreenRenderer
                     index);
             },
             ScreenButtonKind.Remove,
-            set.Name);
+            set.Name,
+            () => DescribeSet(worlds, set));
     }
+
+    /// <summary>
+    /// What deleting a trigger set would cost, in the words the closing review names it by: the set, the
+    /// rules of every kind inside it, and the characters whose automation it is. Counted rather than
+    /// listed past the name, because the interesting number is how much stops working.
+    /// </summary>
+    private static string DescribeSet(IReadOnlyList<WorldDefinition> worlds, TriggerSet set)
+    {
+        var rules = set.Triggers.Count + set.Aliases.Count + set.Macros.Count + set.Timers.Count;
+        var users = TriggerSetReferences.Find(worlds, set.Name).Count;
+        var parts = new List<string>();
+        if (rules > 0)
+        {
+            parts.Add($"{rules.ToString(CultureInfo.InvariantCulture)} rule{Plural(rules)}");
+        }
+
+        if (users > 0)
+        {
+            parts.Add($"{users.ToString(CultureInfo.InvariantCulture)} character{Plural(users)} using it");
+        }
+
+        return parts.Count == 0
+            ? $"trigger set {set.Name}"
+            : $"trigger set {set.Name} and its {string.Join(", ", parts)}";
+    }
+
+    /// <summary>What deleting a world would cost: the world, and the characters that live on it.</summary>
+    private static string DescribeWorld(WorldDefinition world) =>
+        world.Characters.Count == 0
+            ? $"world {world.Name}"
+            : $"world {world.Name} and its {world.Characters.Count.ToString(CultureInfo.InvariantCulture)}"
+                + $" character{Plural(world.Characters.Count)}";
+
+    private static string Plural(int count) => count == 1 ? string.Empty : "s";
 
     /// <summary>
     /// The selected world's two security booleans, in the order the WORLD block draws them. They are
@@ -522,8 +554,9 @@ internal static class WorldsScreenRenderer
         rows.Add(ScreenRow.Of(ScreenButton.Add(AddWorldLabel, list, () => new WorldDefinition())));
         if (selectedWorld >= 0 && selectedWorld < list.Count)
         {
+            var world = list[selectedWorld];
             rows.Add(ScreenRow.Of(ScreenButton.Remove(
-                RemoveWorldLabel, list, selectedWorld, target: list[selectedWorld].Name)));
+                list, selectedWorld, target: world.Name, describe: () => DescribeWorld(world))));
         }
 
         return rows;
@@ -558,7 +591,7 @@ internal static class WorldsScreenRenderer
                 },
                 target: source.Name)));
             rows.Add(ScreenRow.Of(ScreenButton.Remove(
-                RemoveCharacterLabel, characters, selectedCharacter, target: source.Name)));
+                characters, selectedCharacter, target: source.Name, describe: () => $"character {source.Name}")));
         }
 
         return rows;
@@ -588,8 +621,15 @@ internal static class WorldsScreenRenderer
         return SpreadLR(" " + context, actions, width);
     }
 
+    /// <param name="height">
+    /// How many rows the column has, or 0 when the caller has none — the same contract
+    /// <see cref="DetailColumn"/> keeps, and it is here for the same reason. Each world costs three rows,
+    /// so at 100×24 two worlds and their buttons ran to twelve rows in ten and the two the column lost off
+    /// the bottom were <c>[[+ world]]</c> and the row naming what Delete would take: a cursor stop that
+    /// was never drawn, which is precisely the failure <see cref="ScreenChrome.Window"/> exists to stop.
+    /// </param>
     internal static List<string> WorldsColumn(
-        IReadOnlyList<WorldDefinition> worlds, int selectedWorld, ScreenFocus? focus = null)
+        IReadOnlyList<WorldDefinition> worlds, int selectedWorld, ScreenFocus? focus = null, int height = 0)
     {
         var cursor = focus ?? ScreenFocus.None;
         selectedWorld = Selected(worlds.Count, selectedWorld);
@@ -621,7 +661,11 @@ internal static class WorldsScreenRenderer
         left.Add(string.Empty);
         left.AddRange(ScreenChrome.Buttons(
             WorldButtons(worlds, selectedWorld), cursor, WorldsPane, worlds.Count, LeftColumnWidth));
-        return left;
+
+        // Compacted, then windowed — the same two steps the detail column takes, and it must be both:
+        // dropping the blank separators buys back a row per world, and the window is what guarantees the
+        // row the cursor is on is one of the rows drawn.
+        return ScreenChrome.Window(ScreenChrome.Compact(left, height), height);
     }
 
     /// <param name="height">

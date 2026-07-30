@@ -64,8 +64,6 @@ internal static class AliasesScreenRenderer
 
     internal const string DuplicateAliasLabel = "⧉ duplicate";
 
-    internal const string RemoveAliasLabel = "- del";
-
     /// <summary>
     /// What a brand-new alias is called, matches and expands to. None of the three may be blank —
     /// <see cref="ScreenField.Pattern"/> refuses an empty regex and <see cref="ScreenField.Lines"/> an
@@ -200,7 +198,7 @@ internal static class AliasesScreenRenderer
             slot.Offset,
             source.Name)));
         rows.Add(ScreenRow.Of(ScreenButton.Remove(
-            RemoveAliasLabel, slot.Items, slot.Index, slot.Offset, source.Name)));
+            slot.Items, slot.Index, slot.Offset, source.Name, () => $"alias {source.Name}")));
 
         return rows;
     }

@@ -69,10 +69,14 @@ internal readonly record struct ScreenFieldEdit(
 
 /// <summary>
 /// An editable value on a settings row: how to read it as text, whether a typed string is a legal
-/// value for it, how to write it, and how to put back exactly what was there before. It follows
-/// <see cref="ScreenToggle"/>'s Get / write / Snapshot shape for the same reason — the snapshot
-/// captures the *typed* value, so undo restores an <c>int</c> port or a <c>LogFormat</c> rather than
-/// the string it was displayed as.
+/// value for it, and how to write it.
+/// <para>
+/// There is nothing here about putting the old value back. A field's escape hatch is its
+/// <em>buffer</em>: what is being typed lives in <see cref="SettingsSession"/> until ⏎ accepts it, and
+/// Esc abandons the buffer without config ever having seen it. Past that point the value is committed
+/// and is kept — see <see cref="ScreenEdits"/> for the scope rule — so no field is ever asked to
+/// restore itself.
+/// </para>
 /// <para>
 /// Validation is deliberately split from writing: a screen validates a buffer before it is applied,
 /// so a rejected value is refused at the field rather than parsed into config and corrected
@@ -84,7 +88,6 @@ internal readonly record struct ScreenFieldEdit(
 /// <param name="Get">Reads the current value as the text an edit opens on.</param>
 /// <param name="Validate">Returns null when a buffer is a legal value, else why it isn't.</param>
 /// <param name="Set">Writes a buffer that <paramref name="Validate"/> has already accepted.</param>
-/// <param name="Snapshot">Captures the current value, returning the action that restores it.</param>
 /// <param name="Choices">The values the field knows about, else null.</param>
 /// <param name="ClosedChoices">
 /// Whether <paramref name="Choices"/> is the <em>permitted</em> set. A closed field refuses anything
@@ -122,7 +125,6 @@ internal readonly record struct ScreenField(
     Func<string> Get,
     Func<string, string?> Validate,
     Action<string> Set,
-    Func<Action> Snapshot,
     IReadOnlyList<string>? Choices = null,
     bool ClosedChoices = false,
     bool Capture = false,
@@ -235,7 +237,6 @@ internal readonly record struct ScreenField(
             get,
             value => string.IsNullOrWhiteSpace(value) ? $"{label} cannot be empty" : null,
             value => set(value.Trim()),
-            Restore(get, set),
             known is { Count: > 0 } ? known : null);
     }
 
@@ -262,8 +263,7 @@ internal readonly record struct ScreenField(
             value => string.IsNullOrWhiteSpace(value)
                 ? $"{label} cannot be empty"
                 : value.Any(char.IsControl) ? $"{label} cannot contain control characters" : null,
-            value => set(value.Trim()),
-            Restore(get, set));
+            value => set(value.Trim()));
     }
 
     /// <summary>
@@ -311,8 +311,7 @@ internal readonly record struct ScreenField(
             label,
             () => get() ?? string.Empty,
             _ => null,
-            value => set(string.IsNullOrWhiteSpace(value) ? null : value.Trim()),
-            Restore(get, set));
+            value => set(string.IsNullOrWhiteSpace(value) ? null : value.Trim()));
     }
 
     /// <summary>
@@ -349,7 +348,6 @@ internal readonly record struct ScreenField(
             () => get() ?? string.Empty,
             value => value.Any(char.IsControl) ? $"{label} cannot contain control characters" : null,
             value => set(value.Length == 0 ? null : value),
-            Restore(get, set),
             Masked: true);
     }
 
@@ -389,7 +387,6 @@ internal readonly record struct ScreenField(
                     ? null
                     : trimmed);
             },
-            Restore(get, set),
             new[] { fallback });
     }
 
@@ -421,7 +418,6 @@ internal readonly record struct ScreenField(
             () => get() ?? string.Empty,
             value => value.Any(char.IsControl) ? $"{label} cannot contain control characters" : null,
             value => set(string.IsNullOrWhiteSpace(value) ? null : value.Trim()),
-            Restore(get, set),
             known is { Count: > 0 } ? known : null);
     }
 
@@ -445,8 +441,7 @@ internal readonly record struct ScreenField(
             label,
             () => FormatFlags(get()),
             value => UnknownFlag<TEnum>(value) is { } bad ? $"{label} has no '{bad}'" : null,
-            value => set((TEnum)Enum.ToObject(typeof(TEnum), CombineFlags<TEnum>(value))),
-            Restore(get, set));
+            value => set((TEnum)Enum.ToObject(typeof(TEnum), CombineFlags<TEnum>(value))));
     }
 
     /// <summary>What a flag set with nothing in it reads and is typed as.</summary>
@@ -554,7 +549,6 @@ internal readonly record struct ScreenField(
                 ? $"{label} cannot be empty"
                 : value.Any(char.IsControl) ? $"{label} cannot contain control characters" : null,
             value => set(value.Trim()),
-            Restore(get, set),
             known);
     }
 
@@ -567,7 +561,7 @@ internal readonly record struct ScreenField(
         ArgumentNullException.ThrowIfNull(get);
         ArgumentNullException.ThrowIfNull(set);
 
-        return new ScreenField(label, get, ValidatePattern, set, Restore(get, set));
+        return new ScreenField(label, get, ValidatePattern, set);
     }
 
     /// <summary>
@@ -584,8 +578,7 @@ internal readonly record struct ScreenField(
             label,
             () => EscapeBreaks(get()),
             value => value.Length == 0 ? $"{label} cannot be empty" : null,
-            value => set(ExpandBreaks(value)),
-            Restore(get, set));
+            value => set(ExpandBreaks(value)));
     }
 
     /// <summary>A whole number inside an inclusive range — a port, a keepalive interval.</summary>
@@ -604,8 +597,7 @@ internal readonly record struct ScreenField(
             {
                 TryInteger(value, min, max, out var parsed);
                 set(parsed);
-            },
-            Restore(get, set));
+            });
     }
 
     /// <summary>A fractional number inside an inclusive range — a timer's interval in seconds.</summary>
@@ -625,8 +617,7 @@ internal readonly record struct ScreenField(
             {
                 TryNumber(value, min, max, out var parsed);
                 set(parsed);
-            },
-            Restore(get, set));
+            });
     }
 
     /// <summary>
@@ -646,7 +637,6 @@ internal readonly record struct ScreenField(
             get,
             value => Canonical(choices, value) is null ? $"{label} must be one of: {string.Join(", ", choices)}" : null,
             value => set(Canonical(choices, value) ?? value),
-            Restore(get, set),
             choices,
             ClosedChoices: true);
     }
@@ -677,7 +667,6 @@ internal readonly record struct ScreenField(
                     set(parsed);
                 }
             },
-            Restore(get, set),
             ScreenColours.Palette);
     }
 
@@ -704,7 +693,6 @@ internal readonly record struct ScreenField(
                     set(parsed);
                 }
             },
-            Restore(get, set),
             names,
             ClosedChoices: true);
     }
@@ -740,17 +728,8 @@ internal readonly record struct ScreenField(
             get,
             value => MacroKeys.Verdict(value) is { Fires: false } verdict ? verdict.Reason : taken(value),
             value => set(MacroKey.Canonicalise(value) ?? value.Trim()),
-            Restore(get, set),
             Capture: true);
     }
-
-    /// <summary>Captures a value of any type and returns the action that writes it back.</summary>
-    private static Func<Action> Restore<T>(Func<T> get, Action<T> set) =>
-        () =>
-        {
-            var previous = get();
-            return () => set(previous);
-        };
 
     private static string? Canonical(IReadOnlyList<string> choices, string value)
     {

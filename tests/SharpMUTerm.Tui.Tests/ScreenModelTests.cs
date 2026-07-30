@@ -54,10 +54,13 @@ public class ScreenModelTests
 
         await Assert.That(model.PaneCount).IsEqualTo(2);
 
-        // Two rules, then the pane's own [+ trigger] / [⧉ duplicate] / [- del]. The list count is what
+        // Two rules, then the pane's own [+ trigger] / [⧉ duplicate] / Del. The list count is what
         // every index below addresses and is unchanged; the buttons are appended after it.
+        // Sizes counts cursor stops, and a pane's removal is no longer one — see ScreenModel.Sizes.
+        // RowCount is what the pane still draws.
         await Assert.That(model.ListSizes[0]).IsEqualTo(2);
-        await Assert.That(model.Sizes[0]).IsEqualTo(5);
+        await Assert.That(model.Sizes[0]).IsEqualTo(4); // was 5, with [- del] reachable
+        await Assert.That(model.RowCount(0)).IsEqualTo(5);
 
         // Three checkbox rows: gag and stop-processing, plus case sensitivity — which F3 has always
         // offered on an alias and F2 arbitrarily did not. It is appended rather than inserted, so the
@@ -93,9 +96,10 @@ public class ScreenModelTests
 
         await Assert.That(model.PaneCount).IsEqualTo(2);
 
-        // One alias, then [+ alias] / [⧉ duplicate] / [- del].
+        // One alias, then [+ alias] / [⧉ duplicate] / Del — the last of which is drawn and unreachable.
         await Assert.That(model.ListSizes).IsEquivalentTo(new[] { 1, 1 });
-        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 4, 1 });
+        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 3, 1 }); // was { 4, 1 }
+        await Assert.That(model.RowCount(0)).IsEqualTo(4);
 
         model.ToggleAt(0, 0)!.Value.Flip();
         await Assert.That(sets[0].Aliases[0].Enabled).IsFalse();
@@ -123,9 +127,10 @@ public class ScreenModelTests
         var sets = Sets();
         var model = TimersScreenRenderer.Model(sets, selected: 0);
 
-        // One timer, then [+ timer] / [- del] — no duplicate, deliberately (see TimersScreenRenderer).
+        // One timer, then [+ timer] / Del — no duplicate, deliberately (see TimersScreenRenderer).
         await Assert.That(model.ListSizes).IsEquivalentTo(new[] { 1, 2 });
-        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 3, 2 });
+        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 2, 2 }); // was { 3, 2 }
+        await Assert.That(model.RowCount(0)).IsEqualTo(3);
 
         model.ToggleAt(1, 0)!.Value.Flip();
         await Assert.That(sets[0].Timers[0].OneShot).IsTrue();
@@ -152,7 +157,7 @@ public class ScreenModelTests
 
     /// <summary>
     /// Handed the sets the bindings live in, the pane grows the same buttons every other list screen
-    /// has: one binding, then <c>[+ binding]</c> and <c>[- del]</c>. There is no duplicate — a copy
+    /// has: one binding, then <c>[+ binding]</c> and the Del row. There is no duplicate — a copy
     /// would land on the key its original already holds, and the second macro on a key never fires.
     /// </summary>
     [Test]
@@ -162,9 +167,10 @@ public class ScreenModelTests
         var model = KeypadScreenRenderer.Model(sets[0].Macros, sets, selected: 0);
 
         await Assert.That(model.ListSizes[0]).IsEqualTo(1);
-        await Assert.That(model.Sizes[0]).IsEqualTo(3);
+        await Assert.That(model.Sizes[0]).IsEqualTo(2); // was 3, with the removal reachable
+        await Assert.That(model.RowCount(0)).IsEqualTo(3);
         await Assert.That(model.ButtonAt(0, 1)!.Value.Label).IsEqualTo(KeypadScreenRenderer.AddBindingLabel);
-        await Assert.That(model.ButtonAt(0, 2)!.Value.Label).IsEqualTo(KeypadScreenRenderer.RemoveBindingLabel);
+        await Assert.That(model.ButtonAt(0, 2)!.Value.Label).IsEqualTo(ScreenButton.RemoveKeyLabel);
     }
 
     [Test]
@@ -178,12 +184,14 @@ public class ScreenModelTests
         // three that were here keep the indices everything below (and every other test) addresses.
         await Assert.That(model.PaneCount).IsEqualTo(4);
 
-        // Two worlds then [+ world] / [- del]; two characters then [+ add] / [⧉ duplicate] /
-        // [- remove]; one trigger set then [+ set] / [- del]. Buttons are appended after each list, so
-        // every index below still addresses the same item it always did — which is what the list counts
-        // assert independently of the total.
+        // Two worlds then [+ world] / Del; two characters then [+ add] / [⧉ duplicate] / Del; one
+        // trigger set then [+ set] / Del. Buttons are appended after each list, so every index below
+        // still addresses the same item it always did — which is what the list counts assert
+        // independently of the total.
+        // Sizes counts cursor stops, and a pane's removal is no longer one — see ScreenModel.Sizes.
+        // RowCount is what the pane still draws.
         await Assert.That(model.ListSizes).IsEquivalentTo(new[] { 2, 2, 1, 2 });
-        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 4, 5, 3, 2 });
+        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 3, 4, 2, 2 }); // was { 4, 5, 3, 2 }
 
         // Worlds are selection only — there is no checkbox on a world row.
         await Assert.That(model.ToggleAt(0, 0)).IsNull();
@@ -209,8 +217,15 @@ public class ScreenModelTests
         await Assert.That(character.TriggerSets).IsEquivalentTo(new[] { "Comms" });
     }
 
+    /// <summary>
+    /// Unassigning is a committed edit like any other checkbox: it takes the name out and it is kept, so
+    /// leaving the screen does not put it back. This test used to assert the opposite — that Revert
+    /// restored the character's own set order — which was the screen-wide undo behind "my edit didn't
+    /// stick"; the order still matters, and it is <see cref="Worlds_TriggerSetRowsAssignAndUnassignByName"/>
+    /// that pins how a re-assignment lands.
+    /// </summary>
     [Test]
-    public async Task Worlds_UnassigningATriggerSetRestoresTheCharactersOwnOrderOnUndo()
+    public async Task Worlds_UnassigningATriggerSetIsKept()
     {
         var worlds = Worlds();
         var sets = Sets();
@@ -224,9 +239,7 @@ public class ScreenModelTests
 
         edits.Revert();
 
-        // Order decides which set wins a conflict, so it has to come back as it was — not "Comms" last.
-        await Assert.That(character.TriggerSets[0]).IsEqualTo("Combat");
-        await Assert.That(character.TriggerSets[1]).IsEqualTo("Comms");
+        await Assert.That(character.TriggerSets).IsEquivalentTo(new[] { "Combat" });
     }
 
     [Test]
@@ -237,7 +250,7 @@ public class ScreenModelTests
         // The character pane holds one row — [+ add character]. Duplicate and remove would act on
         // nothing, so they aren't drawn and ⏎ can't land on a silent no-op. The security pane still
         // holds its two checkboxes: they belong to the world, which is selected, not to a character.
-        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 4, 1, 0, 2 });
+        await Assert.That(model.Sizes).IsEquivalentTo(new[] { 3, 1, 0, 2 }); // was { 4, 1, 0, 2 }
         await Assert.That(model.ListSizes).IsEquivalentTo(new[] { 2, 0, 0, 2 });
     }
 
@@ -261,12 +274,16 @@ public class ScreenModelTests
     }
 
     /// <summary>
-    /// Both security toggles go through the undo log like everything else on these screens, so Esc puts
-    /// certificate validation back on. This is the one row where an edit that outlived a cancelled
-    /// screen would be a security change nobody agreed to.
+    /// Both security toggles are committed by the Space that presses them and are kept when the screen
+    /// closes, exactly like every other checkbox. This test asserted the opposite — that Esc put
+    /// certificate validation back — on the argument that an edit outliving a cancelled screen would be a
+    /// security change nobody agreed to. The argument inverted with the behaviour: the user pressed the
+    /// key, the checkbox visibly changed, and it is a screen that silently changed it back that nobody
+    /// agreed to. It is also the setting most likely to be flipped and then tested by reconnecting, which
+    /// a revert-on-close would do against the old value.
     /// </summary>
     [Test]
-    public async Task Worlds_SecurityTogglesAreUndone_ByCancellingTheScreen()
+    public async Task Worlds_SecurityTogglesAreKeptWhenTheScreenCloses()
     {
         var worlds = Worlds();
         var world = worlds[0];
@@ -279,10 +296,11 @@ public class ScreenModelTests
         await Assert.That(world.UseTls).IsFalse();
         await Assert.That(world.AllowInvalidCertificates).IsTrue();
 
+        await Assert.That(edits.HasDeletions).IsFalse();
         edits.Revert();
 
-        await Assert.That(world.UseTls).IsTrue();
-        await Assert.That(world.AllowInvalidCertificates).IsFalse();
+        await Assert.That(world.UseTls).IsFalse();
+        await Assert.That(world.AllowInvalidCertificates).IsTrue();
     }
 
     /// <summary>
@@ -455,9 +473,12 @@ public class ScreenModelTests
         await Assert.That(mira.Logging.Format).IsEqualTo(LogFormat.Both);
         await Assert.That(kaz.Logging.Format).IsEqualTo(LogFormat.None);
 
+        // Kept, like every committed field — the point of this test is *whose* log was written, and that
+        // is unchanged.
         edits.Revert();
 
-        await Assert.That(mira.Logging.Format).IsEqualTo(LogFormat.None);
+        await Assert.That(mira.Logging.Format).IsEqualTo(LogFormat.Both);
+        await Assert.That(kaz.Logging.Format).IsEqualTo(LogFormat.None);
     }
 
     /// <summary>

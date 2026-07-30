@@ -67,8 +67,13 @@ public class TriggersScreenActionsTests
         await Assert.That(Field(sets, 0, TriggersScreenRenderer.ScriptField).Get()).IsEqualTo("onTell");
     }
 
+    /// <summary>
+    /// All three land on the rule and are kept. The <c>undo puts it back</c> half of this test went with
+    /// the screen-wide revert: a committed action is confirmed work, and only deletions are reviewed on the
+    /// way out (see <see cref="ScreenEdits"/>).
+    /// </summary>
     [Test]
-    public async Task WritingARewriteRespondOrScript_LandsOnTheRuleAndUndoPutsItBack()
+    public async Task WritingARewriteRespondOrScript_LandsOnTheRule()
     {
         var sets = Sets();
         var trigger = sets[0].Triggers[1];
@@ -84,9 +89,9 @@ public class TriggersScreenActionsTests
 
         edits.Revert();
 
-        await Assert.That(trigger.Actions.Rewrite).IsNull();
-        await Assert.That(trigger.Actions.SendResponse).IsNull();
-        await Assert.That(trigger.Actions.ScriptCallback).IsNull();
+        await Assert.That(trigger.Actions.Rewrite).IsEqualTo("[guild] $0");
+        await Assert.That(trigger.Actions.SendResponse).IsEqualTo("gtell hi");
+        await Assert.That(trigger.Actions.ScriptCallback).IsEqualTo("onGuild");
     }
 
     /// <summary>
@@ -111,7 +116,7 @@ public class TriggersScreenActionsTests
         await Assert.That(trigger.Actions.ScriptCallback).IsNull();
 
         edits.Revert();
-        await Assert.That(trigger.Actions.Rewrite).IsEqualTo("» $1: $2");
+        await Assert.That(trigger.Actions.Rewrite).IsNull(); // cleared, and kept cleared
     }
 
     /// <summary>
@@ -216,7 +221,7 @@ public class TriggersScreenActionsTests
         await Assert.That(Field(sets, 0, TriggersScreenRenderer.AttributesField).Get()).IsEqualTo("none");
 
         edits.Revert();
-        await Assert.That(trigger.Actions.AddAttributes).IsEqualTo(TextAttributes.Bold);
+        await Assert.That(trigger.Actions.AddAttributes).IsEqualTo(TextAttributes.None); // kept as typed
     }
 
     [Test]
@@ -387,10 +392,12 @@ public class TriggersScreenActionsTests
         await Assert.That(trigger.Regex.IsMatch("SOMEONE TELLS YOU hi")).IsFalse();
         await Assert.That(trigger.Regex.IsMatch("someone tells you hi")).IsTrue();
 
+        // Kept, matcher and all — the checkbox is committed by the Space that pressed it. What this test
+        // is really about is that the compiled regex follows the flag, and it does in both directions.
         edits.Revert();
 
-        await Assert.That(trigger.CaseSensitive).IsFalse();
-        await Assert.That(trigger.Regex.IsMatch("SOMEONE TELLS YOU hi")).IsTrue();
+        await Assert.That(trigger.CaseSensitive).IsTrue();
+        await Assert.That(trigger.Regex.IsMatch("SOMEONE TELLS YOU hi")).IsFalse();
     }
 
     /// <summary>The same thing through the real keyboard: Space on the editor pane's third row.</summary>

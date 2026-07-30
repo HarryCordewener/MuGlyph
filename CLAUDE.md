@@ -96,10 +96,15 @@ python3 tools/ansi_frame_to_image.py frame.ansi frame.html   # or .svg
 - **Views:** `worlds`/`settings`, `triggers`, `route`, `highlight`, `aliases`, `timers`, `keypad`,
   `set`, `textansi`, `input`, `logging`, `password`, `freeze`, `spawn`, `split`, `move`, `drag`,
   `history`, `history-search`, `history-search-filter`, `draft`, `draft2`, `menu`, `menu-split`,
-  `messages`, `quit`, `web`, `scrollback`, `scrollback-up`, `freeze-scrollback`, plus the default
-  workspace
+  `messages`, `quit`, `deletions`, `web`, `scrollback`, `scrollback-up`, `freeze-scrollback`, plus the
+  default workspace
   (no `--view`). Any settings screen also takes a `-edit` suffix, which opens it and drives real
   keys in so the frame shows a field mid-edit. State toggles: `collapsed`, `prefix`, `timestamps`.
+- **A snapshot never writes configuration.** `SharpMUTermApp` takes its `save` action from the caller and
+  the snapshot path passes none, so an app that isn't the live entry point owns no file. That matters
+  because the settings screens persist each committed change as it is made: without the gate, a
+  `--demo-config` frame that drove a key into a field (`logging-edit`, `keypad-edit`, `deletions`) would
+  write the demo worlds straight over your own `config.json`.
 - **The three `scroll*` views are the only ones with more output than a pane holds.** Every other view
   fits, which is exactly why no snapshot caught the panes being unable to scroll at all. Reach for one
   of these (or `LoadLongScene`) whenever a change touches the output area.

@@ -93,8 +93,13 @@ public class TriggersScreenEditingTests
         await Assert.That(unknown.Validate("Chat")).IsNull();
     }
 
+    /// <summary>
+    /// <c>main</c> is how a rule stops routing anywhere: it stores null rather than the literal word. The
+    /// <c>undo puts it back</c> half went with the screen-wide revert — a committed route is confirmed work
+    /// and is kept, and only deletions are reviewed on the way out.
+    /// </summary>
     [Test]
-    public async Task ChoosingMainClearsTheSpawnTarget_AndUndoPutsItBack()
+    public async Task ChoosingMainClearsTheSpawnTarget()
     {
         var sets = Sets();
         var trigger = sets[0].Triggers[0];
@@ -107,7 +112,7 @@ public class TriggersScreenEditingTests
         await Assert.That(trigger.Actions.SpawnTarget).IsEqualTo("trade");
 
         edits.Revert();
-        await Assert.That(trigger.Actions.SpawnTarget).IsEqualTo("Chat");
+        await Assert.That(trigger.Actions.SpawnTarget).IsEqualTo("trade"); // kept as committed
     }
 
     /// <summary>
@@ -236,11 +241,12 @@ public class TriggersScreenEditingTests
         await Assert.That(trigger.Actions.HighlightBackground)
             .IsEqualTo(TerminalColor.FromRgb(0x00, 0x00, 0xff));
 
+        // Both kept: a picked colour is committed by the ⏎ that took it.
         edits.Revert();
 
-        await Assert.That(trigger.Actions.HighlightForeground)
-            .IsEqualTo(TerminalColor.FromRgb(0xff, 0xd7, 0x00));
-        await Assert.That(trigger.Actions.HighlightBackground).IsNull();
+        await Assert.That(trigger.Actions.HighlightForeground).IsNull();
+        await Assert.That(trigger.Actions.HighlightBackground)
+            .IsEqualTo(TerminalColor.FromRgb(0x00, 0x00, 0xff));
     }
 
     /// <summary>

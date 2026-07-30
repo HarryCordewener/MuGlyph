@@ -54,16 +54,20 @@ public class SettingsSessionEditTests
         return session;
     }
 
+    /// <summary>
+    /// ⏎ on a row with nothing to open still closes the screen — it just no longer claims to save
+    /// anything on the way, because a committed value was written when it was committed.
+    /// </summary>
     [Test]
-    public async Task Enter_OnARowWithNoFieldStillSavesAndCloses()
+    public async Task Enter_OnARowWithNoFieldStillClosesTheScreen()
     {
         var session = new Scene().Session();
 
-        await Assert.That(session.Handle(Key(ConsoleKey.Enter))).IsEqualTo(ScreenAction.Save);
+        await Assert.That(session.Handle(Key(ConsoleKey.Enter))).IsEqualTo(ScreenAction.Close);
         await Assert.That(session.IsEditing).IsFalse();
 
         session.Handle(Key(ConsoleKey.DownArrow));
-        await Assert.That(session.Handle(Key(ConsoleKey.Enter))).IsEqualTo(ScreenAction.Save);
+        await Assert.That(session.Handle(Key(ConsoleKey.Enter))).IsEqualTo(ScreenAction.Close);
     }
 
     [Test]
@@ -144,10 +148,12 @@ public class SettingsSessionEditTests
 
         await Assert.That(session.IsEditing).IsFalse();
         await Assert.That(scene.Host).IsEqualTo("aardmud.org");
-        await Assert.That(session.Edits.IsDirty).IsFalse();
+        await Assert.That(session.Edits.HasDeletions).IsFalse();
 
-        // Only now does Esc mean the screen.
-        await Assert.That(session.Handle(Key(ConsoleKey.Escape))).IsEqualTo(ScreenAction.Cancel);
+        // Only now does Esc mean the screen — and there it closes rather than cancelling. This is the
+        // layering, and the whole of the scope rule in two keystrokes: the first Esc threw away a buffer
+        // config never saw, the second leaves and keeps everything that was confirmed.
+        await Assert.That(session.Handle(Key(ConsoleKey.Escape))).IsEqualTo(ScreenAction.Close);
     }
 
     [Test]
@@ -216,41 +222,28 @@ public class SettingsSessionEditTests
         await Assert.That(scene.Host).IsEqualTo("aardmud.org");
     }
 
+    /// <summary>
+    /// ⌃S is retired, in both states. It used to save from navigation and to commit an open field before
+    /// saving; a committed value is now written the instant it is committed, so the chord had nothing left
+    /// to do that ⏎ does not already do. Neither state answers it — it goes to the framework — and
+    /// crucially it no longer touches the open buffer, which is the state where a half-typed value lives.
+    /// </summary>
     [Test]
-    public async Task ControlS_SavesFromNavigation_AndCommitsAnOpenFieldFirst()
+    public async Task ControlS_IsNotAScreenKeyInEitherState()
     {
         var scene = new Scene();
         var session = scene.Session();
 
         await Assert.That(session.Handle(Key(ConsoleKey.S, ConsoleModifiers.Control)))
-            .IsEqualTo(ScreenAction.Save);
+            .IsEqualTo(ScreenAction.None);
 
         session = Editing(scene);
         Type(session, ".uk");
         await Assert.That(session.Handle(Key(ConsoleKey.S, ConsoleModifiers.Control)))
-            .IsEqualTo(ScreenAction.Save);
-        await Assert.That(scene.Host).IsEqualTo("aardmud.org.uk");
-        await Assert.That(session.IsEditing).IsFalse();
-    }
-
-    [Test]
-    public async Task ControlS_WillNotSaveAValueThatDoesNotValidate()
-    {
-        var scene = new Scene();
-        var session = Editing(scene);
-
-        session.Handle(Key(ConsoleKey.Tab));
-        for (var i = 0; i < 4; i++)
-        {
-            session.Handle(Key(ConsoleKey.Backspace));
-        }
-
-        Type(session, "http");
-
-        await Assert.That(session.Handle(Key(ConsoleKey.S, ConsoleModifiers.Control)))
-            .IsEqualTo(ScreenAction.Redraw);
+            .IsEqualTo(ScreenAction.None);
         await Assert.That(session.IsEditing).IsTrue();
-        await Assert.That(scene.Port).IsEqualTo(4000);
+        await Assert.That(session.Focus().Edit!.Value.Text).IsEqualTo("aardmud.org.uk");
+        await Assert.That(scene.Host).IsEqualTo("aardmud.org"); // still uncommitted, as ⏎ is what commits
     }
 
     [Test]
@@ -306,12 +299,16 @@ public class SettingsSessionEditTests
         await Assert.That(scene.Port).IsEqualTo(4201);
         await Assert.That(scene.Flag).IsTrue();
 
-        // What SettingsOverlay does on Esc / the F-key toggle.
+        // Closing the screen — and the review's "put them back", which is the strongest thing the way out
+        // can do — leaves all three exactly as they were committed. This test asserted the reverse until
+        // now, and the reverse *was* the reported bug: an edited address that went back to the old value
+        // the moment the user left the screen.
+        await Assert.That(session.Handle(Key(ConsoleKey.Escape))).IsEqualTo(ScreenAction.Close);
         session.Edits.Revert();
 
-        await Assert.That(scene.Host).IsEqualTo("aardmud.org");
-        await Assert.That(scene.Port).IsEqualTo(4000);
-        await Assert.That(scene.Flag).IsFalse();
+        await Assert.That(scene.Host).IsEqualTo("aardmud.org.uk");
+        await Assert.That(scene.Port).IsEqualTo(4201);
+        await Assert.That(scene.Flag).IsTrue();
     }
 
     [Test]
@@ -396,11 +393,13 @@ public class SettingsSessionEditTests
         session.Handle(Key(ConsoleKey.Spacebar));
         await Assert.That(world.AllowInvalidCertificates).IsTrue();
 
-        // Esc is the screen's cancel, and it must take a security change with it.
-        await Assert.That(session.Handle(Key(ConsoleKey.Escape))).IsEqualTo(ScreenAction.Cancel);
+        // Esc closes the screen and the security changes stay. They were committed by the Space that
+        // pressed them — TLS in particular is a setting you would then reconnect to test, and a close
+        // that quietly reverted it would leave the user reconnecting against the old one.
+        await Assert.That(session.Handle(Key(ConsoleKey.Escape))).IsEqualTo(ScreenAction.Close);
         session.Edits.Revert();
-        await Assert.That(world.UseTls).IsFalse();
-        await Assert.That(world.AllowInvalidCertificates).IsFalse();
+        await Assert.That(world.UseTls).IsTrue();
+        await Assert.That(world.AllowInvalidCertificates).IsTrue();
     }
 
     /// <summary>
