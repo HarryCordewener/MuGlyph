@@ -251,8 +251,13 @@ public class PaneResizeEndToEndTests
         await Assert.That(before.Count).IsEqualTo(3);
 
         // The pane in the other row: the one spanning the width the other two share.
+        // Identified by row, not by width. Width was the original test: "the pane wider than the focused
+        // one" meant the full-width bottom pane, until the rail reserved cells for its draft pen and unread
+        // count and left the pane area an odd 94 cells. The top row then splits 46/47, so the *sibling* —
+        // the pane that pays for this very resize — is also wider than the focused one, and the predicate
+        // matched two. Which row a pane is in is what the assertion was always about.
         var untouched = before
-            .Where(p => p.Key != top && p.Value.Width > before[top].Width)
+            .Where(p => p.Value.Y != before[top].Y)
             .Select(p => p.Key)
             .Single();
 
