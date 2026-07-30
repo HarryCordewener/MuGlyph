@@ -11,6 +11,24 @@ public sealed class TextSettings
     /// <summary>Discard inbound SGR colour and render every line in the theme's default style.</summary>
     public bool StripIncomingColour { get; set; }
 
+    /// <summary>
+    /// Draw a dim wall-clock gutter ahead of every line a world sends — the output view's optional
+    /// timestamp column.
+    /// <para>
+    /// It lives here, and so persists, because it is a preference about how this terminal draws text
+    /// and not a property of a pane that only exists for this run. That is what separates it from the
+    /// other ⌃P view toggles: freeze, zoom and the second command line describe a window you opened,
+    /// while a reader who wants to know when a line arrived wants that tomorrow too.
+    /// </para>
+    /// <para>
+    /// Its surface today is the ⌃P catalog's <c>Show timestamps</c> / <c>Hide timestamps</c> pair, which
+    /// writes it and saves. The F7 screen is where the design puts it ("prefix lines with timestamps",
+    /// beside the rows above and below this one) and is the natural home for a checkbox; adding that row
+    /// is a change to a settings screen rather than to this setting, and is not done here.
+    /// </para>
+    /// </summary>
+    public bool ShowTimestamps { get; set; }
+
     /// <summary>Honour the blink attribute rather than dropping it.</summary>
     public bool AllowBlink { get; set; }
 

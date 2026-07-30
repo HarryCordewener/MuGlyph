@@ -24,23 +24,40 @@ internal sealed class MarkupFormatter(Theme theme, TextSettings? text = null)
     private readonly Theme _theme = theme;
     private readonly TextSettings _text = text ?? new TextSettings();
 
-    /// <summary>Renders a whole line to a single markup string.</summary>
-    public string ToMarkup(StyledLine line) => ToMarkup(line, null);
+    /// <summary>Renders a whole line to a single markup string, with no timestamp gutter.</summary>
+    public string ToMarkup(StyledLine line)
+    {
+        ArgumentNullException.ThrowIfNull(line);
+        return ToMarkupCore(line);
+    }
 
     /// <summary>
     /// Renders a whole line, optionally prefixed with a dim timestamp gutter (the output view's optional
     /// timestamp column). The timestamp precedes the trigger left-rule and the styled spans.
+    /// <para>
+    /// The app's output panes do <em>not</em> go through this overload. They keep the stamp beside the
+    /// line (<see cref="PaneLine"/>) and glue the gutter on with <see cref="WithTimestamp"/> at the
+    /// moment a control is fed, so "show timestamps" is a render-time decision that repaints history
+    /// rather than an append-time one that only reaches lines yet to arrive.
+    /// </para>
     /// </summary>
     public string ToMarkup(StyledLine line, string? timestamp)
     {
         ArgumentNullException.ThrowIfNull(line);
-        var sb = new StringBuilder();
+        return WithTimestamp(ToMarkup(line), timestamp);
+    }
 
-        // Optional timestamp column: a dim gutter derived from the theme foreground, ahead of everything.
-        if (!string.IsNullOrEmpty(timestamp))
-        {
-            sb.Append("[dim]").Append(Escape(timestamp)).Append("[/] ");
-        }
+    /// <summary>
+    /// Prefixes already-rendered line markup with the dim timestamp gutter, or returns it untouched when
+    /// there is no stamp to show. The gutter goes ahead of everything, including the trigger left-rule.
+    /// </summary>
+    public static string WithTimestamp(string markup, string? timestamp) =>
+        string.IsNullOrEmpty(timestamp) ? markup : $"[dim]{Escape(timestamp)}[/] {markup}";
+
+    /// <summary>Renders a whole line's own markup, with no timestamp gutter.</summary>
+    private string ToMarkupCore(StyledLine line)
+    {
+        var sb = new StringBuilder();
 
         // A trigger-highlighted line gets a 2-col left rule in the trigger's colour (design output view).
         if (line.RuleColor is { } rule)
