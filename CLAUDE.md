@@ -86,6 +86,15 @@ fallbacks) for inline images/maps.
   single-line dividers) and the **connection rail** now rendered as well — and **clickable**: a world,
   character or window row switches to it, dispatched through the rail control's *own* `LinkClicked`
   (never the output panes' handler, so a world cannot drive the client's UI from the wire).
+- **A launch connects nothing unless it is told to** (`StartupConnections.Resolve`, Core). A host on the
+  command line wins outright; otherwise it is every character with `ConnectAtStartup` (F5's `at start`),
+  in configuration order; otherwise none, and the client says which of the two empty states it is in.
+  There is **no migration** marking anybody — the old behaviour (first world, first character,
+  unconditionally) is precisely what the setting removes. `StartAsync` builds the windows sequentially
+  in that order and then dials them **concurrently**: focus is taken by the first before any packet
+  leaves, so several auto-connects always land you in the same place, and a black-holed host cannot hold
+  the other worlds' windows hostage. `ConnectAtStartup` is *not* `AutoLogin` — one opens the socket, the
+  other sends the connect line once one is open, and either is useful alone.
 - **Every `[link=…]` payload a pane carries is scheme-tagged by `InteractionKind`** (`LinkPayload`:
   `mux:send:` / `mux:prompt:` / `mux:web:`), and the panes' handler takes the *window id* the click
   came from. Both are security properties, not tidiness. The tagging is disjoint because the
@@ -132,7 +141,7 @@ python3 tools/ansi_frame_to_image.py frame.ansi frame.html   # or .svg
   holds the two sides together; when you add state the demo fakes, pin it against the live writer the
   same way.
 - **Views:** `worlds`/`settings`, `triggers`, `route`, `highlight`, `aliases`, `timers`, `keypad`,
-  `set`, `textansi`, `input`, `logging`, `password`, `freeze`, `spawn`, `split`, `move`, `drag`,
+  `set`, `textansi`, `input`, `logging`, `password`, `startup`, `freeze`, `spawn`, `split`, `move`, `drag`,
   `history`, `history-search`, `history-search-filter`, `draft`, `draft2`, `menu`, `menu-split`,
   `messages`, `quit`, `connections` (**two connections on one world** — the one view where the header's
   fraction, the rail's dots and the quit prompt's count are all visible together and all have to agree;

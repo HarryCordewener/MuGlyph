@@ -441,6 +441,10 @@ public class SettingsSessionEditTests
             WorldsScreenRenderer.PasswordField,
             WorldsScreenRenderer.ConnectStringField,
             WorldsScreenRenderer.OnConnectField,
+
+            // `at start` sits between the on-connect line and the log values, in the drawn order — the
+            // walk is asserted in full so a field inserted without being drawn there would fail here.
+            WorldsScreenRenderer.StartupField,
             WorldsScreenRenderer.LogFormatField,
         })
         {

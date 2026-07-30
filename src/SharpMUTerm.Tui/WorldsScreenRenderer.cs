@@ -82,9 +82,17 @@ internal static class WorldsScreenRenderer
 
     internal const int OnConnectField = 3;
 
-    internal const int LogFormatField = 4;
+    /// <summary>
+    /// <see cref="CharacterDefinition.ConnectAtStartup"/>. Inserted here rather than appended for the
+    /// reason above, and here in particular because it belongs with the connection rows it is about: the
+    /// connect line, the on-connect lines and the auto-login readout are all answers to "what happens
+    /// when this character connects", and this one answers "does it, unasked".
+    /// </summary>
+    internal const int StartupField = 4;
 
-    internal const int LogDirectoryField = 5;
+    internal const int LogFormatField = 5;
+
+    internal const int LogDirectoryField = 6;
 
     /// <summary>
     /// The trigger-set row's field ordinals. A set's name leads, as every list row's does — and here it
@@ -244,6 +252,32 @@ internal static class WorldsScreenRenderer
     internal const string NoDescription = "—";
 
     /// <summary>
+    /// The row for <see cref="CharacterDefinition.ConnectAtStartup"/>. Two cells short, because the
+    /// CHARACTER panel is 48 wide and <c>CharField</c> has already spent fourteen of them on the indent
+    /// and the label column — a row that wraps costs the form a line it was never measured for, which is
+    /// how <c>log folder</c> once fell out of the band (see <see cref="StorageNote"/>).
+    /// <para>
+    /// It says <em>when</em>, and the <c>auto-login</c> row directly under it says <em>what is typed</em>;
+    /// they are adjacent so the difference is read rather than guessed, and neither label contains the
+    /// other's word. <c>at start</c> in particular avoids "auto-": the one thing this must not be called
+    /// is a second kind of auto-login.
+    /// </para>
+    /// </summary>
+    internal const string StartupLabel = "at start";
+
+    /// <summary>Marked: this character is dialled when the client launches.</summary>
+    internal const string StartupOn = "connect";
+
+    /// <summary>
+    /// Unmarked — the default. It reads <c>off</c> rather than <c>no</c> so it matches the world's
+    /// <c>keepalive</c> row four lines above it, the screen's other "this feature is simply not on"
+    /// value, and is drawn in the same muted ink for the same reason.
+    /// </summary>
+    internal const string StartupOff = "off";
+
+    private static readonly string[] StartupChoices = { StartupOn, StartupOff };
+
+    /// <summary>
     /// The screen's four navigable panes, in ⇥ order: the WORLDS list (no checkbox on a world's row,
     /// but ⏎ opens the world's own fields — the ones the detail column lists), the selected world's
     /// characters (Space flips auto-login, ⏎ edits the character's name, on-connect line and log), the
@@ -317,6 +351,11 @@ internal static class WorldsScreenRenderer
                 ScreenField.Defaulted(
                     "connect", () => c.ConnectString, v => c.ConnectString = v, ConnectStringTemplate.Default),
                 ScreenField.Optional("on connect", () => c.OnConnect, v => c.OnConnect = v),
+                ScreenField.Choice(
+                    StartupLabel,
+                    () => c.ConnectAtStartup ? StartupOn : StartupOff,
+                    v => c.ConnectAtStartup = string.Equals(v, StartupOn, StringComparison.OrdinalIgnoreCase),
+                    StartupChoices),
                 ScreenField.Enumeration("log", () => c.Logging.Format, v => c.Logging.Format = v),
                 ScreenField.Optional("log folder", () => c.Logging.Directory, v => c.Logging.Directory = v)))
                 .Concat(CharacterButtons(world, selectedCharacter))
@@ -829,10 +868,19 @@ internal static class WorldsScreenRenderer
 
     /// <summary>
     /// The character form — labels left-aligned with their values, one field per row. The editable ones
-    /// are the character row's own fields (name, password, connect line, on-connect, then the two log
-    /// values) and are the only six drawn in a field well. The other two deliberately are not:
-    /// auto-login is a readout of the character row's own checkbox, and the session line is a report of
-    /// what the connection is doing rather than a setting at all.
+    /// are the character row's own fields (name, password, connect line, on-connect, <c>at start</c>,
+    /// then the two log values) and are the only seven drawn in a field well. The other two deliberately
+    /// are not: auto-login is a readout of the character row's own checkbox, and the session line is a
+    /// report of what the connection is doing rather than a setting at all.
+    /// <para>
+    /// <c>at start</c> is a field rather than a second checkbox because a row carries at most one and
+    /// this row's is already auto-login — the same constraint that made the world's two security flags a
+    /// pane of their own. A closed two-value choice is the next-nearest control the screen already
+    /// knows, and it lands the setting beside the rows it has to be told apart from rather than in a
+    /// pane somewhere else. The pair is drawn adjacent on purpose: <c>at start</c> decides whether a
+    /// connection is opened at launch, <c>auto-login</c> decides whether the connect line is sent once
+    /// one exists, and neither implies the other.
+    /// </para>
     /// <para>
     /// The <b>password</b> was a seventh readout until it had somewhere to go. It was drawn without a
     /// well and labelled <c>keychain</c> — an affordance-free row advertising a credential store that
@@ -892,7 +940,15 @@ internal static class WorldsScreenRenderer
                 selectedCharacter,
                 OnConnectField,
                 pane: CharactersPane)),
-            CharField("auto-login", ScreenChrome.ReadOnly(character.AutoLogin ? "yes" : "no")),
+            CharField(StartupLabel, Field(
+                StartupDetail(character.ConnectAtStartup),
+                cursor,
+                selectedCharacter,
+                StartupField,
+                pane: CharactersPane)),
+            CharField(
+                "auto-login",
+                ScreenChrome.ReadOnly(character.AutoLogin ? "yes" : "no") + $" [{Label}]— sends the connect line[/]"),
             CharField("session", ScreenChrome.ReadOnly("offline")),
             CharField("log", Field(
                 $"[{Value}]{character.Logging.Format.ToString()}[/]",
@@ -1126,6 +1182,14 @@ internal static class WorldsScreenRenderer
     /// <c>off</c> directly below it), and anything else is named <em>override</em>, because the choice
     /// list gives no other way to tell that picking one stops the client believing the server.
     /// </summary>
+    /// <summary>
+    /// The <c>at start</c> cell: unmarked reads as the unremarkable default it is (muted, like the
+    /// <c>keepalive</c> row's <c>off</c> and the encoding's <c>auto</c>), and marked is drawn in the
+    /// value ink because it is a thing this client will go and do on its own.
+    /// </summary>
+    internal static string StartupDetail(bool connectAtStartup) =>
+        connectAtStartup ? $"[{Value}]{StartupOn}[/]" : $"[{Label}]{StartupOff}[/]";
+
     internal static string EncodingDetail(string? encoding) =>
         TelnetSessionOptions.ResolveEncoding(encoding) is null
             ? $"[{Label}]{TelnetSessionOptions.AutoEncodingName}[/]"
@@ -1133,8 +1197,6 @@ internal static class WorldsScreenRenderer
 
     private static string CharField(string label, string value) =>
         $"  [{Label}]{label.PadRight(CharLabelWidth)}[/]  {value}";
-
-    private static string OnOff(bool value) => value ? "on" : "off";
 
     private static string Band(string inner, string bg, int width)
     {

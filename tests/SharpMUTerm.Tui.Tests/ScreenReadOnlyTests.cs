@@ -153,9 +153,16 @@ public class ScreenReadOnlyTests
     }
 
     /// <summary>
-    /// The character form, where two of eight rows are readouts: a mirror of the character row's own
-    /// checkbox, and the state of a connection. The other six — the name, the password, the connect
-    /// line, the on-connect line and the two log values — are the character row's own fields.
+    /// The character form, where two of nine rows are readouts: a mirror of the character row's own
+    /// checkbox, and the state of a connection. The other seven — the name, the password, the connect
+    /// line, the on-connect line, <c>at start</c> and the two log values — are the character row's own
+    /// fields.
+    /// <para>
+    /// <c>at start</c> is the newest and the one the rule has most to say about, because it sits next to
+    /// a readout that looks like it: <c>auto-login</c> mirrors the list row's checkbox and cannot be
+    /// typed here, while <c>at start</c> is a field of the row and can. Drawing them alike would make one
+    /// of the two a lie whichever way round it went.
+    /// </para>
     /// <para>
     /// The <c>password</c> row moved sides. It used to be asserted here as a readout, drawn muted and
     /// unwelled, and that was the honest answer while there was nowhere to put a password: the value was
@@ -170,7 +177,8 @@ public class ScreenReadOnlyTests
     {
         var lines = WorldsScreenRenderer.FormColumn(Worlds()[0].Characters[0], ScreenPalette.Accent);
 
-        foreach (var label in new[] { "name", "password", "connect", "on connect", "log", "log folder" })
+        foreach (var label in
+                 new[] { "name", "password", "connect", "on connect", "at start", "log", "log folder" })
         {
             await Assert.That(InAWell(Row(lines, label))).IsTrue().Because(label + " is editable");
         }
@@ -179,6 +187,69 @@ public class ScreenReadOnlyTests
         {
             await Assert.That(InAWell(Row(lines, label))).IsFalse().Because(label + " is a readout");
             await Assert.That(Row(lines, label)).Contains(ScreenPalette.Muted).Because(label);
+        }
+
+        // The row's one checkbox is auto-login, and it is drawn in the list rather than in this form —
+        // so `at start` may not grow one here either. A second box on the form would promise Space a
+        // second meaning on a row that has none.
+        await Assert.That(lines.Any(HasCheckbox)).IsFalse();
+    }
+
+    /// <summary>
+    /// The two facts, told apart in the words on screen. They are one keystroke apart on a 48-cell panel
+    /// and the whole reason the feature needed a second boolean rather than a wider meaning for the
+    /// first, so the screen has to say which is which: neither label wears the other's word, and the row
+    /// that only sends a login line says that is what it does.
+    /// </summary>
+    [Test]
+    public async Task Worlds_AtStartAndAutoLoginReadAsTwoDifferentThings()
+    {
+        var worlds = Worlds();
+        worlds[0].Characters[0].ConnectAtStartup = true;
+        var lines = WorldsScreenRenderer.FormColumn(worlds[0].Characters[0], ScreenPalette.Accent);
+
+        await Assert.That(Visible(Row(lines, "at start")).Trim())
+            .IsEqualTo($"at start    {WorldsScreenRenderer.StartupOn}");
+        await Assert.That(Visible(Row(lines, "auto-login")).Trim())
+            .IsEqualTo("auto-login  yes — sends the connect line");
+
+        // Neither label may contain the other's word: "auto-start" beside "auto-login" is the confusion
+        // the naming exists to avoid, and it is the one a later edit is most likely to reintroduce.
+        await Assert.That(WorldsScreenRenderer.StartupLabel).DoesNotContain("auto");
+        await Assert.That(WorldsScreenRenderer.StartupLabel).DoesNotContain("login");
+
+        // Unmarked is drawn in the same dim label ink the keepalive row spends on its own "off", rather
+        // than in the value ink: it is the absence of a setting, not a setting whose value is "no".
+        worlds[0].Characters[0].ConnectAtStartup = false;
+        var off = WorldsScreenRenderer.FormColumn(worlds[0].Characters[0], ScreenPalette.Accent);
+        await Assert.That(Visible(Row(off, "at start")).Trim())
+            .IsEqualTo($"at start    {WorldsScreenRenderer.StartupOff}");
+        await Assert.That(Row(off, "at start")).Contains(ScreenPalette.Label);
+    }
+
+    /// <summary>
+    /// Every row of the CHARACTER form fits its 48-cell panel in both states of the new row — a wrapped
+    /// row costs the form a line the view never measured, which is how <c>log folder</c> once fell out of
+    /// the band. Held here as well as in <see cref="ScreenPasswordFieldTests"/> because this row is the
+    /// one that just grew, and the row under it grew a clause at the same time.
+    /// </summary>
+    [Test]
+    public async Task Worlds_TheCharacterFormStillFitsIts48CellPanelWithTheStartupRow()
+    {
+        const int panel = 48 - 1; // ScreenChrome.Indent spends one of them (WorldsScreenView)
+
+        foreach (var marked in new[] { true, false })
+        {
+            var worlds = Worlds();
+            worlds[0].Characters[0].ConnectAtStartup = marked;
+            worlds[0].Characters[0].AutoLogin = marked;
+
+            foreach (var line in WorldsScreenRenderer.FormColumn(worlds[0].Characters[0], ScreenPalette.Accent))
+            {
+                await Assert.That(MarkupText.VisibleLength(line))
+                    .IsLessThanOrEqualTo(panel)
+                    .Because($"marked={marked}: {line}");
+            }
         }
     }
 

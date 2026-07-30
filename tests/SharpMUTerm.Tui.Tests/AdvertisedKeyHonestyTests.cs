@@ -261,6 +261,28 @@ public class AdvertisedKeyHonestyTests
     }
 
     /// <summary>
+    /// <c>--help</c> answers "why does it connect to <em>that</em>?", which is the question the startup
+    /// mark exists to answer and the one a reader reaches for this page with. It named a rule that is no
+    /// longer true — "the first configured world is used" — so both halves are pinned: what happens with
+    /// no host, and that the two similar-sounding settings are not the same thing. The label it quotes is
+    /// taken from the screen rather than retyped, so a renamed row cannot leave the page pointing at a
+    /// control that no longer exists.
+    /// </summary>
+    [Test]
+    public async Task HelpSaysWhatConnectsWhenNoHostIsGiven()
+    {
+        var help = Program.UsageText;
+
+        await Assert.That(help).Contains($"'{WorldsScreenRenderer.StartupLabel}' on F5");
+        await Assert.That(help).Contains("none by default");
+        await Assert.That(help).Contains("no connection");
+        await Assert.That(help).Contains("not 'auto-login'");
+
+        // The rule it used to state, which the setting replaced.
+        await Assert.That(help).DoesNotContain("the first configured world is used");
+    }
+
+    /// <summary>
     /// <c>--help</c> no longer claims Ctrl+O is "next pane" while listing nothing about directional
     /// movement — and the chords it does name are ones the app claims. ⌃O is checked against the app's own
     /// shortcut list rather than against a memory of what it was bound to.
