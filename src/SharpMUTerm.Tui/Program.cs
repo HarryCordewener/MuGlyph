@@ -69,11 +69,17 @@ internal static class Program
         // can be asserted without a terminal; the parsing stays here.
         var startup = StartupConnections.Resolve(config, CommandLineWorld(args));
 
+        // The one directory this client writes its own files into, resolved once, here, because this is
+        // the only code that knows it is the live client. Everything below is handed it rather than
+        // reaching for it: an app that is not this entry point — a snapshot, a test — is given none and so
+        // writes no transcript at all. See SharpMUTermApp's `logRoot` parameter for the defect that
+        // resolving it inside the app caused.
+        var logRoot = Path.Combine(Path.GetDirectoryName(ConfigurationStore.DefaultPath)!, "logs");
+
         // Client diagnostics: an in-memory history behind ⌃P ▸ Show client messages, plus a rolling
         // file beside the session logs but plainly not one of them (client-diagnostics-*.log next to
         // the World.Character-*.log transcripts). Never a console sink — this app owns the screen.
-        using var diagnostics = ClientDiagnostics.Create(
-            Path.Combine(Path.GetDirectoryName(ConfigurationStore.DefaultPath)!, "logs"));
+        using var diagnostics = ClientDiagnostics.Create(logRoot);
 
         // Drain what the configuration load had to say now that there is somewhere to say it. A secrets file
         // that could not be read means characters start with no password — worth one line in the client
@@ -89,7 +95,8 @@ internal static class Program
             config,
             capabilities,
             diagnostics: diagnostics,
-            save: saved => ConfigurationStore.Save(ConfigurationStore.DefaultPath, saved));
+            save: saved => ConfigurationStore.Save(ConfigurationStore.DefaultPath, saved),
+            logRoot: logRoot);
         var exitCode = liveApp.Run(startup); // blocks on the SharpConsoleUI main loop until exit
 
         // Persist the workspace so the next launch resumes where this one left off.

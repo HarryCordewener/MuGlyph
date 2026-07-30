@@ -62,11 +62,6 @@ public class HistorySearchEndToEndTests
         Console.SetIn(TextReader.Null);
 
         var config = DemoScene.Build();
-        foreach (var character in config.Worlds.SelectMany(w => w.Characters))
-        {
-            character.Logging = new LoggingSettings();
-        }
-
         config.Worlds[0].Characters[0].Password = password;
 
         var app = new SharpMUTermApp(config, Headless, new HeadlessConsoleDriver(Width, Height));

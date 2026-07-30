@@ -35,7 +35,6 @@ public class MacroDispatchEndToEndTests
         Console.SetIn(TextReader.Null);
 
         var config = DemoScene.Build();
-        config.Worlds[0].Characters[0].Logging = new LoggingSettings();
 
         var app = new SharpMUTermApp(config, Headless, new HeadlessConsoleDriver(Width, Height));
         app.BindWorldWithoutConnecting(config.Worlds[0]);

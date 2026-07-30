@@ -55,11 +55,6 @@ public class CommandDispatchTests
     {
         Console.SetIn(TextReader.Null);
         var config = DemoScene.Build();
-        foreach (var character in config.Worlds.SelectMany(w => w.Characters))
-        {
-            character.Logging = new LoggingSettings();
-        }
-
         var clock = new ManualTimeProvider();
         var app = new SharpMUTermApp(config, Headless, new HeadlessConsoleDriver(Width, Height), clock);
         var telnet = new Transports { Fault = fault };
@@ -245,39 +240,31 @@ public class CommandDispatchTests
     /// as long as the surface has existed, and <c>term:log-on</c>/<c>term:log-off</c> were found the same
     /// way while fixing it. Every id the surface can emit is dispatched here, for real, and an
     /// unhandled one fails.
+    /// <para>
+    /// It dispatches <c>term:log-on</c> against the demo worlds as they come — Corvid's format really is
+    /// <see cref="LogFormat.Html"/> — and no file appears anywhere, because this app was handed no log
+    /// root. It used to point every character at a throwaway directory it created and deleted, which is
+    /// the per-test workaround the gate replaces; the id being dispatched for real is the point, and
+    /// re-homing the write was only ever a way of surviving it.
+    /// </para>
     /// </summary>
     [Test]
     public async Task EveryCatalogIdIsHandled()
     {
         var (app, _, _) = App();
-        var logs = Directory.CreateTempSubdirectory("sharpmuterm-dispatch");
-        foreach (var character in DemoCharacters(app))
-        {
-            character.Logging = new LoggingSettings { Directory = logs.FullName };
-        }
 
-        try
-        {
-            var ids = app.BuildCatalog().Select(c => c.Id).ToList();
-            await Assert.That(ids).Contains($"char:{Corvid}"); // the catalog really is offering these
-            await Assert.That(ids).Contains("term:log-on");
+        var ids = app.BuildCatalog().Select(c => c.Id).ToList();
+        await Assert.That(ids).Contains($"char:{Corvid}"); // the catalog really is offering these
+        await Assert.That(ids).Contains("term:log-on");
 
-            foreach (var id in ids)
-            {
-                await Assert.That(app.DispatchCommand(id))
-                    .IsTrue()
-                    .Because($"the command surface offers '{id}', so dispatch must implement it");
-                await app.LastCommand;
-            }
-        }
-        finally
+        foreach (var id in ids)
         {
-            logs.Delete(recursive: true);
+            await Assert.That(app.DispatchCommand(id))
+                .IsTrue()
+                .Because($"the command surface offers '{id}', so dispatch must implement it");
+            await app.LastCommand;
         }
     }
-
-    private static IEnumerable<CharacterDefinition> DemoCharacters(SharpMUTermApp app) =>
-        app.Configuration.Worlds.SelectMany(w => w.Characters);
 
     /// <summary>An id nothing implements returns false and says so on the status line, session or none.</summary>
     [Test]

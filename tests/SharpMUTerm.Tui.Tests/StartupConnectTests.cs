@@ -60,11 +60,6 @@ public class StartupConnectTests
     private static (SharpMUTermApp App, Transports Telnet) App(AppConfiguration config)
     {
         Console.SetIn(TextReader.Null);
-        foreach (var character in config.Worlds.SelectMany(w => w.Characters))
-        {
-            character.Logging = new LoggingSettings();
-        }
-
         var app = new SharpMUTermApp(config, Headless, new HeadlessConsoleDriver(Width, Height), new ManualTimeProvider());
         var telnet = new Transports();
         app.TelnetFactory = telnet.Open;

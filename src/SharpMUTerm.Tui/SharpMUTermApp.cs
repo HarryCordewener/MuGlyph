@@ -304,6 +304,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>How the configuration is written back, or null for an app that owns no file.</summary>
     private readonly Action<AppConfiguration>? _save;
 
+    /// <summary>
+    /// The directory session transcripts are written under, or null for an app that owns no log
+    /// directory — which is the default, and is what every test and every snapshot gets. See the
+    /// <c>logRoot</c> constructor parameter for why it is handed in rather than resolved here.
+    /// </summary>
+    private readonly string? _logRoot;
+
     /// <summary>The pane the live mouse drag is hovering, and the edge it would split — null when idle.</summary>
     private string? _dragTargetPaneId;
     private Edge? _dragEdge;
@@ -338,16 +345,37 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// the entry point supplies the way back to it.
     /// </para>
     /// </param>
+    /// <param name="logRoot">
+    /// Where this app writes session transcripts, or null for an app that owns no log directory — which
+    /// is the default, and is what every test and every snapshot gets. It is the exact counterpart of
+    /// <paramref name="save"/>, and it exists for the same reason.
+    /// <para>
+    /// It used to be resolved here, unconditionally, from the directory of
+    /// <see cref="ConfigurationStore.DefaultPath"/> — so <em>any</em> app that opened a session for a
+    /// character whose <see cref="LoggingSettings.Format"/> was not <see cref="LogFormat.None"/> created a
+    /// real file under the developer's own <c>~/.config/SharpMUTerm/logs</c>. The demo scene's
+    /// <c>Aetherfall.Corvid</c> is exactly such a character, so the suites did it several times a run and
+    /// had left 277 empty transcripts beside genuine ones. Only the entry point knows it is the live
+    /// client, so only the entry point supplies the directory.
+    /// </para>
+    /// <para>
+    /// Null means <em>no logging at all</em>, not "no default location": a character carrying an explicit
+    /// <see cref="LoggingSettings.Directory"/> is refused too. An app that owns no log directory owns none,
+    /// and a fixture naming an absolute path is still a test reaching outside itself.
+    /// </para>
+    /// </param>
     public SharpMUTermApp(
         AppConfiguration config,
         TerminalCapabilities capabilities,
         IConsoleDriver? driver = null,
         TimeProvider? time = null,
         ClientDiagnostics? diagnostics = null,
-        Action<AppConfiguration>? save = null)
+        Action<AppConfiguration>? save = null,
+        string? logRoot = null)
     {
         _config = config;
         _save = save;
+        _logRoot = string.IsNullOrWhiteSpace(logRoot) ? null : logRoot;
         _capabilities = capabilities;
         _time = time ?? TimeProvider.System;
         _diagnostics = diagnostics ?? ClientDiagnostics.InMemory();
@@ -1360,14 +1388,24 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </para>
     /// </summary>
     /// <summary>
-    /// Where a character's session log is written: its own configured folder, or the app's default
-    /// <c>logs</c> directory. The same folder the client's diagnostics file lives in, and deliberately
-    /// not the same file — one is a transcript someone keeps, the other is client chrome.
+    /// Where a character's session log is written: its own configured folder, or this app's log root —
+    /// the same folder the client's diagnostics file lives in, and deliberately not the same file, since
+    /// one is a transcript someone keeps and the other is client chrome.
+    /// <para>
+    /// <b>Null when this app owns no log root</b> (see the <c>logRoot</c> constructor parameter), and null
+    /// then whatever the character says. An explicit <see cref="LoggingSettings.Directory"/> is a stronger
+    /// statement of intent than a default, and it is still overruled: the root is the app's answer to
+    /// "may I write transcripts at all", the character's directory only ever chose <em>where</em> within
+    /// that. Reading it the other way would leave every fixture that names a path free to write outside
+    /// itself — which is how the defect this gate closes stayed invisible.
+    /// </para>
     /// </summary>
-    private static string LogFolder(CharacterDefinition? character) =>
-        string.IsNullOrWhiteSpace(character?.Logging.Directory)
-            ? Path.Combine(Path.GetDirectoryName(ConfigurationStore.DefaultPath)!, "logs")
-            : character!.Logging.Directory!;
+    private string? LogFolder(CharacterDefinition? character) =>
+        _logRoot is null
+            ? null
+            : string.IsNullOrWhiteSpace(character?.Logging.Directory)
+                ? _logRoot
+                : character!.Logging.Directory!;
 
     private ILogSink? OpenLog(WorldDefinition world, CharacterDefinition? character, LogFormat? forceFormat = null)
     {
@@ -1377,7 +1415,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return null;
         }
 
-        var folder = LogFolder(character);
+        // No log root, no transcript — silently, because this arm is every snapshot and every test, and a
+        // connect is not the moment to complain that the client was built without a place to write. What
+        // must never happen is the *reporting* surfaces claiming a log that does not exist; that is why
+        // HeaderLogFormat and StartLogging both consult the same gate rather than the character's setting.
+        if (LogFolder(character) is not { } folder)
+        {
+            return null;
+        }
+
         var stem = $"{world.Name}.{character?.Name ?? "anonymous"}-{DateTime.Now:yyyyMMdd-HHmmss}"
             .Replace(Path.DirectorySeparatorChar, '_')
             .Replace(Path.AltDirectorySeparatorChar, '_');
@@ -3464,6 +3510,19 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
+    /// The format the header's <c>LOG</c> cell reports — the active character's, or
+    /// <see cref="LogFormat.None"/> whenever this app owns no log root, because then no character's
+    /// output is being written whatever its settings say.
+    /// <para>
+    /// The same reasoning <see cref="WorldSession.CurrentEncoding"/> is built on: a configured value is a
+    /// <em>preference</em>, and a status cell that reports one as though it were in force is a claim the
+    /// client cannot back. <c>LOG html</c> over a snapshot or a test run — which is where every logless app
+    /// is — said exactly that, next to a directory the app was never given.
+    /// </para>
+    /// </summary>
+    private LogFormat HeaderLogFormat() => _logRoot is null ? LogFormat.None : ActiveLogging().Format;
+
+    /// <summary>
     /// Opens the F5 Worlds &amp; Characters screen: four panes (worlds → characters → the selected
     /// character's trigger sets → the selected world's security checkboxes), seeded on whatever is
     /// connected so the screen opens where the user already is.
@@ -4373,9 +4432,21 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// character still on <see cref="LogFormat.None"/> — the default — gets a plain-text log, because
     /// asking for one is what the command means. It was emitted by the catalog and handled nowhere, so
     /// it did nothing at all, and the entry's label never flipped to <c>Pause logging</c> either.
+    /// <para>
+    /// An app with no log root refuses out loud, first and before anything else is looked at, because that
+    /// is an app-wide fact and true whatever is connected. Refusing is the only honest answer available:
+    /// doing nothing quietly would leave the entry looking like it worked, and printing
+    /// <c>*** Logging to …</c> over a client that opened no file is the defect this gate exists to stop.
+    /// </para>
     /// </summary>
     private void StartLogging()
     {
+        if (_logRoot is null)
+        {
+            RefuseCommand("nothing to log to — this client owns no log directory");
+            return;
+        }
+
         if (_active is not { } session)
         {
             RefuseCommand("nothing to log — pick a character first (⌃P ▸ Switch to …)");
@@ -7546,7 +7617,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         var conn = _config.Worlds.Count > 0
             ? $"{connected}/{ConfiguredConnections()} characters   "
             : string.Empty;
-        var logFormat = ActiveLogging().Format;
+        var logFormat = HeaderLogFormat();
         var log = logFormat == LogFormat.None
             ? $"[dim]{Glyphs.Log} LOG off[/]"
             : $"[#00f5b7]{Glyphs.Log}[/] [dim]LOG {logFormat.ToString().ToLowerInvariant()}[/]";
