@@ -24,24 +24,56 @@ internal static class RailRenderer
 {
     private const string DefaultAccent = "#00f5b7";
 
-    public static List<string> Render(IReadOnlyList<RailRow> rows)
+    /// <param name="rows">The rail's rows, as <see cref="RailModel"/> projects them.</param>
+    /// <param name="maxWidth">
+    /// The widest a row may be, in visible cells — the sidebar's own cap. A row longer than that is elided
+    /// rather than left to wrap, because the sidebar's width is the widest row's <em>clamped</em>
+    /// (<c>SharpMUTermApp.RailWidth</c>), so any name past the clamp — a web page's title is the easy one —
+    /// would run onto a second line. A wrapped rail row is the thing the report was about.
+    /// </param>
+    public static List<string> Render(IReadOnlyList<RailRow> rows, int maxWidth = int.MaxValue)
     {
+        ArgumentNullException.ThrowIfNull(rows);
         var lines = new List<string>(rows.Count);
         foreach (var row in rows)
         {
-            lines.Add(row.Kind switch
-            {
-                RailRowKind.Header => $"[dim]┌ {Glyphs.Connections} CONNECTIONS[/]",
-                RailRowKind.World => Link(row, $"[{Accent(row)}]▚[/] [bold]{Escape(row.Label)}[/]"),
-                RailRowKind.Host => $"{Indent(row)}[dim]{Escape(row.Label)}[/]",
-                RailRowKind.Empty => $"{Indent(row)}{Link(row, $"[dim]{Escape(row.Label)}[/]")}",
-                RailRowKind.Character => Character(row),
-                RailRowKind.Window => Window(row),
-                _ => Escape(row.Label),
-            });
+            lines.Add(Fit(row, maxWidth, RenderRow));
         }
 
         return lines;
+    }
+
+    private static string RenderRow(RailRow row) => row.Kind switch
+    {
+        RailRowKind.Header => $"[dim]┌ {Glyphs.Connections} CONNECTIONS[/]",
+        RailRowKind.World => Link(row, $"[{Accent(row)}]▚[/] [bold]{Escape(row.Label)}[/]"),
+        RailRowKind.Host => $"{Indent(row)}[dim]{Escape(row.Label)}[/]",
+        RailRowKind.Empty => $"{Indent(row)}{Link(row, $"[dim]{Escape(row.Label)}[/]")}",
+        RailRowKind.Character => Character(row),
+        RailRowKind.Window => Window(row),
+        _ => Escape(row.Label),
+    };
+
+    /// <summary>
+    /// Renders a row, and if it does not fit, renders it again with its <see cref="RailRow.Label"/> shortened
+    /// by however much it overran. The label is the only part that may give ground: the accent spine, the
+    /// connected dot, the unread count, the ✎ pen and the pane column are one or two cells each and every one
+    /// of them is information. Measured with the app's own <see cref="SharpMUTermApp.MarkupWidth"/>, because
+    /// that is the measure the sidebar's width is derived from — anything else could agree here and disagree
+    /// where it matters.
+    /// </summary>
+    private static string Fit(RailRow row, int maxWidth, Func<RailRow, string> render)
+    {
+        var line = render(row);
+        var over = SharpMUTermApp.MarkupWidth(line) - maxWidth;
+        if (over <= 0 || row.Label.Length == 0)
+        {
+            return line;
+        }
+
+        var elements = row.Label.EnumerateRunes().Select(r => r.ToString()).ToList();
+        var keep = Math.Max(1, elements.Count - over - 1); // one cell goes to the ellipsis
+        return render(row with { Label = string.Concat(elements.Take(keep)) + "…" });
     }
 
     /// <summary>
@@ -84,13 +116,25 @@ internal static class RailRenderer
         return $"{Indent(row)}{Link(row, $"{marker} [{Accent(row)}]{dot}[/] {name}{unread}")}";
     }
 
+    /// <summary>
+    /// A window row: what the window is, then — when there is anything to say — where it is.
+    /// <para>
+    /// The second column is the hosting pane, and it earns its place only in a split: with one pane there
+    /// is one place a window can be, so the model leaves <see cref="RailRow.Pane"/> null and nothing is
+    /// drawn. That is not only tidiness. The three spaces of the gap were emitted unconditionally, so a
+    /// single-pane rail measured three cells wider than its content — and the rail's width is taken out of
+    /// the pane area, which is what every connected session is told over NAWS.
+    /// </para>
+    /// <para><c>closed</c> is a state rather than a place, so it always shows.</para>
+    /// </summary>
     private static string Window(RailRow row)
     {
         var name = Escape(row.Label);
         var unsent = row.Unsent ? $" [#ffd700]{Glyphs.Draft}[/]" : string.Empty;
         var unread = row.Unread > 0 ? $" [#00f5b7]{row.Unread}[/]" : string.Empty;
-        var pane = row.Closed ? "[dim]closed[/]" : $"[dim]{Escape(row.Pane ?? string.Empty)}[/]";
-        return $"{Indent(row)}{Link(row, $"[dim]▪[/] {name}{unsent}{unread}   {pane}")}";
+        var where = row.Closed ? "closed" : row.Pane is { Length: > 0 } pane ? pane : null;
+        var tail = where is null ? string.Empty : $"   [dim]{Escape(where)}[/]";
+        return $"{Indent(row)}{Link(row, $"[dim]▪[/] {name}{unsent}{unread}{tail}")}";
     }
 
     /// <summary>

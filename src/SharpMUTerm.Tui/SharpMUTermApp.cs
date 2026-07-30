@@ -635,6 +635,18 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             ShowDemoWebPage();
         }
 
+        // A rail row that outgrows the sidebar *after* the pane area was built — the shape behind the
+        // reported two-line rail row. The report's own route was the startup retitle (the main window is
+        // created as "Main" and a session renames it), which a resumed demo cannot show because its titles
+        // are known before the first frame; this is the other route to the same state and the one a world can
+        // reach on its own: a second page loaded into the web view, whose title is whatever the page says.
+        // The row is elided to the column rather than wrapped, and the sidebar is as wide as its widest row.
+        if (string.Equals(view, "rail-long", StringComparison.OrdinalIgnoreCase))
+        {
+            ShowDemoWebPage();
+            ShowDemoWebPage("A Survey of the Coast Road and the Northern Watch, with Appendices");
+        }
+
         // History-recall state: seed a couple of sent commands, then recall the newest so the input
         // shows a recalled line and the gutter shows the "history · ↓ back to draft" affordance.
         if (string.Equals(view, "history", StringComparison.OrdinalIgnoreCase))
@@ -1169,9 +1181,22 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         AttachSession(session, windowId);
         if (_workspace.FindWindow(windowId) is { } window)
         {
-            // The main window is titled for the world (it is the shell's own window); a character's own
-            // window is titled for the character, which is what tells two of them apart in a tab strip.
-            window.Title = windowId == MainWindowId ? session.World.Name : SessionTitle(session);
+            // Every session's own window is titled for the session — its character, or its world when it has
+            // none (a host typed on the command line). The main window used to be special-cased to the
+            // world's name on the grounds that it is "the shell's own window", and it is not: it holds one
+            // character's transcript exactly like a switched-to character's tab does. That special case is
+            // what put the world's name on a row already nested under the world in the rail, and on the quit
+            // prompt's draft line directly under "1 world connected — <that same world>". A tab strip of
+            // "Aetherfall" beside "Rookery" was the same inconsistency: one names a world, the other a
+            // character, and they sit in one row.
+            window.Title = SessionTitle(session);
+
+            // And it is recorded as this session's, for the same reason <see cref="OpenSessionWindow"/>
+            // does it on the adoption path: the main window is built before any session exists, so the
+            // first session adopts one whose owner is nobody. Ownership is not cosmetic — the rail lists a
+            // character's windows by it and <see cref="WindowSession"/> resolves what a window's typing
+            // and its links act on by it — and the startup path is the one that reaches this window.
+            _workspace.SetWindowOwner(windowId, session.SessionKey);
         }
 
         var main = PaneContentFor(windowId, session.World.Name);
@@ -1420,7 +1445,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// The owner recorded on a first-seen window is the <paramref name="session"/> whose trigger fired,
     /// not <c>_active</c>. It used to be the latter, so a background world's capture opened a window
     /// labelled and owned by whichever character happened to be focused — and ownership is not
-    /// cosmetic: the rail lists a character's windows by it, and <see cref="LinkSession"/> resolves
+    /// cosmetic: the rail lists a character's windows by it, and <see cref="WindowSession"/> resolves
     /// which world a link clicked in a spawn window sends to by it.
     /// </para>
     /// </summary>
@@ -1429,7 +1454,9 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         var existed = _workspace.FindWindow(Workspace.SpawnWindowId(target)) is not null;
         var window = _workspace.RouteSpawn(target, session.SessionKey);
         window.CapturePattern ??= CaptureFor(target); // label the pane with the trigger that feeds it
-        window.OwnerLabel ??= session.Character?.Name ?? _workspace.FindWindow(MainWindowId)?.Title;
+        // Its owner's own name, which for a session with no character is its world's. It used to fall back on
+        // the *main window's* title, which is a different session's name as soon as more than one is open.
+        window.OwnerLabel ??= SessionTitle(session);
         PaneContentFor(window.Id, window.Title); // ensure the live control exists before buffering
         AppendWindowLine(window.Id, _formatter.ToMarkup(line, Stamp()));
 
@@ -1937,11 +1964,19 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <para>
     /// <b>What "focus" means here, given the pin.</b> This app has two focus facts and they are separate
     /// by design: which pane the workspace keys act on (<c>Layout.FocusedPaneId</c>) and which command
-    /// line ⏎ sends from (<see cref="_armed"/>). Keyboard focus is pinned to the second — today's fix for
-    /// a paste bug — and that pin is not weakened here: these keys move pane <em>selection</em> and bar
+    /// line ⏎ sends from (<see cref="_armed"/>). Keyboard focus is pinned to the second — a fix for a
+    /// paste bug — and that pin is not weakened here: these keys move pane <em>selection</em> and bar
     /// <em>arming</em>, never framework focus, so typing continues to land in the command line from
-    /// wherever you have navigated to. That is why "move into the pane" needs no third state: there is
-    /// nowhere for the keyboard to go.
+    /// wherever you have navigated to.
+    /// </para>
+    /// <para>
+    /// <b>But moving selection does move the session.</b> The pin is about which control the framework
+    /// hands a keystroke to; it says nothing about <em>which character the bar talks to</em>, and that
+    /// second fact does have to follow. The first cut of these keys reasoned "it never moves keyboard
+    /// focus, so no third piece of state is needed" and left the command line pointed at the world you had
+    /// navigated away from — attention on one pane, keystrokes to another, which is the class of bug the
+    /// per-window link work exists to eliminate. So <see cref="FocusPane"/> goes through
+    /// <see cref="Activate"/>: session, prompt, drafts and all, by the same route a tab click takes.
     /// </para>
     /// <para>
     /// <b>Vertically the panes and the bars are one ladder</b>, because on screen they are: the bars are
@@ -2022,9 +2057,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
-    /// Moves pane selection and brings the rest of the app in line with it — the same three steps
-    /// <see cref="CyclePane"/> takes, plus the repaint of the indicator, so ⌃O and the Ctrl+arrows cannot
-    /// end up meaning different things by different routes.
+    /// Moves pane selection and brings the rest of the app in line with it, by <em>activating</em> the
+    /// pane's own active window — the same path a tab click and a rail click take (see
+    /// <see cref="Activate"/>), so ⌃O, the Ctrl+arrows, the ⌃P entries and the mouse cannot end up meaning
+    /// different things by different routes.
+    /// <para>
+    /// Activating is what makes the command line talk to the character whose pane you moved to. It was
+    /// once only <see cref="SyncToFocusedPane"/> — drafts followed the move but the session did not, so a
+    /// line typed after ⌃→ went to the world you had just left.
+    /// </para>
     /// </summary>
     private void FocusPane(string paneId)
     {
@@ -2033,13 +2074,22 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return;
         }
 
-        // The input area follows pane focus the way it follows a tab change: both drafts, the second
-        // bar's visibility and the history cursors belong to the newly focused window. The keyboard stays
-        // on the command line — typing belongs to the input, wherever the selection is.
-        ChangeWindow();
-        RefreshPaneFocus();
-        SyncScrollbackState(); // the status row's scrollback segment is the focused pane's
-        ReportPaneSizes();     // a session's NAWS is its own pane's; the focused one may have changed
+        ActivateFocusedWindow();
+    }
+
+    /// <summary>
+    /// Activates whatever the newly focused pane is showing. A pane with no tab at all has no window to
+    /// activate — the layout prunes empty panes, so this is a guard rather than a case — and still needs
+    /// the rest of the app brought in line, so the sync runs either way.
+    /// </summary>
+    private void ActivateFocusedWindow()
+    {
+        if (_workspace.Layout.FocusedPane.ActiveTab is { } windowId && Activate(windowId))
+        {
+            return;
+        }
+
+        SyncToFocusedPane();
     }
 
     /// <summary>
@@ -3038,12 +3088,19 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     {
         var activeKey = ActiveCharacterKey();
 
-        // Friendly pane labels for the window rows: the first pane is "main", later panes number up.
+        // Where each window is, for the window rows' second column — and only when there is more than one
+        // answer. On a single-pane workspace a window can only be in the one pane, so the column says
+        // nothing; it also used to call that pane "main", which collided head-on with the *window* named
+        // "main" in the column beside it (`▪ main   main`: two different meanings wearing one word). Every
+        // pane is now spelt "pane N", which a window title cannot be mistaken for.
         var panes = _workspace.Layout.Panes;
         var paneLabels = new Dictionary<string, string>(StringComparer.Ordinal);
-        for (var i = 0; i < panes.Count; i++)
+        if (panes.Count > 1)
         {
-            paneLabels[panes[i].Id] = i == 0 ? "main" : $"pane {i + 1}";
+            for (var i = 0; i < panes.Count; i++)
+            {
+                paneLabels[panes[i].Id] = $"pane {i + 1}";
+            }
         }
 
         var worlds = new List<RailWorld>();
@@ -3095,7 +3152,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         var windows = new List<RailWindow>();
         foreach (var window in _workspace.Windows)
         {
-            if (window.SessionKey is { } key && !string.Equals(key, owner, StringComparison.Ordinal))
+            var mine = string.Equals(window.SessionKey, owner, StringComparison.Ordinal);
+            if (window.SessionKey is not null && !mine)
             {
                 continue;
             }
@@ -3103,14 +3161,50 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             var pane = _workspace.Layout.FindWindow(window.Id);
             var label = pane is not null ? paneLabels.GetValueOrDefault(pane.Id) : null;
             windows.Add(new RailWindow(
-                window.Title, window.Id, label, window.Unread, window.HasUnsentInput, Closed: pane is null));
+                RailWindowLabel(window, mine),
+                window.Id,
+                label,
+                window.Unread,
+                window.HasUnsentInput,
+                Closed: pane is null));
         }
 
         return windows;
     }
 
-    /// <summary>Repaints the rail from current state.</summary>
-    private void RefreshRail() => _rail.SetContent(RenderRailLines());
+    /// <summary>
+    /// What a window row is called in the rail. A character's <em>own</em> session window reads
+    /// <c>main</c>; everything else keeps its title (a spawn target's name, the web page's title).
+    /// <para>
+    /// A window's <see cref="WorkspaceWindow.Title"/> names its <em>connection</em> — the world, or the
+    /// character for a second session — because the tab strip has no other context to identify it by. The
+    /// rail does: a window row sits under its character, which sits under its world, so repeating either
+    /// there says nothing. It was repeating the world (<c>Convergence MUSH ▸ Mannaz ▸ Convergence
+    /// MUSH</c>), which is what got reported — and in a narrow sidebar it wrapped, which is what made it
+    /// look broken rather than merely redundant.
+    /// </para>
+    /// <para>
+    /// "main" rather than putting it beside the character, of the two shapes offered: one rail row is one
+    /// destination you can click, and folding a window into the character row would make that row
+    /// sometimes a character and sometimes also a window, while its siblings (<c>Chat</c>) stayed rows of
+    /// their own. Naming it is also the shorter label, and the rail's width is its widest row.
+    /// </para>
+    /// </summary>
+    /// <param name="mine">Whether this window belongs to the character whose subtree it is being listed
+    /// under. An unowned window (the web view) is nobody's main window, whatever its kind.</param>
+    private static string RailWindowLabel(WorkspaceWindow window, bool mine) =>
+        mine && window.Kind == WindowKind.Main ? MainWindowRailLabel : window.Title;
+
+    /// <summary>What a character's own session window is called in the rail. See <see cref="RailWindowLabel"/>.</summary>
+    private const string MainWindowRailLabel = "main";
+
+    /// <summary>Repaints the rail from current state, and resizes its column to fit what it now says.</summary>
+    private void RefreshRail()
+    {
+        var lines = RenderRailLines();
+        _rail.SetContent(lines);
+        ApplyRailWidth(RailWidth(lines));
+    }
 
     /// <summary>
     /// The rail's markup as it currently stands, one string per row. Internal so a test can read the
@@ -3653,7 +3747,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// parameter at all. Every pane, spawn window and frozen region shared one closure that acted on
     /// <c>_active</c>, so a link clicked in a <em>background</em> spawn window sent to whichever
     /// character happened to be focused — a command delivered to the wrong world. The owning session is
-    /// resolved through <see cref="LinkSession"/> instead, and a window that belongs to no world sends
+    /// resolved through <see cref="WindowSession"/> instead, and a window that belongs to no world sends
     /// nowhere rather than guessing.
     /// </para>
     /// <para>
@@ -3668,7 +3762,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         switch (LinkPayload.Parse(url))
         {
             case (LinkAction.Send, var command):
-                if (LinkSession(windowId) is { } session)
+                if (WindowSession(windowId) is { } session)
                 {
                     _ = session.SendRawAsync(command);
                 }
@@ -3701,12 +3795,18 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
-    /// The session a link clicked in a window should act on: the session printing into it, or — for a
-    /// spawn window, which is not a session's own output window — the character the workspace records as
-    /// owning it. Null for a window that belongs to no connection (the web view), which is a refusal and
-    /// never a reason to fall back on <c>_active</c>.
+    /// The session a window belongs to: the session printing into it, or — for a spawn window, which is
+    /// not a session's own output window — the character the workspace records as owning it. Null for a
+    /// window that belongs to no connection (the web view), which is a refusal and never a reason to fall
+    /// back on <c>_active</c>.
+    /// <para>
+    /// One rule, two callers, deliberately. <see cref="OnLinkClicked"/> asks it which world a click in a
+    /// pane acts on, and <see cref="AdoptSessionOf"/> asks it which character the command line talks to
+    /// once a window becomes the active one. Both questions are "whose window is this?", and answering
+    /// them differently is how a client ends up sending one pane's link to another pane's world.
+    /// </para>
     /// </summary>
-    private WorldSession? LinkSession(string windowId) =>
+    private WorldSession? WindowSession(string windowId) =>
         SessionFor(windowId)
         ?? (_workspace.FindWindow(windowId)?.SessionKey is { Length: > 0 } key ? _sessions.Find(key) : null);
 
@@ -3714,18 +3814,19 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private static string Snippet(string text) =>
         text.Length <= 60 ? text : text[..60] + "…";
 
+    /// <summary>
+    /// A tab became the visible one — because it was clicked, or because ⌃N/⌃Tab moved along the strip.
+    /// Routed through <see cref="Activate"/> like every other way of bringing a window forward: this is
+    /// the most-used gesture of all, and it used to reload the drafts while leaving <c>_active</c> on the
+    /// previous character, so clicking another world's tab showed you its output and sent your next line
+    /// to the world you had left.
+    /// </summary>
     private void OnTabChanged(string paneId, TabPage? newTab)
     {
         _workspace.Layout.Focus(paneId);
         if (newTab?.Tag is string id)
         {
-            _workspace.ActivateWindow(id);
-
-            // Both drafts, the second bar's own visibility, and the history cursors all belong to the
-            // window now showing — the input area follows the tab.
-            ChangeWindow();
-            RefreshTabTitles();
-            UpdateInputChrome();
+            Activate(id);
         }
     }
 
@@ -3746,7 +3847,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return;
         }
 
-        var owner = LinkSession(windowId) ?? _active;
+        var owner = WindowSession(windowId) ?? _active;
         owner?.PrintSystem($"*** Opening {url} in the web view...");
         _ = LoadWebAsync(owner, url);
     }
@@ -3888,11 +3989,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <c>SHARPMUTERM_GRAPHICS=halfblock</c> it is a real decoded picture drawn as half-block cells.
     /// Kitty output still needs a Kitty terminal — a snapshot is a plain-text sink.</para>
     /// </summary>
-    private void ShowDemoWebPage()
+    private void ShowDemoWebPage(string title = "The Cartographer's Study")
     {
         const string url = "https://sharpmuterm.invalid/room";
         var html =
-            "<html><head><title>The Cartographer's Study</title></head><body>" +
+            $"<html><head><title>{title}</title></head><body>" +
             "<h1>The Cartographer's Study</h1>" +
             "<p>Charts of the northern reaches cover every surface. A brass orrery ticks in the corner, " +
             "and the survey map of the coast road is pinned above the desk.</p>" +
@@ -4153,6 +4254,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         var railLines = RenderRailLines();
         _rail.SetContent(railLines);
         var railWidth = RailWidth(railLines);
+        _railWidth = railWidth;
 
         // rail │ thin divider │ 1-col spacer (breathing room) │ output — a solid 1-col bar in the
         // border colour instead of the framework's double-line splitter, for a calmer single-line look.
@@ -4167,8 +4269,51 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             .Column(c => c.Width(1).Add(_railSpacer))
             .Column(c => c.Flex(1).Add(paneArea))
             .Build();
+
+        // Kept so a later refresh can resize the column without rebuilding the pane area — see
+        // ApplyRailWidth, which is what stops a rail row wrapping.
+        _railColumn = row.Columns.Count > 0 ? row.Columns[0] : null;
         return row;
     }
+
+    /// <summary>The rail's own grid column, so its width can follow its content between rebuilds.</summary>
+    private ColumnContainer? _railColumn;
+
+    /// <summary>The width that column currently has, so an unchanged one costs no relayout.</summary>
+    private int _railWidth;
+
+    /// <summary>
+    /// Keeps the sidebar as wide as its widest row.
+    /// <para>
+    /// The width is derived from the rows, and <b>the rows change without the pane tree changing</b>: a
+    /// title arriving with a session (the startup path retitles the main window from <c>Main</c> to the
+    /// character's name), a page loaded into the web view, a window closing, an unread badge appearing. It was
+    /// computed only in <see cref="BuildWorkspaceRow"/> — so only on a <see cref="RebuildPaneArea"/> — and
+    /// <see cref="RefreshRail"/> then poured longer rows into a column sized for the shorter ones, which
+    /// the framework wrapped. That is the two-line rail row in the report: not a long name, a stale column.
+    /// </para>
+    /// <para>
+    /// The rail's width comes out of the pane area, so this changes every pane's rectangle and therefore
+    /// the size every connected session is told over NAWS. That report is not made here: it rides the
+    /// frame (<c>PostBufferPaint → ReportPaneSizes</c>) because pane rectangles only exist once a layout
+    /// has been arranged, and nothing has been arranged at the moment the width is set.
+    /// </para>
+    /// </summary>
+    private void ApplyRailWidth(int width)
+    {
+        if (_railColumn is null || _railWidth == width)
+        {
+            return;
+        }
+
+        _railWidth = width;
+        _railColumn.Width = width;
+        _window.ForceRebuildLayout();
+    }
+
+    /// <summary>The rail column's current width. Internal so a test can hold it against the widest row's
+    /// measured width — which is the invariant a wrapped rail row breaks.</summary>
+    internal int RailColumnWidth => _railWidth;
 
     /// <summary>
     /// The one-cell hairline beside the rail and between two split panes. A <see cref="MarkupControl"/>
@@ -4259,24 +4404,38 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         RefreshTabTitles(); // carries the ▌ marker onto the focused pane's active tab
     }
 
-    /// <summary>Renders the current rail rows to markup (collapsed or expanded).</summary>
+    /// <summary>
+    /// Renders the current rail rows to markup (collapsed or expanded), each row already fitted to the
+    /// widest the sidebar may become. Fitting has to happen before the width is measured, or a row past the
+    /// clamp is measured as needing more columns than the layout will ever give it — and then wraps.
+    /// </summary>
     private List<string> RenderRailLines()
     {
         var rows = BuildRail();
-        return _railCollapsed ? RailRenderer.RenderCollapsed(rows) : RailRenderer.Render(rows);
+        return _railCollapsed
+            ? RailRenderer.RenderCollapsed(rows)
+            : RailRenderer.Render(rows, RailMaxWidth - RailMargin);
     }
 
+    /// <summary>The narrowest the expanded sidebar goes, so a sparse rail still reads as a column.</summary>
+    private const int RailMinWidth = 16;
+
+    /// <summary>The widest it goes, so one long world or window name cannot run away with the layout.</summary>
+    private const int RailMaxWidth = 44;
+
+    /// <summary>Breathing room between the widest row and the divider beside it.</summary>
+    private const int RailMargin = 2;
+
     /// <summary>
-    /// The rail column width: the widest row's visible width plus a small margin, clamped so a long
-    /// world or window name can't run away with the layout and a sparse rail still reads. Collapsed,
-    /// it hugs its short status strip.
+    /// The rail column width: the widest row's visible width plus a small margin, clamped. Collapsed, it
+    /// hugs its short status strip.
     /// </summary>
     private int RailWidth(IReadOnlyList<string> lines)
     {
         var widest = lines.Count == 0 ? 0 : lines.Max(MarkupWidth);
         return _railCollapsed
             ? Math.Clamp(widest + 1, 4, 10)
-            : Math.Clamp(widest + 2, 16, 44);
+            : Math.Clamp(widest + RailMargin, RailMinWidth, RailMaxWidth);
     }
 
     /// <summary>Visible width of a markup string: strips <c>[…]</c> tags, unescapes <c>[[</c>/<c>]]</c>,
@@ -4651,6 +4810,18 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     internal void SimulateWindowChange(string windowId) => Activate(windowId);
 
     /// <summary>
+    /// Loads the demo page into the web view, through the real <see cref="ShowWeb"/> path. The seam a test
+    /// uses to put a window that <em>belongs to no connection</em> into the workspace: the web view is the
+    /// only one there is, and it can otherwise only be created by a fetch over a socket.
+    /// </summary>
+    internal void SimulateWebPage() => ShowDemoWebPage();
+
+    /// <inheritdoc cref="SimulateWebPage"/>
+    /// <remarks>With a title of its own, for the case a page's title is longer than the rail can ever be —
+    /// a world chooses that string, so the rail has to cope with any length of it.</remarks>
+    internal void SimulateWebPageTitled(string title) => ShowDemoWebPage(title);
+
+    /// <summary>
     /// Delivers one paste by the framework's rule: to the window's focused control, and only when that
     /// control accepts paste. It deliberately does not call <see cref="InputBarControl.Paste"/> — the
     /// bar's own paste was never broken, the routing to it was, so a test that pasted into the bar
@@ -4751,6 +4922,21 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>Every pane's id in layout order, for the tests that walk a geometry end to end.</summary>
     internal IReadOnlyList<string> PaneIds => _workspace.Layout.Panes.Select(p => p.Id).ToArray();
 
+    /// <summary>The pane hosting a window, or null when no pane does. Internal so a test can find the pane
+    /// a split put a window in rather than assuming which side it landed on.</summary>
+    internal string? PaneIdOf(string windowId) => _workspace.Layout.FindWindow(windowId)?.Id;
+
+    /// <summary>A window's title, so a test can ask whether one a session <em>adopted</em> is named
+    /// correctly rather than inferring it from the tab strip.</summary>
+    internal string? WindowTitleOf(string windowId) => _workspace.FindWindow(windowId)?.Title;
+
+    /// <summary>A window's recorded owner. Ownership is read by the rail and by
+    /// <see cref="WindowSession"/>, and it goes stale silently, so it is worth asserting directly.</summary>
+    internal string? WindowOwnerOf(string windowId) => _workspace.FindWindow(windowId)?.SessionKey;
+
+    /// <summary>A pane's visible tab, so a test can say which window a click on a tab strip brought up.</summary>
+    internal string? PaneActiveTab(string paneId) => _workspace.Layout.FindPane(paneId)?.ActiveTab;
+
     /// <summary>
     /// The plane each pane is painted on, by pane id — read off the controls the last frame was built
     /// from, so a test asserts the colour the compositor was actually handed rather than re-deriving it
@@ -4788,6 +4974,28 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             }
 
             return titles;
+        }
+    }
+
+    /// <summary>
+    /// One pane's tab-strip contents in strip order: each tab's window id, its label, and whether it
+    /// carries the framework's <c>×</c>. Internal because a test that clicks a particular tab has to
+    /// locate it the way <c>TabControl.ProcessMouseEvent</c> does — from the labels and the close buttons
+    /// ahead of it — and every one of those three facts is needed to land on the label rather than on a
+    /// neighbour's <c>×</c>.
+    /// </summary>
+    internal IReadOnlyList<(string WindowId, string Title, bool Closable)> PaneTabStrip(string paneId)
+    {
+        lock (_paneTabsLock)
+        {
+            if (!_paneTabs.TryGetValue(paneId, out var tabs))
+            {
+                return Array.Empty<(string, string, bool)>();
+            }
+
+            return tabs.TabPages
+                .Select(t => (WindowId: t.Tag as string ?? string.Empty, t.Title, Closable: t.IsClosable))
+                .ToArray();
         }
     }
 
@@ -5660,13 +5868,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _workspace.Layout.CycleFocus();
 
         // Through the same path the Ctrl+arrows take, so ⌃O and a directional move cannot come to mean
-        // different things: the input area follows pane focus (drafts, the second bar, the history
-        // cursors all belong to the newly focused window), the indicator repaints, and the keyboard stays
-        // on the command line — typing belongs to the input, wherever the selection is.
-        ChangeWindow();
-        RefreshPaneFocus();
-        SyncScrollbackState();
-        ReportPaneSizes();
+        // different things: the pane's active window is activated, which makes its character the one the
+        // command line talks to and its drafts the ones in the bars. The keyboard stays where it was —
+        // typing belongs to the armed command line, wherever the selection is.
+        ActivateFocusedWindow();
     }
 
     /// <summary>Closes the focused pane's active window (Ctrl+W). The main window can't be closed.</summary>
@@ -5761,15 +5966,28 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
-    /// Makes a window active in its hosting pane (model + view) and focuses that pane. Returns false
-    /// when the window is not placed in any pane, so a caller acting on a user's request can say so
-    /// instead of appearing to do nothing.
+    /// <b>The one activation path.</b> Makes a window active in its hosting pane (model + view), focuses
+    /// that pane, points the command line at that window's session, and hands the input area that
+    /// window's drafts. Returns false when the window is not placed in any pane, so a caller acting on a
+    /// user's request can say so instead of appearing to do nothing.
     /// <para>
-    /// A window that belongs to a session makes that session the active one. The command line talks to
-    /// whichever character you are looking at, which is the same rule <see cref="SwitchToCharacter"/>
-    /// applies — a tab that showed one character's output while ⏎ sent to another would be a worse
-    /// version of the bug this came from. Windows with no session of their own (spawns, the web view)
-    /// leave the active session alone.
+    /// Everything that changes which window is in front comes through here — a tab click
+    /// (<see cref="OnTabChanged"/>), a rail or ⌃P entry (<see cref="DispatchCommand"/>), a character
+    /// switch, an MXP <c>PROMPT</c>, the web view, and every mover of pane <em>selection</em>
+    /// (<see cref="FocusPane"/>, <see cref="CyclePane"/>). They were separate paths and they disagreed:
+    /// ⌃O and the Ctrl+arrows reloaded the drafts but left <c>_active</c> behind, so typing after
+    /// navigating to another world's pane went to the world you had left; a tab click did the same. The
+    /// invariant is one sentence — <em>activating a window activates its session</em> — and it holds only
+    /// if there is one place that does it.
+    /// </para>
+    /// <para>
+    /// <b>This is not about keyboard focus, and it does not weaken the pin.</b> Framework focus stays on
+    /// the armed command line (<c>FocusChanged → PinFocusToArmedBar</c>), which is what makes paste, the
+    /// caret and "which bar ⏎ sends from" one fact. What moves here is <em>which session the bar talks
+    /// to</em> and <em>which draft it holds</em> — two facts about the bar's contents, not about which
+    /// control the framework thinks has the keyboard. The previous author conflated the two in the
+    /// opposite direction ("it never moves focus, so nothing more is needed"); they are separate, and both
+    /// are needed.
     /// </para>
     /// </summary>
     private bool Activate(string id)
@@ -5779,28 +5997,124 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return false;
         }
 
-        if (SessionFor(id) is { } session && !ReferenceEquals(session, _active))
+        // Selecting the tab below raises the framework's own TabChanged, which lands back in
+        // OnTabChanged and so back here. The model call above is idempotent, so re-entering is harmless
+        // — but doing the rest twice would recall the drafts twice and say anything it has to say twice.
+        if (_activating)
         {
-            _active = session;
-            UpdateStatus();
-            UpdateInputChrome();
+            return true;
         }
 
-        if (_workspace.Layout.FindWindow(id) is { } pane &&
-            _paneTabs.GetValueOrDefault(pane.Id) is { } tabs)
+        _activating = true;
+        try
         {
-            for (var i = 0; i < tabs.TabCount; i++)
+            AdoptSessionOf(id);
+            SelectTabFor(id);
+            SyncToFocusedPane();
+        }
+        finally
+        {
+            _activating = false;
+        }
+
+        return true;
+    }
+
+    /// <summary>Guards <see cref="Activate"/> against re-entering itself through <c>TabChanged</c>.</summary>
+    private bool _activating;
+
+    /// <summary>
+    /// Points the command line at the session of the window that has just become active, so ⏎ talks to
+    /// the character whose output is on screen.
+    /// <para>
+    /// The resolution is <see cref="WindowSession"/>'s and it has exactly two answers before it gives up:
+    /// the session printing into the window, else the character the workspace records as owning it. There
+    /// is no third arm falling back on <c>_active</c> — that fallback is the bug, in both the shapes it
+    /// has taken today (a link in a background pane sent to the focused character; a pane selection moved
+    /// without the bar following).
+    /// </para>
+    /// <para>
+    /// A window that resolves to nothing — the web view, or a window whose owner has no session in this
+    /// run — cannot be given the command line, and the bar cannot be pointed at nothing either. So the
+    /// honest move is to leave it where it is and <em>say so</em>: silence here is exactly the "your
+    /// attention is on one thing and your keystrokes go somewhere else" state, and a notice naming where
+    /// ⏎ still goes is the difference between a redirect and a refusal.
+    /// </para>
+    /// <para>
+    /// Two cases are quiet because there is genuinely no redirect to report: a window already owned by the
+    /// active character, and a client with no active session at all — where the resting status row already
+    /// reads "not connected" and ⏎ goes nowhere for anyone. The second one matters beyond tidiness: the
+    /// snapshot demo has owners but no live sessions, so a notice there would put a message on every frame
+    /// that opens the web view, saying something untrue about a client that has nothing to misdeliver.
+    /// </para>
+    /// </summary>
+    private void AdoptSessionOf(string windowId)
+    {
+        if (WindowSession(windowId) is { } session)
+        {
+            if (!ReferenceEquals(session, _active))
             {
-                if (tabs.TabPages[i].Tag as string == id)
-                {
-                    tabs.ActiveTabIndex = i;
-                    break;
-                }
+                _active = session;
+                UpdateStatus();
+            }
+
+            return;
+        }
+
+        var owner = _workspace.FindWindow(windowId)?.SessionKey;
+        if (_active is not { } stays || string.Equals(owner, stays.SessionKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        // Through Snippet, because a window's title can be a *world's* text — the web view is titled from
+        // the page it loaded — and the status row is not a place to paste an unbounded string from the wire.
+        var where = $"⏎ still sends to {SessionTitle(stays)}";
+        Notice(
+            owner is { Length: > 0 }
+                ? $"{owner} has no open session — ⌃P ▸ Switch to it opens one; {where}"
+                : $"{Snippet(_workspace.FindWindow(windowId)?.Title ?? windowId)} belongs to no connection — {where}");
+    }
+
+    /// <summary>
+    /// Brings the pane's own tab strip in line with the model, for callers that activated a window
+    /// without clicking its tab. Guarded by <see cref="_activating"/> against the <c>TabChanged</c> this
+    /// raises coming straight back round.
+    /// </summary>
+    private void SelectTabFor(string id)
+    {
+        if (_workspace.Layout.FindWindow(id) is not { } pane ||
+            _paneTabs.GetValueOrDefault(pane.Id) is not { } tabs)
+        {
+            return;
+        }
+
+        for (var i = 0; i < tabs.TabCount; i++)
+        {
+            if (tabs.TabPages[i].Tag as string == id)
+            {
+                tabs.ActiveTabIndex = i;
+                break;
             }
         }
+    }
 
-        RefreshTabTitles();
-        return true;
+    /// <summary>
+    /// Everything that follows a change of focused pane or active window, in one place so the movers
+    /// cannot drift apart: the input area follows the window (both drafts, the second bar's visibility,
+    /// the history cursors), the focus indicator repaints, the status row's scrollback segment is the
+    /// newly focused pane's, and every session is re-told the size of its own pane.
+    /// <para>
+    /// The keyboard is deliberately not touched. Typing belongs to the armed command line wherever the
+    /// selection has moved to.
+    /// </para>
+    /// </summary>
+    private void SyncToFocusedPane()
+    {
+        ChangeWindow();
+        RefreshPaneFocus(); // and, through RefreshTabTitles, the tab labels, the rail and the input chrome
+        SyncScrollbackState();
+        ReportPaneSizes();
     }
 
     /// <summary>Repaints every pane's tab headers from window titles + unread/unsent badges.</summary>
