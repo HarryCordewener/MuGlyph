@@ -54,7 +54,6 @@ public class ScreenPasswordFieldTests
                     Name = "Corvid",
                     Password = password,
                     ConnectString = connect,
-                    AutoLogin = true,
                     OnConnect = "look",
                 },
             },
@@ -586,6 +585,58 @@ public class ScreenPasswordFieldTests
             // The stored value is still there afterwards — the frame did not clear it to pass.
             await Assert.That(config.Worlds[0].Characters[0].Password).IsEqualTo(Secret).Because(view);
         }
+    }
+
+    /// <summary>
+    /// <b>An inert configuration announces itself on the painted frame.</b> A saved password whose
+    /// connect line has no <c>%PASSWORD%</c> in it is a credential that is never sent — the residue of
+    /// the bug that made this whole change necessary — and the rule now is that such a state may not be
+    /// silent. So it is asserted on the cells the driver was handed, not on the markup a renderer
+    /// returned: the warning is <em>in the frame</em>, and the secret it is warning about still is not.
+    /// <para>
+    /// Read off a real frame because that is where the earlier failure lived. The old <c>auto-login</c>
+    /// readout was correct markup describing a control the screen never drew, and no assertion over
+    /// strings could have noticed. A frame can.
+    /// </para>
+    /// </summary>
+    [Test]
+    [NotInParallel]
+    public async Task AFrameOfTheF5ScreenSaysWhenASavedPasswordWillNotBeSent()
+    {
+        Console.SetIn(TextReader.Null);
+
+        var capabilities = new TerminalCapabilities(
+            GraphicsProtocol.None, supportsTrueColor: true, supportsKittyGraphics: false, supportsSixel: false);
+
+        // A password, and a connect line with nowhere to put it.
+        var config = new AppConfiguration { Worlds = Worlds(connect: "connect %CHARACTER%") };
+        var app = new SharpMUTermApp(config, capabilities, new HeadlessConsoleDriver(140, 40));
+
+        var frame = app.RenderSnapshot("worlds");
+
+        await Assert.That(config.Worlds[0].Characters[0].Login()).IsEqualTo(LoginPlan.PasswordUnused);
+        await Assert.That(frame).Contains(WorldsScreenRenderer.LoginPasswordUnused);
+        await Assert.That(frame).DoesNotContain(Secret);
+
+        // In the warning ink, read as the SGR the driver was actually handed: a frame is cursor-addressed
+        // ANSI, not markup, so `#ff6b6b` never appears in it as text. 38 is the foreground introducer —
+        // 48 would be the background, and reading the wrong one is how a colour claim goes wrong here.
+        var warn = ScreenPalette.Warn;
+        var rgb = string.Join(
+            ';',
+            Convert.ToInt32(warn.Substring(1, 2), 16),
+            Convert.ToInt32(warn.Substring(3, 2), 16),
+            Convert.ToInt32(warn.Substring(5, 2), 16));
+        await Assert.That(frame).Contains($"38;2;{rgb}");
+
+        // And the ordinary case is not decorated with a warning it has not earned — a caution that fires
+        // on a working configuration trains the eye to skip the one that matters (the same argument the
+        // certificate row makes for staying quiet while TLS is off).
+        var working = new AppConfiguration { Worlds = Worlds(connect: null) };
+        var ok = new SharpMUTermApp(working, capabilities, new HeadlessConsoleDriver(140, 40));
+
+        await Assert.That(working.Worlds[0].Characters[0].Login()).IsEqualTo(LoginPlan.WithPassword);
+        await Assert.That(ok.RenderSnapshot("worlds")).DoesNotContain(WorldsScreenRenderer.LoginPasswordUnused);
     }
 
     // ---- the connect line the password is substituted into ------------------------------------------

@@ -236,7 +236,8 @@ internal static class Program
         // host, and that a host overrides it.
         usage.WriteLine("With no host, the characters marked 'at start' on F5 connect — none by default,");
         usage.WriteLine("and the client opens with no connection. A host given here connects instead of them.");
-        usage.WriteLine("'at start' is not 'auto-login': one opens the connection, the other sends the login line.");
+        usage.WriteLine("'at start' only opens the connection. What is typed once one is open follows from the");
+        usage.WriteLine("character's saved password and connect line — F5's 'login' row says which.");
         usage.WriteLine();
         usage.WriteLine("In-app: Up/Down history · Ctrl+N next window · Ctrl+W close · Ctrl+P palette · Ctrl+Q quit.");
         usage.WriteLine("Scroll: PgUp/PgDn a page · Shift+Up/Down a line · Ctrl+Home top · Ctrl+End back to live output.");

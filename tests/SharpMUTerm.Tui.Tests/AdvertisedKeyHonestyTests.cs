@@ -276,7 +276,13 @@ public class AdvertisedKeyHonestyTests
         await Assert.That(help).Contains($"'{WorldsScreenRenderer.StartupLabel}' on F5");
         await Assert.That(help).Contains("none by default");
         await Assert.That(help).Contains("no connection");
-        await Assert.That(help).Contains("not 'auto-login'");
+        // What `at start` does *not* decide. It used to read "not 'auto-login'", naming a second
+        // setting; there is no second setting now — what gets typed follows from the character's own
+        // password and connect line — so the page says that instead. This page may not name a control
+        // that does not exist, which is the rule this whole file enforces, and `auto-login` became one.
+        await Assert.That(help).Contains("only opens the connection");
+        await Assert.That(help).Contains("'login' row");
+        await Assert.That(help).DoesNotContain("auto-login");
 
         // The rule it used to state, which the setting replaced.
         await Assert.That(help).DoesNotContain("the first configured world is used");

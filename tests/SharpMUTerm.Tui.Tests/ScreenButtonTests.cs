@@ -217,11 +217,11 @@ public class ScreenButtonTests
 
         copy.TriggerSets.Add("Combat");
         copy.Logging.Directory = "/logs/copy";
-        copy.AutoLogin = true;
+        copy.ConnectAtStartup = true;
 
         await Assert.That(original.TriggerSets).IsEquivalentTo(new[] { "Comms" });
         await Assert.That(original.Logging.Directory).IsEqualTo("/logs/kaz");
-        await Assert.That(original.AutoLogin).IsFalse();
+        await Assert.That(original.ConnectAtStartup).IsFalse();
 
         // Committed, and therefore kept: the review's undo only reaches deletions.
         edits.Revert();

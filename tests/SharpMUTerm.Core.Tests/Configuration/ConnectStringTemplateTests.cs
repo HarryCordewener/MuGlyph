@@ -211,7 +211,6 @@ public class ConnectStringTemplateTests
                             Name = "Corvid",
                             Password = "hunter2",
                             ConnectString = "co %CHARACTER% %PASSWORD%",
-                            AutoLogin = true,
                         },
                     },
                 },
@@ -233,7 +232,11 @@ public class ConnectStringTemplateTests
             var reloaded = ConfigurationStore.Load(configPath).Worlds[0].Characters[0];
             await Assert.That(reloaded.Password).IsEqualTo("hunter2");
             await Assert.That(reloaded.ConnectString).IsEqualTo("co %CHARACTER% %PASSWORD%");
-            await Assert.That(reloaded.AutoLogin).IsTrue();
+
+            // A reload of a character with both fields set is a character that logs itself in. This used
+            // to read `reloaded.AutoLogin` — a stored flag — and the whole point of the change is that
+            // there is no longer a third value that can disagree with these two.
+            await Assert.That(reloaded.Login()).IsEqualTo(LoginPlan.WithPassword);
 
             // Straight off a reload, with nothing typed: the working login line.
             await Assert.That(reloaded.ResolveConnectString()).IsEqualTo("co Corvid hunter2");
@@ -260,6 +263,15 @@ public class ConnectStringTemplateTests
     /// <summary>
     /// Nothing was migrated, and nothing needed to be: a v2 document with no <c>connectString</c> at all
     /// still resolves to the line it always did, because null means "the default" both before and after.
+    /// <para>
+    /// The fixture used to carry <c>"autoLogin": true</c>, incidentally — it predates the field's
+    /// removal and this test never asserted anything about it. It is dropped rather than kept, because
+    /// v4 <em>does</em> rewrite that combination (into <c>connect %CHARACTER%</c>, the line it was
+    /// already sending) and a document that gets migrated cannot demonstrate a document that does not.
+    /// The v4 step has its own coverage in <c>LoginPlanTests</c> and <c>PasswordAtRestTests</c>; the
+    /// claim here — null <c>connectString</c> is untouched and still means the default — is unchanged
+    /// and now actually tested on a character the migrator leaves alone.
+    /// </para>
     /// </summary>
     [Test]
     public async Task AnExistingConfigNeedsNoMigrationForTheNewDefault()
@@ -271,7 +283,7 @@ public class ConnectStringTemplateTests
             {
               "name": "Aetherfall",
               "host": "aetherfall.mux",
-              "characters": [ { "name": "Corvid", "autoLogin": true } ]
+              "characters": [ { "name": "Corvid" } ]
             }
           ]
         }

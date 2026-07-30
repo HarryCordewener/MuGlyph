@@ -53,7 +53,14 @@ internal static class DemoScene
                     // asserting a connection nothing in the config asks for. Rookery and Thistle are left
                     // unmarked, which is what puts both states of the row in reach of one screenshot.
                     ConnectAtStartup = true,
-                    AutoLogin = true,
+
+                    // No login configuration of any kind, and deliberately so. Demo data carries no
+                    // password (ScreenPasswordFieldTests pins that, because these frames get pasted into
+                    // issues) and no connect line either, so F5's `login` row reads `nothing — set a
+                    // password` here. That is the honest readout for a credential-free fixture, and it
+                    // leaves the demo's connect line showing the default template — which is the thing
+                    // worth demonstrating. `autoLogin: true` used to sit here and meant nothing without
+                    // one of those two fields anyway.
                     OnConnect = "@@ +who; look",
                     TriggerSets = { "Comms", "Trade" },
                     Logging = new LoggingSettings { Format = LogFormat.Html },

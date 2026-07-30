@@ -162,14 +162,17 @@ public class WorldSessionTests
         await Assert.That(gmcp!.Package).IsEqualTo("Char.Vitals");
     }
 
+    /// <summary>
+    /// A saved password is the whole configuration a login needs: no second flag, and the on-connect
+    /// commands follow it.
+    /// </summary>
     [Test]
-    public async Task Character_AutoLogin_SendsConnectStringAndOnConnect()
+    public async Task Character_WithASavedPassword_SendsConnectStringAndOnConnect()
     {
         var character = new CharacterDefinition
         {
             Name = "Wizard",
             Password = "swordfish",
-            AutoLogin = true,
             OnConnect = "look; who",
         };
         var telnet = new FakeTelnetSession();
@@ -184,7 +187,7 @@ public class WorldSessionTests
     }
 
     [Test]
-    public async Task AnonymousSession_KeyIsWorldName_AndDoesNotAutoLogin()
+    public async Task AnonymousSession_KeyIsWorldName_AndSendsNoLoginLine()
     {
         var (session, telnet) = Create(World());
         await session.ConnectAsync();

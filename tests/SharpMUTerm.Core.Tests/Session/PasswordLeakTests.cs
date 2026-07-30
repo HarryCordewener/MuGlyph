@@ -116,7 +116,6 @@ public class PasswordLeakTests
     {
         Name = "Corvid",
         Password = Secret,
-        AutoLogin = true,
         OnConnect = "look",
     };
 
@@ -127,7 +126,7 @@ public class PasswordLeakTests
     /// the on-connect commands, and never the password.
     /// </summary>
     [Test]
-    public async Task AutoLogin_SendsThePasswordToTelnetAndNowhereElse()
+    public async Task TheLoginLine_SendsThePasswordToTelnetAndNowhereElse()
     {
         var log = new RecordingSink();
         var telnet = new FakeTelnetSession();

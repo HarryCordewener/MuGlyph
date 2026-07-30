@@ -39,7 +39,7 @@ public class ScreenModelTests
             Host = "aardmud.org",
             Characters = new List<CharacterDefinition>
             {
-                new() { Name = "Kaz", AutoLogin = false, TriggerSets = new List<string> { "Comms" } },
+                new() { Name = "Kaz", TriggerSets = new List<string> { "Comms" } },
                 new() { Name = "Mira" },
             },
         },
@@ -196,8 +196,47 @@ public class ScreenModelTests
         // Worlds are selection only — there is no checkbox on a world row.
         await Assert.That(model.ToggleAt(0, 0)).IsNull();
 
-        model.ToggleAt(1, 1)!.Value.Flip();
-        await Assert.That(worlds[0].Characters[1].AutoLogin).IsTrue();
+        // Neither is there one on a character row, and this assertion is the *reason* the pane changed.
+        // It used to read `model.ToggleAt(1, 1)!.Value.Flip()` and then assert `AutoLogin` — a toggle
+        // the model bound and `WorldsScreenRenderer.CharacterRow` never drew. So the test passed on a
+        // control no user could see or reach, and the setting behind it silently discarded saved
+        // passwords. The binding is gone with the setting; what a character does is now derived from its
+        // own fields (`CharacterDefinition.Login`), and everything settable about it is a field on the
+        // form. This is not a weakened assertion — it pins the same pane against what is actually
+        // rendered, which the old one did not.
+        await Assert.That(model.ToggleAt(1, 0)).IsNull();
+        await Assert.That(model.ToggleAt(1, 1)).IsNull();
+    }
+
+    /// <summary>
+    /// The general form of the bug above: <b>every toggle this screen binds must be one it draws.</b> A
+    /// bound-but-undrawn checkbox is a setting reachable only by pressing Space on a row that gives no
+    /// hint it would do anything — which is how <c>autoLogin</c> came to be false on every character in
+    /// the maintainer's own configuration, saved passwords and all. The trigger-set rows are the model's
+    /// one remaining character-pane toggle, and they render a real <c>[x]</c>.
+    /// </summary>
+    [Test]
+    public async Task Worlds_EveryToggleTheModelBindsIsOneTheScreenActuallyDraws()
+    {
+        var worlds = Worlds();
+        var model = WorldsScreenRenderer.Model(worlds, Sets(), selectedWorld: 0, selectedCharacter: 0);
+
+        var bound = Enumerable.Range(0, model.PaneCount)
+            .Sum(pane => Enumerable.Range(0, model.RowCount(pane))
+                .Count(row => model.ToggleAt(pane, row) is not null));
+
+        // A checkbox is spelled `[[x]]` or `[[ ]]` in this screen's markup (ScreenChrome.Checkbox).
+        var drawn = WorldsScreenRenderer.Render(worlds, Sets(), selectedWorld: 0, selectedCharacter: 0)
+            .Count(line => line.Contains("[[x]]", StringComparison.Ordinal)
+                || line.Contains("[[ ]]", StringComparison.Ordinal));
+
+        await Assert.That(bound)
+            .IsEqualTo(drawn)
+            .Because("a toggle the screen binds but never draws is a setting nobody can reach");
+
+        // Stated absolutely as well, so the equality cannot be satisfied by both sides going to zero:
+        // the world's two security flags and the one trigger set's assignment, and nothing else.
+        await Assert.That(bound).IsEqualTo(3);
     }
 
     [Test]

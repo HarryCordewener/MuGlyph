@@ -176,9 +176,11 @@ public class StartupConnectionsTests
 
             var loaded = ConfigurationStore.Load(path);
 
-            // Auto-login is still what it was, and it did not drag a connection in with it: the two are
-            // independent facts, and this is the direction that proves it on an existing config.
-            await Assert.That(loaded.Worlds[0].Characters[0].AutoLogin).IsTrue();
+            // The character still logs itself in — v4 rewrote `autoLogin: true` into the connect line it
+            // was already sending — and that did not drag a connection in with it. The two remain
+            // independent facts, which is what this direction proves on an existing config; the
+            // assertion moved from the removed flag onto the behaviour the flag used to name.
+            await Assert.That(loaded.Worlds[0].Characters[0].Login()).IsEqualTo(LoginPlan.WithoutPassword);
             await Assert.That(loaded.Worlds[0].Characters[0].ConnectAtStartup).IsFalse();
             await Assert.That(StartupConnections.Resolve(loaded)).IsEmpty();
         }

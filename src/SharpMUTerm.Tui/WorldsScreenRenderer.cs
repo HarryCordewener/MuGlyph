@@ -85,8 +85,13 @@ internal static class WorldsScreenRenderer
     /// <summary>
     /// <see cref="CharacterDefinition.ConnectAtStartup"/>. Inserted here rather than appended for the
     /// reason above, and here in particular because it belongs with the connection rows it is about: the
-    /// connect line, the on-connect lines and the auto-login readout are all answers to "what happens
-    /// when this character connects", and this one answers "does it, unasked".
+    /// connect line, the on-connect lines and the login readout are all answers to "what happens when
+    /// this character connects", and this one answers "does it, unasked".
+    /// <para>
+    /// <b>It stays a field, and that is now load-bearing.</b> A character row draws no checkbox — see
+    /// <see cref="CharacterRow"/> — so a value moved onto the row's toggle is a value with no affordance
+    /// at all. This one has a well, and ⏎ opens it, which is the only reachable way to set it.
+    /// </para>
     /// </summary>
     internal const int StartupField = 4;
 
@@ -257,10 +262,10 @@ internal static class WorldsScreenRenderer
     /// and the label column — a row that wraps costs the form a line it was never measured for, which is
     /// how <c>log folder</c> once fell out of the band (see <see cref="StorageNote"/>).
     /// <para>
-    /// It says <em>when</em>, and the <c>auto-login</c> row directly under it says <em>what is typed</em>;
+    /// It says <em>when</em>, and the <c>login</c> row directly under it says <em>what is typed</em>;
     /// they are adjacent so the difference is read rather than guessed, and neither label contains the
     /// other's word. <c>at start</c> in particular avoids "auto-": the one thing this must not be called
-    /// is a second kind of auto-login.
+    /// is a second kind of login setting.
     /// </para>
     /// </summary>
     internal const string StartupLabel = "at start";
@@ -280,7 +285,8 @@ internal static class WorldsScreenRenderer
     /// <summary>
     /// The screen's four navigable panes, in ⇥ order: the WORLDS list (no checkbox on a world's row,
     /// but ⏎ opens the world's own fields — the ones the detail column lists), the selected world's
-    /// characters (Space flips auto-login, ⏎ edits the character's name, on-connect line and log), the
+    /// characters (no checkbox on a character's row either — ⏎ edits its name, password, connect line,
+    /// on-connect line, <c>at start</c> and log), the
     /// <b>trigger sets</b> (Space assigns the selected character to one, ⏎ renames it, and the pane's
     /// own buttons make and unmake them), and the selected world's two security checkboxes. All but the
     /// first collapse to empty when there is nothing selected above them, and ⇥ skips empty panes, so
@@ -304,9 +310,9 @@ internal static class WorldsScreenRenderer
     /// lives here because this is where the character it applies to is: F9 used to edit it on a
     /// screen of its own that resolved "the active character, or else the first one configured" and
     /// never said which — so the same screen edited a different character's log depending on what was
-    /// connected. There is no Space-to-start checkbox because the row's checkbox is auto-login and a
-    /// row has one; <see cref="LogFormat.None"/> already spells "off" as one of the format's own
-    /// choices, which is one control over one stored value rather than two over one.
+    /// connected. There is no Space-to-start checkbox because a character row draws none at all, and
+    /// <see cref="LogFormat.None"/> already spells "off" as one of the format's own choices — one
+    /// control over one stored value rather than two over one.
     /// </para>
     /// <para>
     /// Each list pane ends in its own buttons, because a button acts on the list it is drawn under and
@@ -344,8 +350,12 @@ internal static class WorldsScreenRenderer
         var world = selectedWorld >= 0 && selectedWorld < worlds.Count ? worlds[selectedWorld] : null;
         var characterRows = world is null
             ? Array.Empty<ScreenRow>()
+            // No toggle: a character row draws no checkbox (CharacterRow), and a bound control the
+            // renderer never draws is a setting nobody can reach. There was one here — `autoLogin` — and
+            // it is the reason two of this repo's own characters had a saved password that did nothing.
+            // Every remaining ScreenToggle in this file is drawn where it is bound; see the security
+            // rows and the trigger-set assignments, both of which render a real `[x]`.
             : ScreenModel.Rows(world.Characters, c => ScreenRow.Of(
-                ScreenToggle.Bind(() => c.AutoLogin, v => c.AutoLogin = v),
                 ScreenField.Name("name", () => c.Name, v => c.Name = v),
                 ScreenField.Password("password", () => c.Password, v => c.Password = v),
                 ScreenField.Defaulted(
@@ -870,16 +880,23 @@ internal static class WorldsScreenRenderer
     /// The character form — labels left-aligned with their values, one field per row. The editable ones
     /// are the character row's own fields (name, password, connect line, on-connect, <c>at start</c>,
     /// then the two log values) and are the only seven drawn in a field well. The other two deliberately
-    /// are not: auto-login is a readout of the character row's own checkbox, and the session line is a
-    /// report of what the connection is doing rather than a setting at all.
+    /// are not: <c>login</c> is <em>derived</em> from the fields above it and there is nothing there to
+    /// set, and the session line is a report of what the connection is doing rather than a setting.
     /// <para>
-    /// <c>at start</c> is a field rather than a second checkbox because a row carries at most one and
-    /// this row's is already auto-login — the same constraint that made the world's two security flags a
-    /// pane of their own. A closed two-value choice is the next-nearest control the screen already
-    /// knows, and it lands the setting beside the rows it has to be told apart from rather than in a
-    /// pane somewhere else. The pair is drawn adjacent on purpose: <c>at start</c> decides whether a
-    /// connection is opened at launch, <c>auto-login</c> decides whether the connect line is sent once
-    /// one exists, and neither implies the other.
+    /// <b>A row here draws no checkbox at all</b> (<see cref="CharacterRow"/>), so every settable thing
+    /// about a character is a field on this form and there is nothing Space can reach. That used not to
+    /// be true in the model — the row bound a toggle over <c>autoLogin</c> which the renderer never drew
+    /// — and the defect it caused is the one this whole change is about: the form said <c>auto-login
+    /// no</c> with no well beside it, correctly meaning "not editable here", and there was no "here" to
+    /// go to. A saved password sat inert behind a control that did not exist. The toggle is gone with the
+    /// setting; do not put another one on this row without also drawing it.
+    /// </para>
+    /// <para>
+    /// <c>at start</c> is therefore a field and must stay one. A closed two-value choice is the
+    /// next-nearest control the screen already knows, and it lands the setting beside the rows it has to
+    /// be told apart from. It is drawn directly above <c>login</c> on purpose: <c>at start</c> decides
+    /// whether a connection is opened at launch, <c>login</c> reports what gets typed once one exists,
+    /// and neither implies the other.
     /// </para>
     /// <para>
     /// The <b>password</b> was a seventh readout until it had somewhere to go. It was drawn without a
@@ -946,9 +963,7 @@ internal static class WorldsScreenRenderer
                 selectedCharacter,
                 StartupField,
                 pane: CharactersPane)),
-            CharField(
-                "auto-login",
-                ScreenChrome.ReadOnly(character.AutoLogin ? "yes" : "no") + $" [{Label}]— sends the connect line[/]"),
+            CharField("login", LoginDetail(character)),
             CharField("session", ScreenChrome.ReadOnly("offline")),
             CharField("log", Field(
                 $"[{Value}]{character.Logging.Format.ToString()}[/]",
@@ -1159,7 +1174,7 @@ internal static class WorldsScreenRenderer
     /// the row you move the cursor onto to bring a character up in the CHARACTER form below — and it
     /// used to be a four-column table (<c>name  state  login  trigger sets</c>) whose other three
     /// columns were all drawn again, on the same screen, at the same time: <c>session</c> and
-    /// <c>auto-login</c> are rows of the form directly underneath, and the sets are the pane beside it,
+    /// <c>login</c> are rows of the form directly underneath, and the sets are the pane beside it,
     /// with checkboxes, descriptions and counts. A list that restates the detail pane is a list you have
     /// to read to discover it says nothing new — and its column header cost a row that the list itself
     /// needed on a short screen.
@@ -1189,6 +1204,51 @@ internal static class WorldsScreenRenderer
     /// </summary>
     internal static string StartupDetail(bool connectAtStartup) =>
         connectAtStartup ? $"[{Value}]{StartupOn}[/]" : $"[{Label}]{StartupOff}[/]";
+
+    /// <summary>
+    /// The <c>login</c> cell: what this character will actually type when it connects, read off
+    /// <see cref="CharacterDefinition.Login"/> rather than off a setting.
+    /// <para>
+    /// <b>This row is the whole reason the screen changed.</b> It replaced an <c>auto-login</c> readout
+    /// that said <c>yes</c> or <c>no</c> about a stored boolean — and a character could sit there with a
+    /// saved password, that flag at its default, and a row cheerfully reading <c>no</c> that never
+    /// explained it was the reason the password did nothing. Two of this repo's own characters were in
+    /// exactly that state. The flag is gone; this row reports the derived answer, so there is no longer a
+    /// setting the screen can agree with while the client disagrees.
+    /// </para>
+    /// <para>
+    /// <see cref="LoginPlan.PasswordUnused"/> is drawn in <see cref="ScreenPalette.Warn"/>, the ink the
+    /// only other misconfiguration on this screen uses (a world trusting invalid certificates). It is the
+    /// one state here where the user has done something that cannot work: the password field above is
+    /// filled in and the connect line beside it has nowhere to put it.
+    /// </para>
+    /// </summary>
+    internal static string LoginDetail(CharacterDefinition character) => character.Login() switch
+    {
+        LoginPlan.WithPassword => ScreenChrome.ReadOnly(LoginWithPassword),
+        LoginPlan.WithoutPassword => ScreenChrome.ReadOnly(LoginWithoutPassword),
+        LoginPlan.PasswordUnused => $"[{Warn}]▲ {Escape(LoginPasswordUnused)}[/]",
+        _ => ScreenChrome.ReadOnly(LoginNothing),
+    };
+
+    /// <summary>Sends the connect line with the saved password in it — the ordinary configured case.</summary>
+    internal const string LoginWithPassword = "sends connect + password";
+
+    /// <summary>Sends a connect line that involves no password, because none is saved.</summary>
+    internal const string LoginWithoutPassword = "sends the connect line";
+
+    /// <summary>
+    /// Sends nothing. It names the two fields that would change that, because "nothing" on its own is
+    /// indistinguishable from a row that is broken — and this is the state a user arrives in when they
+    /// expected a login and did not get one.
+    /// </summary>
+    internal const string LoginNothing = "nothing — set a password";
+
+    /// <summary>
+    /// A saved password with no <c>%PASSWORD%</c> in the connect line. Names the token, because the fix
+    /// is to put it back and the row is two lines under the field it belongs in.
+    /// </summary>
+    internal const string LoginPasswordUnused = "password unused — no %PASSWORD%";
 
     internal static string EncodingDetail(string? encoding) =>
         TelnetSessionOptions.ResolveEncoding(encoding) is null

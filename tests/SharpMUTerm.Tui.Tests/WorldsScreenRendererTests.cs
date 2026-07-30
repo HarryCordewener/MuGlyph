@@ -47,14 +47,12 @@ public class WorldsScreenRendererTests
                 {
                     Name = "Corvid",
                     Password = "secret",
-                    AutoLogin = true,
                     OnConnect = "look;score",
                     TriggerSets = new List<string> { "Comms", "Combat" },
                 },
                 new()
                 {
                     Name = "Rookery",
-                    AutoLogin = false,
                     TriggerSets = new List<string> { "Comms" },
                 },
             },
@@ -217,14 +215,14 @@ public class WorldsScreenRendererTests
         await Assert.That(column.Any(l => l.Contains("Rookery"))).IsTrue();
 
         // None of the three restated columns survives in the list, nor the header that named them.
-        foreach (var gone in new[] { "○ offline", "auto-login", "manual", "trigger sets", "state" })
+        foreach (var gone in new[] { "○ offline", "login", "manual", "trigger sets", "state" })
         {
             await Assert.That(column.Any(l => l.Contains(gone))).IsFalse().Because(gone + " is the form's");
         }
 
         // And each of them is still on the screen, in the form that owns it.
         var form = WorldsScreenRenderer.FormColumn(Worlds()[0].Characters[0], ScreenPalette.Accent);
-        await Assert.That(form.Any(l => l.Contains("auto-login"))).IsTrue();
+        await Assert.That(form.Any(l => l.Contains("login"))).IsTrue();
         await Assert.That(form.Any(l => l.Contains("session"))).IsTrue();
     }
 
