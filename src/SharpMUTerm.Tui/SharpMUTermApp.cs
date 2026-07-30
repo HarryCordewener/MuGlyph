@@ -329,7 +329,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _system = new ConsoleWindowSystem(driver ?? new NetConsoleDriver(RenderMode.Buffer), options);
 
         _header = Controls.Markup(HeaderMarkup()).StickyTop().Build();
-        _header.LinkClicked += (_, e) => OnLinkClicked(e.Url);
+        _header.LinkClicked += (_, e) => OnChromeLinkClicked(e.Url);
         _header.BackgroundColor = ToColor(_theme.StatusBackground); // the menu bar is a distinct chrome band
         // Keep the clickable brand button on-brand (violet) instead of the driver's default link highlight.
         var brand = AccentPalette[2];
@@ -343,6 +343,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // The connection rail (worlds → characters → windows) sits left of the pane area, joined by
         // a splitter. RailModel/RailRenderer keep the projection + markup tested; this just hosts it.
         _rail = new MarkupControl(new List<string>());
+        _rail.LinkClicked += (_, e) => DispatchRailTarget(e.Url);
 
         // The pane area renders the workspace's split tree (one TabControl per leaf pane). It's built
         // from the model and rebuilt whenever the layout changes; the initial row goes into the window.
@@ -1427,8 +1428,9 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         UpdateInputChrome();
     }
 
-    /// <summary>The window id of the visible tab (the input line belongs to it).</summary>
-    private string ActiveWindowId() => _workspace.Layout.FocusedPane.ActiveTab ?? MainWindowId;
+    /// <summary>The window id of the visible tab (the input line belongs to it). Internal so a test can
+    /// assert which window a click on the rail brought forward.</summary>
+    internal string ActiveWindowId() => _workspace.Layout.FocusedPane.ActiveTab ?? MainWindowId;
 
     /// <summary>The bar ⏎ currently sends from — the armed one, and the only one with a caret.</summary>
     private InputBarControl ActiveBar() => _armed;
@@ -2727,7 +2729,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         {
             var pane = _workspace.Layout.FindWindow(window.Id);
             var label = pane is not null ? paneLabels.GetValueOrDefault(pane.Id) : null;
-            windows.Add(new RailWindow(window.Title, label, window.Unread, window.HasUnsentInput, Closed: pane is null));
+            windows.Add(new RailWindow(
+                window.Title, window.Id, label, window.Unread, window.HasUnsentInput, Closed: pane is null));
         }
 
         return windows;
@@ -2735,6 +2738,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
     /// <summary>Repaints the rail from current state.</summary>
     private void RefreshRail() => _rail.SetContent(RenderRailLines());
+
+    /// <summary>
+    /// The rail's markup as it currently stands, one string per row. Internal so a test can read the
+    /// click targets out of the rail the app actually draws rather than re-deriving them: the rows are
+    /// rebuilt on every refresh, and a payload that came from anywhere but the live model would go
+    /// stale the moment a world connected or a window closed.
+    /// </summary>
+    internal IReadOnlyList<string> RailLines => RenderRailLines();
 
     /// <summary>
     /// Builds the ⌃P command catalog from live config + workspace state. Internal so a headless test
@@ -2786,6 +2797,29 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>Every window in the workspace, by id — a test's view of which tabs a switch created.</summary>
     internal IReadOnlyList<string> WindowIds() => _workspace.Windows.Select(w => w.Id).ToArray();
 
+    /// <summary>Whether the ⌃P command surface is up — the header's ☰ opens it, and only the header may.</summary>
+    internal bool MenuIsOpen => _palette.IsOpen;
+
+    /// <summary>
+    /// Clicks the connection rail at a cell measured from the rail's own top-left, the way the framework
+    /// delivers a click to a control (<c>MouseEventArgs.Position</c> is control-relative). Everything
+    /// past this point is real: the link hit-test against the geometry the last paint recorded, the
+    /// control's <c>LinkClicked</c>, and the focus the framework takes on the way through.
+    /// <para>
+    /// It exists because <c>ConsoleWindowSystem</c> only subscribes to the driver's mouse stream inside
+    /// <c>Run()</c>, so a headless test cannot reach a control by clicking the <em>desktop</em> — the one
+    /// link in the chain these tests cannot cover, exactly as with the pane-drag suite. Requires a
+    /// rendered frame first: the rail's rows have no hit-test geometry until they have been painted.
+    /// </para>
+    /// </summary>
+    internal bool SimulateRailClick(int x, int y)
+    {
+        var local = new System.Drawing.Point(x, y);
+        var onWindow = new System.Drawing.Point(_rail.ActualX + x, _rail.ActualY + y);
+        return _rail.ProcessMouseEvent(new MouseEventArgs(
+            new List<MouseFlags> { MouseFlags.Button1Clicked }, local, onWindow, onWindow, _window));
+    }
+
     /// <summary>The live configuration this app is running on.</summary>
     internal AppConfiguration Configuration => _config;
 
@@ -2812,9 +2846,9 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return true;
         }
 
-        if (id.StartsWith("win:", StringComparison.Ordinal))
+        if (id.StartsWith(CommandIds.WindowPrefix, StringComparison.Ordinal))
         {
-            var windowId = id["win:".Length..];
+            var windowId = id[CommandIds.WindowPrefix.Length..];
             if (!Activate(windowId))
             {
                 RefuseCommand($"{windowId} is not open any more");
@@ -2911,8 +2945,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         return true;
     }
 
-    /// <summary>The command id prefix carrying a character's <c>world.character</c> session key.</summary>
-    private const string CharacterCommandPrefix = "char:";
+    /// <summary>
+    /// The command id prefix carrying a character's <c>world.character</c> session key. Read from
+    /// <see cref="CommandIds"/> rather than spelt again here: the catalog that offers these ids, the
+    /// rail that now also names them, and this switch that implements them are three places that
+    /// otherwise drift in silence — which is the exact way <c>char:</c> came to be offered and
+    /// implemented nowhere.
+    /// </summary>
+    private const string CharacterCommandPrefix = CommandIds.CharacterPrefix;
 
     /// <summary>
     /// Says on the status line why a command surface entry did not do what its label promised. It goes
@@ -3111,13 +3151,74 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _header.SetContent(new List<string> { HeaderMarkup() });
     }
 
-    private void OnLinkClicked(string url)
+    /// <summary>
+    /// The link handler for the app's own chrome — today just the header's <c>☰</c> button. It is not
+    /// <see cref="OnLinkClicked"/>: that handler serves the output panes, whose content is written by
+    /// the <em>server</em>, and while the menu lived in its namespace any world could open this
+    /// client's command surface by sending <c>&lt;a href="sharpmuterm-menu:toggle"&gt;</c> in MXP.
+    /// Nothing painted by a world reaches this method, because no control a world writes into is wired
+    /// to it. See <see cref="DispatchRailTarget"/> for the same boundary drawn around the rail.
+    /// </summary>
+    private void OnChromeLinkClicked(string url)
     {
         if (url.StartsWith(MenuScheme, StringComparison.Ordinal))
         {
             ToggleMenu();
+            return;
         }
-        else if (url.StartsWith(MarkupFormatter.SendScheme, StringComparison.Ordinal))
+
+        OnLinkClicked(url); // anything else in the chrome is an ordinary link
+    }
+
+    /// <summary>
+    /// What a click on the connection rail does: switch to the character, window or world the clicked
+    /// row names, or say why it cannot. Returns whether the target was understood; internal so a test
+    /// can drive it the way a click does, and so the suite can prove every target
+    /// <see cref="RailModel"/> can emit is handled here.
+    /// <para>
+    /// <strong>This is deliberately not <see cref="OnLinkClicked"/>, and must not be merged into
+    /// it.</strong> That handler serves the output panes, which render MXP/Pueblo links a world sends
+    /// over the wire — a server can legitimately put any <c>[link=…]</c> it likes in front of you
+    /// there. If rail targets shared that namespace, a hostile or careless world could emit a link
+    /// carrying <c>char:</c> or <c>win:</c> and drive this client's UI from the wire, and the blast
+    /// radius would grow with every command scheme added afterwards. Because <c>_rail</c> is its own
+    /// <see cref="MarkupControl"/> with its own <c>LinkClicked</c>, the trust boundary is the
+    /// <em>control</em> rather than a URL-scheme convention: servers cannot write into the rail, so
+    /// they cannot reach this. <c>RailClickTests</c> pins both halves.
+    /// </para>
+    /// </summary>
+    internal bool DispatchRailTarget(string url)
+    {
+        // A world with nothing to switch to. There is no command for this and there should not be one;
+        // the rail asks and the rail answers, on the status row, recoverably (⌃P).
+        if (url.StartsWith(RailModel.NoCharactersPrefix, StringComparison.Ordinal))
+        {
+            var world = url[RailModel.NoCharactersPrefix.Length..];
+            Notice($"{world} has no characters yet — F5 adds one", MessageSeverity.Warning, "F5");
+            return true;
+        }
+
+        // Everything else the rail can name is a command the ⌃P surface already dispatches. Reusing
+        // DispatchCommand is the point: the rail is another door onto those actions, not a second
+        // implementation of switching that can drift away from them.
+        if (url.StartsWith(CommandIds.CharacterPrefix, StringComparison.Ordinal) ||
+            url.StartsWith(CommandIds.WindowPrefix, StringComparison.Ordinal))
+        {
+            return DispatchCommand(url);
+        }
+
+        RefuseCommand($"the rail offered {url} and nothing here handles it");
+        return false;
+    }
+
+    /// <summary>
+    /// The link handler for the <em>output panes</em> and the web view — everything whose content can
+    /// come from a server. Internal only so <c>RailClickTests</c> can hand it a rail payload and prove
+    /// it does not act on one; nothing outside this class calls it.
+    /// </summary>
+    internal void OnLinkClicked(string url)
+    {
+        if (url.StartsWith(MarkupFormatter.SendScheme, StringComparison.Ordinal))
         {
             _ = _active?.SendRawAsync(Uri.UnescapeDataString(url[MarkupFormatter.SendScheme.Length..]));
         }
@@ -3633,8 +3734,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>Visible width of a markup string: strips <c>[…]</c> tags, unescapes <c>[[</c>/<c>]]</c>,
-    /// and counts text elements (so combining/wide runes count once).</summary>
-    private static int MarkupWidth(string markup)
+    /// and counts text elements (so combining/wide runes count once). Internal because it is the
+    /// measure <see cref="RailWidth"/> sizes the sidebar by, so a test that a rail row's markup did not
+    /// change width has to ask the same question the layout asks.</summary>
+    internal static int MarkupWidth(string markup)
     {
         var sb = new System.Text.StringBuilder(markup.Length);
         var i = 0;

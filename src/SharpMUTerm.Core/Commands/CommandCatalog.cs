@@ -70,7 +70,7 @@ public static class CommandCatalog
             items.Add(new CommandItem(
                 CommandGroup.GoTo,
                 $"Switch to {character.CharacterName}",
-                $"char:{character.SessionKey}",
+                CommandIds.Character(character.SessionKey),
                 $"{character.WorldName} · {state}"));
         }
 
@@ -86,7 +86,7 @@ public static class CommandCatalog
             items.Add(new CommandItem(
                 CommandGroup.GoTo,
                 $"Go to {window.Title}",
-                $"win:{window.Id}",
+                CommandIds.Window(window.Id),
                 $"{owner}{unread}"));
         }
 
