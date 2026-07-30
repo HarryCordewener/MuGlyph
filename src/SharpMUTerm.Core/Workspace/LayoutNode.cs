@@ -106,6 +106,24 @@ public sealed class SplitNode : LayoutNode
     /// <summary>Resets sizes to an even split across the current children.</summary>
     internal void ResetSizes() => Sizes = Even(Children.Count);
 
+    /// <summary>
+    /// Replaces the sizes, re-normalised so they still sum to 1 — the seam <see cref="PaneResize"/>
+    /// writes a moved border back through. Internal, and normalising rather than trusting, because the
+    /// "sums to 1" claim on <see cref="Sizes"/> is what the renderer's star weights and
+    /// <see cref="LayoutSolver"/> both rely on; a caller handing in cell counts must not be able to break
+    /// it by arithmetic.
+    /// </summary>
+    internal void SetSizes(IReadOnlyList<double> sizes)
+    {
+        ArgumentNullException.ThrowIfNull(sizes);
+        if (sizes.Count != Children.Count)
+        {
+            throw new ArgumentException("One size per child.", nameof(sizes));
+        }
+
+        Sizes = Normalize(sizes);
+    }
+
     private static List<double> Even(int count)
     {
         var each = 1.0 / count;
