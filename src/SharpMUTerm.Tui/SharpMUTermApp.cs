@@ -230,6 +230,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private readonly QuitOverlay _quit;
 
     /// <summary>
+    /// The ⌃B which-key panel: the keymap explained, shown a short moment after the prefix is armed and
+    /// only when nothing has been pressed by then.
+    /// </summary>
+    private readonly PrefixOverlay _prefixPanel;
+
+    /// <summary>
     /// The ⌃R history surface: the armed command line's own history, newest first, filtered by typing.
     /// ⏎ there inserts an entry; it never sends one.
     /// </summary>
@@ -261,6 +267,23 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private readonly bool _headless;
     private bool _railCollapsed;
     private bool _prefixArmed;
+
+    /// <summary>
+    /// The which-key timer: armed by <see cref="ArmPrefix"/>, and if it fires before a key arrives it
+    /// opens <see cref="_prefixPanel"/>. It is a timer rather than anything hung off a frame for the
+    /// reason the NAWS flush and the notice are: an armed prefix changes nothing, so repaints stop —
+    /// clocks don't.
+    /// </summary>
+    private ITimer? _prefixTimer;
+
+    /// <summary>
+    /// How long the terse strip stands alone before the panel explains it. Short enough that someone who
+    /// does not know the keymap is told without having asked; long enough that someone who does never
+    /// sees the panel at all, because their second keystroke has already landed. It runs on the injected
+    /// clock, so a test advances it rather than sleeping for it.
+    /// </summary>
+    private static readonly TimeSpan PrefixPanelDelay = TimeSpan.FromMilliseconds(400);
+
     private bool _moveMode;
     private string? _moveWindowId;
     private string? _moveTargetPaneId;
@@ -437,6 +460,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _messageLog = new MessageLogOverlay(_system, _diagnostics);
         _settings = new SettingsOverlay(_system);
         _quit = new QuitOverlay(_system, QuitFactsNow, Quit);
+
+        // The ⌃B which-key panel. Its facts are read at the moment it opens, so it explains the workspace
+        // the user is actually looking at, and the key that ends it goes back through the very consumer a
+        // key pressed before it appeared goes through — see ArmPrefix.
+        _prefixPanel = new PrefixOverlay(_system, PrefixFactsNow, ConsumePrefixKey);
 
         // Everything the history surface needs is read at the moment it opens, so it is always the armed
         // command line's own list — history is per bar, and the surface must not outlive that fact.
@@ -773,12 +801,24 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _palette.Toggle();
         }
 
+        // The ⌃B which-key panel over the demo workspace: what the arming timer opens when no key has
+        // arrived by the time it fires. `prefix` is the terse strip on its own — the first thing an armed
+        // prefix shows — and this is what follows it, so the two views are the whole of the display. The
+        // demo pane holds two tabs and one pane, so the frame carries live rows *and* dimmed ones with
+        // their reasons, which is the half of the panel that explains the workspace rather than the keymap.
+        if (string.Equals(view, "prefix-panel", StringComparison.OrdinalIgnoreCase))
+        {
+            _prefixArmed = true;
+            _header.SetContent(new List<string> { HeaderMarkup() });
+            _prefixPanel.Open();
+        }
+
         // The client message viewer, over a demo scene that has said a few things. It is the only way to
         // look at the surface without a terminal, and the messages are seeded here rather than faked in
         // the view: what the snapshot shows is what Notice actually records.
         if (string.Equals(view, "messages", StringComparison.OrdinalIgnoreCase))
         {
-            RefusePrefix("nothing to split — a split moves this pane's other tabs across, and it has none");
+            RefusePrefix(PrefixPanel.NoSplitRefusal);
             RefuseCommand("nothing to reconnect — pick a character first (⌃P ▸ Switch to …)");
             Notice("switched to Corvid · offline — ⌃P ▸ Reconnect connects it", MessageSeverity.Info, "⌃P");
             Notice("could not connect to aetherfall.mux:4201 — no route to host", MessageSeverity.Error, "⌃P");
@@ -2051,7 +2091,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// how the framework happens to dispatch, and the next surface may not be modal.
     /// </summary>
     private bool AnyOverlayOpen =>
-        _palette.IsOpen || _settings.IsOpen || _quit.IsOpen || _messageLog.IsOpen || _historySearch.IsOpen;
+        _palette.IsOpen || _settings.IsOpen || _quit.IsOpen || _messageLog.IsOpen || _historySearch.IsOpen
+        || _prefixPanel.IsOpen;
 
     /// <summary>Whether either bar is holding unsent text — what the <c>✎</c> tab marker means.</summary>
     private bool AnyBarHasText() =>
@@ -3049,6 +3090,18 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             var action = ShortcutAction(claim, screens)
                 ?? throw new InvalidOperationException(
                     $"MacroKeys.AppShortcuts claims {claim.Modifiers}+{claim.Key} but nothing runs on it");
+
+            // Every claimed chord except ⌃B itself cancels an armed prefix before it runs. A global
+            // shortcut runs ahead of any window, so one pressed while ⌃B was pending used to open its
+            // surface and leave the prefix armed with nothing able to consume it — the next key after that
+            // surface closed was eaten as a pane command, and `x` closes a window. ⌃B is excluded because
+            // it is the toggle: ArmPrefix already answers a second press by disarming.
+            if (claim.Modifiers != ConsoleModifiers.Control || claim.Key != ConsoleKey.B)
+            {
+                var claimed = action;
+                action = () => { DisarmPrefix(); return claimed(); };
+            }
+
             _system.RegisterGlobalShortcut(claim.Modifiers, claim.Key, action);
             _shortcuts[(claim.Modifiers, claim.Key)] = action;
         }
@@ -5440,19 +5493,97 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
-    /// Arms the tmux-style ⌃B prefix: the header shows <c>⌃B — awaiting …</c> and the next key is
-    /// consumed by <see cref="OnWindowKey"/> as a pane command. Ignored while an overlay is open.
+    /// Arms the tmux-style ⌃B prefix, or disarms it when ⌃B arrives again: the header shows the terse
+    /// <see cref="PrefixPanel.Strip"/> at once and the next key is consumed by <see cref="OnWindowKey"/>
+    /// as a pane command. Arming also starts <see cref="_prefixTimer"/>; if no key has arrived by the
+    /// time it fires, <see cref="PrefixOverlay"/> opens and explains the keymap — the which-key pattern,
+    /// so the expert who is already typing never sees the panel and the newcomer is told without asking.
+    /// <para>
+    /// <b>⌃B ⌃B disarms.</b> It was the one mode in this client you could not leave with the key that
+    /// entered it — ⌃P, ⌃R, ⌃Q and every F-key screen close on their own chord — and a held or fumbled
+    /// chord therefore left a prefix armed that ate the next keystroke.
+    /// </para>
+    /// <para>
+    /// <b>Ignored during a move as well as under an overlay.</b> <see cref="HandleWindowKey"/> tests
+    /// <see cref="_moveMode"/> first, so a prefix armed during a move can never be consumed while the move
+    /// lasts: the arming survived it, and the first key <em>after</em> the move was eaten as a pane
+    /// command — which, if it happened to be <c>x</c>, closed a window. The guard used to name overlays
+    /// only.
+    /// </para>
     /// </summary>
     private void ArmPrefix()
     {
-        if (AnyOverlayOpen)
+        if (_prefixArmed)
+        {
+            DisarmPrefix();
+            return;
+        }
+
+        if (AnyOverlayOpen || _moveMode)
         {
             return;
         }
 
         _prefixArmed = true;
         _header.SetContent(new List<string> { HeaderMarkup() });
+        _prefixTimer ??= _time.CreateTimer(
+            _ => OnUiThread(ShowPrefixPanel), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        _prefixTimer.Change(PrefixPanelDelay, Timeout.InfiniteTimeSpan);
     }
+
+    /// <summary>
+    /// Spends the prefix: stops the which-key timer, takes the panel down if it is up, and puts the header
+    /// back. <b>Every</b> path off the armed state runs this, because a prefix left armed with nothing able
+    /// to consume it eats the next keystroke — which is the shape of all three defects this change fixes.
+    /// </summary>
+    private void DisarmPrefix()
+    {
+        if (!_prefixArmed)
+        {
+            return;
+        }
+
+        _prefixArmed = false;
+        _prefixTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        _prefixPanel.Close();
+        _header.SetContent(new List<string> { HeaderMarkup() });
+    }
+
+    /// <summary>
+    /// Opens the which-key panel, if the prefix is still waiting for a key by the time the timer fires. It
+    /// re-checks rather than trusting the timer: the callback is marshalled onto the UI thread, so the
+    /// keystroke that spends the prefix can land between the two.
+    /// </summary>
+    private void ShowPrefixPanel()
+    {
+        if (_prefixArmed && !AnyOverlayOpen)
+        {
+            _prefixPanel.Open();
+        }
+    }
+
+    /// <summary>
+    /// Runs one key against the armed prefix and disarms — the single consumer, shared by the key that
+    /// arrives before the panel appears (<see cref="HandleWindowKey"/>) and the one that arrives into it
+    /// (<see cref="PrefixOverlay"/>), so the two timings are one behaviour rather than two.
+    /// </summary>
+    private void ConsumePrefixKey(ConsoleKeyInfo key)
+    {
+        DisarmPrefix();
+        RunPrefixCommand(PrefixKey(key));
+    }
+
+    /// <summary>
+    /// The workspace as the ⌃B keymap sees it. Gathered here because only the app can see the layout, the
+    /// active window and the command lines; <see cref="PrefixPanel"/> turns it into the rows.
+    /// </summary>
+    private PrefixFacts PrefixFactsNow() => new(
+        _workspace.Layout.Panes.Count,
+        _workspace.Layout.FocusedPane.Tabs.Count,
+        ActiveWindowId() == MainWindowId,
+        _workspace.Layout.ZoomedPaneId is not null,
+        _railCollapsed,
+        _second.Visible);
 
     /// <summary>Consumes the key after ⌃B and runs the matching pane command (tmux-style).</summary>
     private void OnWindowKey(object? sender, KeyPressedEventArgs e) => HandleWindowKey(e);
@@ -5787,6 +5918,24 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         return SimulateKey(key);
     }
 
+    /// <summary>Whether the ⌃B prefix is armed and waiting for the key it will consume.</summary>
+    internal bool PrefixArmed => _prefixArmed;
+
+    /// <summary>Whether the ⌃B which-key panel is up.</summary>
+    internal bool PrefixPanelOpen => _prefixPanel.IsOpen;
+
+    /// <summary>What the panel is saying — the rendered markup, for a headless test to read back.</summary>
+    internal IReadOnlyList<string> PrefixPanelLines => _prefixPanel.Lines;
+
+    /// <summary>The keymap rows the panel is drawing, each with whether this workspace can run it.</summary>
+    internal IReadOnlyList<PrefixEntry> PrefixPanelEntries => _prefixPanel.Entries;
+
+    /// <summary>The workspace as the keymap sees it, without opening anything.</summary>
+    internal PrefixFacts PrefixFactsSnapshot => PrefixFactsNow();
+
+    /// <summary>Feeds one key to the open panel, for the reason <see cref="SimulateQuitKey"/> exists.</summary>
+    internal void SimulatePrefixPanelKey(ConsoleKeyInfo key) => _prefixPanel.SimulateKey(key);
+
     /// <summary>The status line's current markup — where a pane command that had nothing to do says so.</summary>
     internal string StatusMarkup => _statusBar.Text;
 
@@ -5952,10 +6101,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return null;
         }
 
-        _prefixArmed = false;
         e.Handled = true;
-        RunPrefixCommand(PrefixKey(e.KeyInfo));
-        _header.SetContent(new List<string> { HeaderMarkup() });
+        ConsumePrefixKey(e.KeyInfo);
         return null;
     }
 
@@ -5970,6 +6117,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     {
         ConsoleKey.LeftArrow => '<',
         ConsoleKey.RightArrow => '>',
+        // Escape is the advertised way out, so it is resolved from the *key* rather than left to arrive as
+        // a control character in KeyChar — which is how it used to reach the "any other key" arm, and why
+        // no surface could honestly name it.
+        ConsoleKey.Escape => PrefixPanel.CancelKey,
         _ => char.ToLowerInvariant(key.KeyChar),
     };
 
@@ -5999,7 +6150,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             case 'z':
                 if (_workspace.Layout.Panes.Count <= 1)
                 {
-                    RefusePrefix("nothing to zoom — the workspace has one pane");
+                    RefusePrefix(PrefixPanel.NoZoomRefusal);
                     break;
                 }
 
@@ -6010,7 +6161,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             case 'o':
                 if (_workspace.Layout.Panes.Count <= 1)
                 {
-                    RefusePrefix("nowhere to cycle to — the workspace has one pane");
+                    RefusePrefix(PrefixPanel.NoCycleRefusal);
                     break;
                 }
 
@@ -6021,7 +6172,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 // CloseActiveWindow refuses the main window; it is the session, not a closable tab.
                 if (ActiveWindowId() == MainWindowId)
                 {
-                    RefusePrefix("the main window stays open — ⌃B x closes a spawn or web tab");
+                    RefusePrefix(PrefixPanel.NoCloseRefusal);
                     break;
                 }
 
@@ -6042,9 +6193,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                     break;
                 }
 
-                RefusePrefix(tabs > 1
-                    ? "the tab is already at that end of the strip"
-                    : "nothing to reorder — this pane has one tab");
+                RefusePrefix(tabs > 1 ? PrefixPanel.TabAtEndRefusal : PrefixPanel.NoReorderRefusal);
                 break;
 
             case 'm':
@@ -6053,6 +6202,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
             case 'i':
                 ToggleSecondBar();
+                break;
+
+            // The advertised way out. Behaviourally it is the same as the fall-through below — the prefix
+            // is spent and no command runs — and it is a case of its own because a surface may only name a
+            // key that is really there. Quietly: cancelling is not a refusal, and a status-line notice
+            // would be the client answering a question nobody asked.
+            case PrefixPanel.CancelKey:
                 break;
 
             default:
@@ -6072,7 +6228,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return;
         }
 
-        RefusePrefix("nothing to split — a split moves this pane's other tabs across, and it has none");
+        RefusePrefix(PrefixPanel.NoSplitRefusal);
     }
 
     /// <summary>
@@ -7310,13 +7466,16 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         sb.Append($"[{tail} on {headerBg}]{Glyphs.PowerRight}[/]");
         var leftBar = sb.ToString();
 
-        // The ⌃B prefix indicator shows only while armed (design: "⌃B — awaiting | - z o x b m < > ← →").
-        // The reorder pair lists both spellings: the keymap is the literal < and >, but bare angle
-        // brackets read as a direction, and the arrows are what a reader reaches for — so they work too
-        // (see PrefixKey) and the strip says so rather than leaving the guess to be discovered.
+        // The ⌃B prefix indicator shows only while armed, and it is the *terse* half of the which-key
+        // pair: the keys immediately, the panel a few hundred milliseconds later if nothing was pressed.
+        // What it says — including the spelling of the exit — lives in PrefixPanel, so the two surfaces
+        // cannot drift. It is picked to fit the room the identity ribbon leaves, because the header is one
+        // row and an overlong one *wraps*, which costs a row of workspace; the widest spelling ran the
+        // eighty-column layout to within four cells of the edge before anything was added to it.
         if (_prefixArmed)
         {
-            return $"{leftBar}  [#e5c07b]⌃B — awaiting[/]  [dim]| - z o x b m i < > ← →[/]";
+            var room = HeaderWidth() - MarkupWidth(leftBar) - 2;
+            return $"{leftBar}  {PrefixPanel.Strip(room)}";
         }
 
         // Both halves count characters — see ConnectedCharacters for why that is the unit and what it used
@@ -7541,6 +7700,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         _system.ConsoleDriver.MouseEvent -= OnDriverMouseEvent;
         _sizeFlushTimer?.Dispose(); // nothing left to tell a server we are shutting down to
         _noticeTimer?.Dispose();    // and no row left to put a notice back on
+        _prefixTimer?.Dispose();    // and no window left to float a which-key panel over
         _webImageCts?.Cancel();
         _webImageCts?.Dispose();
         _imageLoader.Dispose();

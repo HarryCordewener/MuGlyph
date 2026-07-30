@@ -147,7 +147,8 @@ python3 tools/ansi_frame_to_image.py frame.ansi frame.html   # or .svg
   fraction, the rail's dots and the quit prompt's count are all visible together and all have to agree;
   every other view has at most one character connected per world, which is what hid a header dividing
   connections by *worlds* and a quit prompt reducing them to distinct world names), `deletions`, `web`,
-  `rail-long`, `scrollback`, `scrollback-up`, `freeze-scrollback`,
+  `rail-long`, `scrollback`, `scrollback-up`, `freeze-scrollback`, `prefix-panel` (the ⌃B which-key
+  panel — the state `prefix` becomes a few hundred milliseconds later, if no key has arrived),
   `focus`/`focus-moved` (a split *and* a second command line — the one geometry showing a focused pane
   beside an unfocused one and an armed bar above an idle one, before and after a real ⌃→), plus the
   default workspace

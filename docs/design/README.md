@@ -189,7 +189,8 @@ The whole client. Five regions, top to bottom: header, [rail | pane area], input
 
 **Header** (1 row): `☰ muterm` at far left is the menu affordance and opens the command
 surface (the caret flips `☰`→`▾` while open). Right side carries a `⌃B` prefix indicator
-(shown only while armed), the log indicator (`◉ LOG 1284` / `◉ LOG off`), and a clock.
+(shown only while armed, and replacing the rest of the row while it is), the log indicator
+(`◉ LOG 1284` / `◉ LOG off`), and a clock.
 
 **Connection rail** (left, ~204px ≈ 25 cols expanded / 46px ≈ 6 collapsed): a two-level tree.
 
@@ -308,7 +309,8 @@ table layouts in the same frame; F7/F8/F9 share one options-list body.
 
 ### Pane management (tmux-style prefix)
 
-`⌃B` arms a prefix — the header shows `⌃B — awaiting | - z o x b m < > ← →` — and the next key acts:
+`⌃B` arms a prefix — the header shows `⌃B — awaiting | - z o x b m i < > ← → · Esc cancels` — and
+the next key acts:
 
 | Key | Action |
 |---|---|
@@ -316,10 +318,12 @@ table layouts in the same frame; F7/F8/F9 share one options-list body.
 | `-` | split horizontally, same rule |
 | `z` | zoom / unzoom focused pane |
 | `o` | cycle pane focus |
-| `x` | close focused pane |
+| `x` | close the focused tab (the main window stays) |
 | `b` | collapse / expand the connection rail |
 | `m` | enter **move mode** |
+| `i` | show / hide this window's second command line |
 | `<` `>` (or `←` `→`) | reorder the active tab within its pane |
+| `Esc` (or `⌃B` again) | cancel |
 
 Splitting moves the *other* tabs across rather than duplicating the active one — the common
 case is "pull #public out into its own pane".
@@ -328,6 +332,28 @@ Which means a pane holding a single window **cannot** be split, and on a fresh c
 whole workspace: `|`, `-`, `<`, `>`, `z` and `o` all have nothing to do. Each of them **says so on
 the status line** rather than leaving the keystroke looking dead — that silence is what made the
 prefix read as broken the first time it was used in a real terminal.
+
+**The keymap explains itself: which-key, not a setting.** The strip above is the whole of what an
+armed prefix used to show, and it names ten keys to anyone who has already read the source. So
+arming now starts a short timer as well (`SharpMUTermApp.PrefixPanelDelay`, 400 ms, on the injected
+clock): if no key has arrived by the time it fires, `PrefixOverlay` floats a panel naming what each
+key *does*. That is vim's which-key and emacs' guide-key, and it is deliberately not the
+modal-versus-strip preference that was asked for — an expert never sees the panel because their
+second keystroke has already landed, a newcomer is told without having to ask, and neither has to
+find a setting. It must be a *timer* rather than anything hung off a frame: an armed prefix changes
+nothing, so repaints stop.
+
+The panel shows the commands that **cannot** run dimmed, beside the short reason (`needs a second
+pane`), so it explains the workspace as well as the keymap; pressing one anyway still spells the
+refusal out on the status line. Both lengths of every reason live in `PrefixPanel`, which is also
+where the strip's spellings live — the strip is picked to fit the room the identity ribbon leaves,
+because the header is one row and an overlong one *wraps*, which costs a row of workspace.
+
+The prefix is left the way every other surface in this client is left: `Esc`, or `⌃B` again. Both
+are advertised on both surfaces, and neither may leave the prefix armed — a prefix nothing can
+consume eats the next keystroke, and if that keystroke is `x` a window closes. The same rule is why
+arming is ignored during a move (`HandleWindowKey` tests move mode first) and why every other
+claimed chord cancels a pending prefix before opening its own surface.
 
 ### Move mode (`⌃B m`) — the keyboard path for window placement
 
