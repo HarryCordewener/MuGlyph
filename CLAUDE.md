@@ -62,7 +62,9 @@ fallbacks) for inline images/maps.
   status line, `Ctrl+Q` quit, per-pane NAWS (every connected session is told its own pane's output
   rectangle, on every resize and layout change, rate-limited to four writes a second with a trailing
   flush). The tab/pane set is driven by the tested `Core.Workspaces` model, with **splits** (thin
-  single-line dividers) and the **connection rail** now rendered as well.
+  single-line dividers) and the **connection rail** now rendered as well — and **clickable**: a world,
+  character or window row switches to it, dispatched through the rail control's *own* `LinkClicked`
+  (never the output panes' handler, so a world cannot drive the client's UI from the wire).
 
 ## Building and testing
 

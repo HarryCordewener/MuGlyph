@@ -79,7 +79,8 @@ HTML logging · GMCP / MSDP / MSSP / MCCP · MXP + Pueblo · Unicode/emoji.
   override and semantic UI colours, serialised to the config as hex.
 - **TUI** — a [SharpConsoleUI](https://github.com/nickprotop/ConsoleEx) app rendering the multi-pane
   workspace design over the `Core.Workspaces` model: a **connection rail** (worlds → characters →
-  windows with connected/active/unread markers), **split panes** with tabbed windows (tmux-style
+  windows with connected/active/unread markers, any of which you can click to switch to — collapsed to
+  a strip of initials, those are clickable too), **split panes** with tabbed windows (tmux-style
   split/close/zoom), a **command surface** (`Ctrl+P`) with ranked GO TO / WORLD / TERMINAL / LAYOUT
   actions, per-world **accent colours**, a GMCP-driven **status bar** with HP/EN meters, and a
   character-bound input prompt + destination/draft gutter. Output is truecolor markup with clickable
