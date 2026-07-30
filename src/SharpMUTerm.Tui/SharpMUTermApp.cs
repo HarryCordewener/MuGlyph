@@ -6531,7 +6531,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 var tabs = _workspace.Layout.FocusedPane.Tabs.Count;
                 if (_workspace.Layout.ReorderActiveTab(key == '<' ? -1 : 1))
                 {
-                    RefreshTabTitles();
+                    // The strip has to be rebuilt, not retitled. A reorder changes the *order* of the
+                    // pane's tabs, and `TabControl` has no way to move a page — `TabPages` is a copy and
+                    // the only mutators are Add/Insert — so `RefreshTabTitles`, which repaints each page
+                    // by its own `Tag`, left the strip exactly as it was. That is not a cosmetic lag: the
+                    // model then holds an order the screen does not, and the *refusal* is read against the
+                    // model. Reordering the middle of three tabs looked like nothing happened, and the
+                    // next press — genuinely at the end, in a strip still showing it in the middle — said
+                    // "the tab is already at that end of the strip", which is how it was reported.
+                    RebuildPaneArea();
                     break;
                 }
 
