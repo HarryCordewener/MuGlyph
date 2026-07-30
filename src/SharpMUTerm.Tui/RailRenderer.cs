@@ -119,12 +119,31 @@ internal static class RailRenderer
         return lines;
     }
 
+    /// <summary>
+    /// A character row: the active marker, the connected dot, the name, its unread total — and, in the
+    /// same right-hand column the window rows use, the pane its session is in.
+    /// <para>
+    /// That column is how the pane numbering is legible from anywhere. Window rows are drawn for the
+    /// active character only, so <c>pane 3</c> used to be visible only to whoever was already in it,
+    /// while ⌥3 was reaching it from every other character. It is drawn on the active character's row
+    /// too, deliberately: a column that appeared and vanished as you switched would be a third thing to
+    /// learn, and repeating "where this character is" above its window rows is redundant rather than
+    /// ambiguous — unlike <c>▪ main   main</c>, both columns here mean the same thing and say it in the
+    /// one vocabulary (<c>pane N</c>).
+    /// </para>
+    /// <para>
+    /// It costs the sidebar nothing at rest: a window row is indented one level deeper and carries the
+    /// pen field as well, so it is the wider row wherever one exists, and the model leaves
+    /// <see cref="RailRow.Pane"/> null on a single-pane workspace exactly as it does for windows.
+    /// </para>
+    /// </summary>
     private static string Character(RailRow row)
     {
         var marker = row.Active ? "[bold]▸[/]" : " ";
         var dot = row.Connected ? "●" : "○";
         var name = row.Active ? $"[bold]{Escape(row.Label)}[/]" : Escape(row.Label);
-        return $"{Indent(row)}{Link(row, $"{marker} [{Accent(row)}]{dot}[/] {name}{UnreadField(row.Unread)}")}";
+        var tail = row.Pane is { Length: > 0 } pane ? $"  [dim]{Escape(pane)}[/]" : string.Empty;
+        return $"{Indent(row)}{Link(row, $"{marker} [{Accent(row)}]{dot}[/] {name}{UnreadField(row.Unread)}{tail}")}";
     }
 
     /// <summary>

@@ -2712,12 +2712,21 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <c>Go to pane N</c> entries.
     /// <para>
     /// <b>The number is the rail's number.</b> Panes are counted in <c>Layout.Panes</c> order
-    /// (left-to-right, then top-to-bottom), which is the order the connection rail's hosting column
-    /// numbers them in, so ⌥3 goes to the pane the sidebar labels <c>pane 3</c>. There is no second
-    /// numbering to reconcile any more: the drag and move overlays used to call the first pane
-    /// <c>main</c> while the rail called it <c>pane 1</c> (see <see cref="PaneLabel"/>), which is a
-    /// mismatch a chord cannot survive — a key that lands somewhere other than the label says is worse
-    /// than no key.
+    /// (<em>creation</em> order), which is the order the connection rail's hosting column numbers them
+    /// in, so ⌥3 goes to the pane the sidebar labels <c>pane 3</c>. There is no second numbering to
+    /// reconcile any more: the drag and move overlays used to call the first pane <c>main</c> while the
+    /// rail called it <c>pane 1</c> (see <see cref="PaneLabel"/>), which is a mismatch a chord cannot
+    /// survive — a key that lands somewhere other than the label says is worse than no key.
+    /// </para>
+    /// <para>
+    /// <b>The numbering is global, and it is stable.</b> Global because it always was: a workspace has
+    /// one split tree whoever is connected in it, so ⌥3 has always reached a pane holding another
+    /// character's window — which is what makes these nine chords a character switcher as well as a pane
+    /// switcher. Stable is the part that had to be built. Panes used to be counted in tree order, so
+    /// creating one renumbered every pane after the insertion point and ⌥2 stopped meaning what it meant
+    /// while the user was doing something else entirely. That the rail now says which character is in
+    /// each pane (<see cref="BuildRail"/>) is the other half: a number nobody can see is a number nobody
+    /// presses.
     /// </para>
     /// <para>
     /// <b>Why Alt, and why the framework had to be outranked.</b> Ctrl+digit was what was asked for and it
@@ -4044,7 +4053,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                     Connected: connected.Contains(key),
                     Active: active,
                     Unread: windows.Sum(w => w.Unread),
-                    windows));
+                    windows,
+                    Pane: CharacterPaneLabel(key, paneLabels)));
             }
 
             worlds.Add(new RailWorld(world.Name, world.Host, world.Port, accent, characters));
@@ -4091,6 +4101,58 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         return windows;
+    }
+
+    /// <summary>
+    /// Which pane a character's session is in — the <c>pane N</c> its rail row carries, whether or not
+    /// it is the active character.
+    /// <para>
+    /// <b>This is what makes ⌥N usable as a character switch.</b> The chord has always been global
+    /// (<see cref="JumpToPane"/> indexes the workspace's one pane tree, not the active character's
+    /// windows), but the rail lists window rows for the active character only — so a reader looking at
+    /// Ann could see <c>pane 1</c> and nothing else, while ⌥2 and ⌥3 sat on the screen holding Bob and
+    /// Cal. The pane number was global; only the way to read it was not.
+    /// </para>
+    /// <para>
+    /// The <em>character</em> row rather than more window rows, because <see cref="BuildRailWindows"/>'s
+    /// owner filter is load-bearing: a window row under a character means that window is that
+    /// character's, and listing everyone's windows everywhere would take that reading away for the sake
+    /// of a fact one column can carry. One row per character already exists, it is exactly the row a
+    /// user clicks to reach that character, and the answer belongs on it.
+    /// </para>
+    /// <para>
+    /// The session window when there is one, else any window the character owns that a pane still holds
+    /// — a character with a spawn window open and its main window closed is still somewhere, and the row
+    /// should say where rather than go blank. Null when the workspace has one pane, because
+    /// <paramref name="paneLabels"/> is empty then and "which of the one pane" is not information.
+    /// </para>
+    /// </summary>
+    private string? CharacterPaneLabel(string sessionKey, IReadOnlyDictionary<string, string> paneLabels)
+    {
+        if (paneLabels.Count == 0)
+        {
+            return null;
+        }
+
+        string? fallback = null;
+        foreach (var window in _workspace.Windows)
+        {
+            if (!string.Equals(window.SessionKey, sessionKey, StringComparison.Ordinal) ||
+                _workspace.Layout.FindWindow(window.Id) is not { } pane ||
+                paneLabels.GetValueOrDefault(pane.Id) is not { } label)
+            {
+                continue;
+            }
+
+            if (window.Kind == WindowKind.Main)
+            {
+                return label;
+            }
+
+            fallback ??= label;
+        }
+
+        return fallback;
     }
 
     /// <summary>
@@ -6680,7 +6742,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
     /// <summary>
     /// The name every surface in this client gives a pane: <c>pane N</c>, counting
-    /// <see cref="WorkspaceLayout.Panes"/> in order from one.
+    /// <see cref="WorkspaceLayout.Panes"/> — <b>creation order</b> — from one.
+    /// <para>
+    /// The number a pane wears is its position in that list, so it does not move while the pane is open
+    /// and it closes up behind a pane that goes away. Under the tree order this used to count in, a pane
+    /// created to the left of pane 2 made it pane 3 without the user having touched it, and ⌥2 quietly
+    /// went somewhere else.
+    /// </para>
     /// <para>
     /// It used to call the first pane <c>main</c> — the spelling the rail's hosting column abandoned
     /// because <c>▪ main   main</c> put two meanings in one line, the <em>window</em> named main beside

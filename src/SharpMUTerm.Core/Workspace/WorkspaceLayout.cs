@@ -14,6 +14,14 @@ public sealed class WorkspaceLayout
     private readonly HashSet<LayoutNode> _removed = new();
     private int _paneCounter;
 
+    /// <summary>
+    /// The last <see cref="PaneNode.Sequence"/> handed out. Kept apart from <see cref="_paneCounter"/>
+    /// (which only feeds the <c>pN</c> ids) because the two can start out of step: a workspace restored
+    /// from a configuration written before panes carried a sequence has its numbering assigned here from
+    /// tree order, and its ids may be anything a previous version wrote.
+    /// </summary>
+    private int _sequenceCounter;
+
     /// <summary>Creates a workspace with a single pane, optionally seeded with window ids.</summary>
     public WorkspaceLayout(IEnumerable<string>? initialTabs = null)
     {
@@ -26,6 +34,16 @@ public sealed class WorkspaceLayout
     /// Rebuilds a layout from a pre-constructed tree (used when resuming a saved session). Focus and
     /// zoom fall back to a valid pane when the given ids are stale, and the internal pane counter is
     /// advanced past the highest <c>pN</c> id so future splits never collide with restored ids.
+    /// <para>
+    /// <b>A pane restored without a creation sequence is given one here, from tree order.</b> Panes are
+    /// numbered by <see cref="PaneNode.Sequence"/> and a configuration written before that field existed
+    /// carries none, so without this every restored pane would sort equal and the numbering would be
+    /// whatever the sort happened to do. Tree order is the numbering those workspaces were saved under,
+    /// which is why it is the right seed: an existing configuration comes back reading exactly as it
+    /// read when it was closed, and is stable from then on. Any pane that <em>does</em> carry a sequence
+    /// keeps it, and unsequenced ones are numbered after the highest that is already taken, so a
+    /// half-migrated tree cannot produce two panes with one number.
+    /// </para>
     /// </summary>
     public WorkspaceLayout(LayoutNode root, string focusedPaneId, string? zoomedPaneId = null)
     {
@@ -39,6 +57,12 @@ public sealed class WorkspaceLayout
         FocusedPaneId = panes.Any(p => p.Id == focusedPaneId) ? focusedPaneId : panes[0].Id;
         ZoomedPaneId = zoomedPaneId is not null && panes.Any(p => p.Id == zoomedPaneId) ? zoomedPaneId : null;
         _paneCounter = panes.Select(p => ParsePaneCounter(p.Id)).DefaultIfEmpty(0).Max();
+
+        _sequenceCounter = panes.Select(p => p.Sequence).DefaultIfEmpty(PaneNode.Unsequenced).Max();
+        foreach (var pane in panes.Where(p => p.Sequence <= PaneNode.Unsequenced))
+        {
+            pane.Sequence = ++_sequenceCounter;
+        }
     }
 
     /// <summary>Extracts the numeric suffix of a <c>pN</c> pane id, or 0 for an unrecognised shape.</summary>
@@ -54,8 +78,33 @@ public sealed class WorkspaceLayout
     /// <summary>The id of the zoomed pane (rendered full-area), or null when nothing is zoomed.</summary>
     public string? ZoomedPaneId { get; private set; }
 
-    /// <summary>Every pane, in left-to-right / top-to-bottom order.</summary>
-    public IReadOnlyList<PaneNode> Panes => Root.Panes().ToList();
+    /// <summary>
+    /// <b>Every pane in creation order — the one order this client numbers panes in.</b> The Nth entry is
+    /// <c>pane N</c> in the connection rail, the ⌃P <c>Go to pane N</c> entry, the move/drag overlays'
+    /// label and the ⌥N chord; those are four spellings of this index and there is deliberately no
+    /// second ordering for any of them to drift onto.
+    /// <para>
+    /// <b>Why not tree order.</b> It used to be <c>Root.Panes()</c>, which is geometry: a pane's position
+    /// left-to-right / top-to-bottom. Creating a pane therefore renumbered every pane after the insertion
+    /// point — dropping a window on the left edge of pane 2 made that pane into pane 3 — so ⌥2 silently
+    /// stopped meaning what it meant a moment earlier, on a workspace the user had not otherwise
+    /// rearranged. Creation order cannot do that: a pane's number is fixed for as long as it is open, and
+    /// a new pane always appears at the end.
+    /// </para>
+    /// <para>
+    /// <b>The number is the index, not the sequence.</b> Sequences are never reused, so reading them
+    /// directly would leave holes — close pane 2 of three and the survivors would be 1 and 3, with ⌥2
+    /// doing nothing while two panes sat on the screen. Taking the position in this list instead compacts
+    /// the numbering on every close, which is what keeps ⌥1–⌥N contiguous.
+    /// </para>
+    /// <para>
+    /// Geometry does not read this. The renderer (<c>LayoutSolver</c>), the resizer (<c>PaneResize</c>)
+    /// and directional movement (<c>PaneNavigation</c>, which works on arranged rectangles) all go
+    /// through <see cref="LayoutNode.Panes"/> or the tree itself, so ordering here changes what panes are
+    /// <em>called</em> and never where they are drawn.
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<PaneNode> Panes => Root.Panes().OrderBy(p => p.Sequence).ToList();
 
     /// <summary>The focused pane.</summary>
     public PaneNode FocusedPane => FindPane(FocusedPaneId)!;
@@ -79,7 +128,16 @@ public sealed class WorkspaceLayout
         return true;
     }
 
-    /// <summary>Cycles focus to the next pane in tree order (tmux <c>o</c>).</summary>
+    /// <summary>
+    /// Cycles focus to the next pane by number (tmux <c>o</c>) — ⌃O from <c>pane 2</c> goes to
+    /// <c>pane 3</c>, and wraps from the last back to <c>pane 1</c>.
+    /// <para>
+    /// It counts in <see cref="Panes"/> order, which is the order ⌥N counts in, because these are the
+    /// two <em>ordinal</em> movers and a user pressing them alternately must not be counting two
+    /// different sequences: three presses of ⌃O from pane 1 land where ⌥4 does. It used to be tree
+    /// order — the same order ⌥N used at the time, so they agreed then and would not now.
+    /// </para>
+    /// </summary>
     public void CycleFocus()
     {
         var panes = Panes;
@@ -284,7 +342,12 @@ public sealed class WorkspaceLayout
         return true;
     }
 
-    private PaneNode NewPane(IEnumerable<string>? tabs = null) => new($"p{++_paneCounter}", tabs);
+    /// <summary>
+    /// Mints a pane: a fresh id, and the next creation sequence, which is what puts it last in
+    /// <see cref="Panes"/> and so gives it the highest pane number rather than displacing anyone's.
+    /// </summary>
+    private PaneNode NewPane(IEnumerable<string>? tabs = null) =>
+        new($"p{++_paneCounter}", tabs, sequence: ++_sequenceCounter);
 
     /// <summary>Removes a window from whichever pane hosts it, fixing that pane's active index.</summary>
     private bool DetachWindow(string windowId)
@@ -368,7 +431,9 @@ public sealed class WorkspaceLayout
 
         if (FindPane(FocusedPaneId) is null)
         {
-            FocusedPaneId = Root.Panes().First().Id;
+            // The lowest-numbered survivor — pane 1 — rather than the topmost-leftmost, so closing the
+            // focused pane lands you where the label says it did.
+            FocusedPaneId = Panes[0].Id;
         }
 
         if (ZoomedPaneId is not null && FindPane(ZoomedPaneId) is null)

@@ -22,7 +22,17 @@ public enum Edge
 /// <summary>A node in the workspace split tree: either a <see cref="PaneNode"/> or a <see cref="SplitNode"/>.</summary>
 public abstract class LayoutNode
 {
-    /// <summary>Enumerates every pane at or under this node, in left-to-right / top-to-bottom order.</summary>
+    /// <summary>
+    /// Enumerates every pane at or under this node in <em>tree</em> order — left-to-right /
+    /// top-to-bottom, which is geometry and nothing else.
+    /// <para>
+    /// This is the order the renderer and the resizer want, and it is <b>not</b> the order panes are
+    /// numbered in. Tree order is a function of where a pane sits, so creating one renumbers whatever
+    /// it was inserted before: splitting the second of two panes on its left edge makes the old pane 2
+    /// into pane 3, and ⌥2 stops meaning what it meant a moment earlier. The numbering users see and
+    /// press comes from <see cref="WorkspaceLayout.Panes"/>, which is creation order.
+    /// </para>
+    /// </summary>
     public abstract IEnumerable<PaneNode> Panes();
 }
 
@@ -32,16 +42,43 @@ public abstract class LayoutNode
 /// </summary>
 public sealed class PaneNode : LayoutNode
 {
-    public PaneNode(string id, IEnumerable<string>? tabs = null, int activeIndex = 0, bool frozen = false)
+    public PaneNode(
+        string id,
+        IEnumerable<string>? tabs = null,
+        int activeIndex = 0,
+        bool frozen = false,
+        int sequence = Unsequenced)
     {
         Id = id ?? throw new ArgumentNullException(nameof(id));
         Tabs = tabs is null ? new List<string>() : new List<string>(tabs);
         ActiveIndex = Tabs.Count == 0 ? -1 : Math.Clamp(activeIndex, 0, Tabs.Count - 1);
         Frozen = frozen;
+        Sequence = sequence;
     }
+
+    /// <summary>
+    /// The <see cref="Sequence"/> of a pane nobody has numbered yet — a pane restored from a workspace
+    /// persisted before panes carried a creation order. <see cref="WorkspaceLayout"/> replaces it on
+    /// load, from tree order, so an old configuration comes back numbered the way it was left rather
+    /// than scrambled.
+    /// </summary>
+    public const int Unsequenced = 0;
 
     /// <summary>Stable pane identity, unique within a workspace.</summary>
     public string Id { get; }
+
+    /// <summary>
+    /// When this pane was created, as a per-workspace counter that only ever goes up. Panes are
+    /// <em>numbered</em> by this (see <see cref="WorkspaceLayout.Panes"/>) rather than by where they
+    /// sit, so a pane's number is fixed for as long as it is open: creating one somewhere to its left
+    /// no longer pushes it from ⌥2 to ⌥3.
+    /// <para>
+    /// It is a sort key and not the number itself. The number is the pane's position in the sorted
+    /// list, which is what keeps ⌥N contiguous when a pane in the middle closes — see
+    /// <see cref="WorkspaceLayout.Panes"/>.
+    /// </para>
+    /// </summary>
+    public int Sequence { get; internal set; }
 
     /// <summary>The window ids hosted here, in tab order.</summary>
     public List<string> Tabs { get; }

@@ -513,13 +513,19 @@ public class PaneJumpTests
     }
 
     /// <summary>
-    /// The pane label the rail is drawing for the active character's window, e.g. <c>pane 2</c>. Read out
-    /// of the rendered rows rather than recomputed, because the whole assertion is that the chord and the
-    /// sidebar agree — a re-derived label would agree with itself.
+    /// The pane label the rail is drawing for the active character's <em>window</em>, e.g. <c>pane 2</c>.
+    /// Read out of the rendered rows rather than recomputed, because the whole assertion is that the chord
+    /// and the sidebar agree — a re-derived label would agree with itself.
+    /// <para>
+    /// Window rows are picked out by their <c>▪</c> bullet, because character rows now carry the same
+    /// column: the rail says which pane every character is in, active or not, which is what makes the
+    /// numbering readable from a character other than the one you are looking at. Taking the first
+    /// <c>pane N</c> on any row would read the active character's own row and answer 1 for ever.
+    /// </para>
     /// </summary>
     private static string RailPaneLabel(SharpMUTermApp app)
     {
-        foreach (var line in app.RailLines)
+        foreach (var line in app.RailLines.Where(l => l.Contains('▪', StringComparison.Ordinal)))
         {
             var match = Regex.Match(line, @"pane \d+");
             if (match.Success)
