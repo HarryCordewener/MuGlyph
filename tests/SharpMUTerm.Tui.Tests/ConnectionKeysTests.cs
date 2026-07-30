@@ -53,11 +53,6 @@ public class ConnectionKeysTests
     {
         Console.SetIn(TextReader.Null);
         var config = DemoScene.Build();
-        foreach (var character in config.Worlds.SelectMany(w => w.Characters))
-        {
-            character.Logging = new LoggingSettings();
-        }
-
         var app = new SharpMUTermApp(config, Headless, new HeadlessConsoleDriver(Width, Height));
         var telnet = new Transports();
         app.TelnetFactory = telnet.Open;

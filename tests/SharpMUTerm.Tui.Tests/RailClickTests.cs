@@ -39,11 +39,6 @@ public class RailClickTests
         // The window system reads the console for input even headless; a null reader returns EOF.
         Console.SetIn(TextReader.Null);
         config ??= DemoScene.Build();
-        foreach (var character in config.Worlds.SelectMany(w => w.Characters))
-        {
-            character.Logging = new LoggingSettings(); // never write a transcript from a test
-        }
-
         return new SharpMUTermApp(config, Headless, new HeadlessConsoleDriver(Width, Height));
     }
 

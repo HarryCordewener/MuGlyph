@@ -165,6 +165,25 @@ python3 tools/ansi_frame_to_image.py frame.ansi frame.html   # or .svg
   character passwords are saved in `secrets.json` beside the config (`SecretsStore`, `0600`), with
   `config.json` carrying only a meaningless `passwordRef` GUID, so a save writes a secret-bearing file too.
   `CommandSurfaceSettingsTests.AnAppWithNoSaveActionPersistsNothing` is the pin.
+- **A snapshot writes no session log either, and neither does a test.** Same shape, same reason:
+  `SharpMUTermApp` takes its `logRoot` from the caller and only `Program` supplies one, so an app that
+  isn't the live entry point owns no log directory. It used to resolve the directory of
+  `ConfigurationStore.DefaultPath` unconditionally, and the demo scene's `Aetherfall.Corvid` is
+  `Logging.Format = Html` with no directory — so *every headless run that opened a session for it* created
+  a real file under `~/.config/SharpMUTerm/logs`, beside genuine transcripts and the diagnostics log. 277
+  empty ones had piled up. **Null means no logging at all, not "no default location"**: a character's
+  explicit `Logging.Directory` is refused too, because the root is the app's answer to *may I write
+  transcripts* and the character's directory only ever chose *where* within that — read the other way,
+  every fixture naming a path is free to write outside itself. Nothing may then claim otherwise: the
+  header's `LOG` cell reads `LOG off` (`HeaderLogFormat`, the same reasoning as
+  `WorldSession.CurrentEncoding` — a configured value is a *preference* and a status cell may not report
+  one as in force, which is why the `--demo-config` frames now read `LOG off`), and ⌃P ▸ *Start logging*
+  refuses out loud. **The pin is a file count, not a mock** (`LogRootTests` +
+  `LiveLogDirectoryGuard`, which lists the real log directory before the first test and after the last):
+  the old code was internally consistent and still wrote those 277 files, so anything asserting on
+  `LogFolder` or a fake sink would have passed all along. It also let a pile of per-test
+  `character.Logging = new LoggingSettings()` workarounds be deleted — with them gone the suite exercises
+  the gate, and an unfixed build leaks seven files a run instead of three.
 - **The three `scroll*` views are the only ones with more output than a pane holds.** Every other view
   fits, which is exactly why no snapshot caught the panes being unable to scroll at all. Reach for one
   of these (or `LoadLongScene`) whenever a change touches the output area.

@@ -30,7 +30,6 @@ public class CommandSurfaceSettingsTests
     {
         Console.SetIn(TextReader.Null);
         var config = DemoScene.Build();
-        config.Worlds[0].Characters[0].Logging = new LoggingSettings();
         return new SharpMUTermApp(config, Headless, new HeadlessConsoleDriver(Width, Height));
     }
 
