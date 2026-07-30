@@ -539,10 +539,41 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     public int Run(IReadOnlyList<StartupConnection> startup)
     {
-        var pending = startup ?? Array.Empty<StartupConnection>();
-        _window.OnShown += (_, _) => _ = StartAsync(pending);
+        ScheduleStartup(startup ?? Array.Empty<StartupConnection>());
         return _system.Run();
     }
+
+    /// <summary>
+    /// Schedules the startup connections onto the UI thread. Internal because it is the half of
+    /// <see cref="Run"/> a headless test can run — <c>_system.Run()</c> is the blocking main loop and no
+    /// test enters it, so a bug in this scheduling is invisible to every test that stops short of it.
+    /// One did live here.
+    /// <para>
+    /// <b>It is deliberately not <c>Window.OnShown</c>.</b> That event is raised by <c>AddWindow</c>
+    /// (<c>WindowStateService</c> → <c>Window.WindowIsAdded</c>), and <c>AddWindow</c> is the last line of
+    /// this app's constructor — so by the time <see cref="Run"/> was reached it had already fired, and it
+    /// is never raised again. <see cref="StartAsync"/> therefore never ran at all: nothing threw and
+    /// nothing logged, the client came up looking entirely normal, and it simply never dialled.
+    /// <c>sharpmuterm host port</c> connected to nothing, and every character marked <em>at start</em> on
+    /// F5 was ignored, which left that whole setting dead on arrival.
+    /// </para>
+    /// <para>
+    /// <see cref="OnUiThread"/> is the right hook because it cannot be missed by ordering: before
+    /// <c>_system.Run()</c> the system has captured no UI thread (<c>_uiThreadId</c> is −1), so this
+    /// queues, and <c>DrainUIActionQueue</c> runs it at the top of the loop's first pass — driver started,
+    /// window added, which is all <c>OnShown</c> was reaching for. Headless it runs inline, which is what
+    /// makes it checkable.
+    /// </para>
+    /// </summary>
+    internal void ScheduleStartup(IReadOnlyList<StartupConnection> startup) =>
+        OnUiThread(() => LastCommand = StartAsync(startup));
+
+    /// <summary>
+    /// Subscribes to the main window's <c>OnShown</c>. Exists for one test — the one that pins that the
+    /// event has <em>already</em> fired by the time anyone outside the constructor can reach it, which is
+    /// why <see cref="ScheduleStartup"/> does not use it.
+    /// </summary>
+    internal void OnMainWindowShown(EventHandler handler) => _window.OnShown += handler;
 
     /// <summary>
     /// Renders one demo frame to an ANSI string using a headless driver — no terminal or connection
@@ -820,7 +851,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         {
             RefusePrefix(PrefixPanel.NoSplitRefusal);
             RefuseCommand("nothing to reconnect — pick a character first (⌃P ▸ Switch to …)");
-            Notice("switched to Corvid · offline — ⌃P ▸ Reconnect connects it", MessageSeverity.Info, "⌃P");
+            Notice("switched to Corvid · offline — Alt+R (⌃P ▸ Reconnect) connects it", MessageSeverity.Info, "⌃P");
             Notice("could not connect to aetherfall.mux:4201 — no route to host", MessageSeverity.Error, "⌃P");
             _messageLog.Toggle();
         }
@@ -1596,7 +1627,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
         var state = session.IsConnected
             ? "connected"
-            : "offline — ⌃P ▸ Reconnect connects it";
+            : "offline — Alt+R (⌃P ▸ Reconnect) connects it";
         Notice($"switched to {SessionTitle(session)} · {state}", MessageSeverity.Info, "⌃P");
     }
 
@@ -3135,6 +3166,16 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return () => { _settings.Toggle(key, open); return true; };
         }
 
+        if (claim.Modifiers == ConsoleModifiers.Alt)
+        {
+            // Alt+R reconnects. ⌃R is the readline history chord and was already spent, and this is the
+            // nearest spelling of the word left: ESC + a *printable* byte is decoded as one Alt chord
+            // (AnsiInputParser.ProcessEscape), so unlike most of the alphabet's Ctrl chords it genuinely
+            // arrives. A lone Escape is flushed on its own after UnixStdinReader's 50 ms timeout, so
+            // pressing Esc and later typing an r is two keys and not this one.
+            return claim.Key == ConsoleKey.R ? () => { Reconnect(); return true; } : null;
+        }
+
         if (claim.Modifiers != ConsoleModifiers.Control)
         {
             return null;
@@ -3158,6 +3199,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             // framework's parser turns byte 0x08 into Backspace with no Control modifier, so binding it
             // would take the command line's erase key and the app could not even tell the two apart.
             ConsoleKey.R => () => { ToggleHistorySearch(); return true; },
+            // ⌃D is the idiomatic disconnect/EOF chord, and this client spends it on exactly that: it
+            // drops the focused character's connection at once. It deliberately does *not* end the client
+            // — that is ⌃Q, which asks first — so the shell reflex it borrows lands on the smaller of the
+            // two meanings. With nothing connected it says so and does nothing at all.
+            ConsoleKey.D => () => { Disconnect(); return true; },
             _ => null,
         };
     }
@@ -4231,9 +4277,18 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// session's own window.
     /// </para>
     /// </summary>
+    /// <remarks>
+    /// <b>It acts at once</b>, from <c>Alt+R</c> as from the ⌃P entry. There is no confirmation in front
+    /// of it: the client asks before ending itself (⌃Q) and before nothing else, and a prompt in front of
+    /// the key you press <em>because</em> a connection has gone wrong is friction at the worst moment.
+    /// </remarks>
     private void Reconnect()
     {
-        if (_active is not { } session)
+        // Which connection this acts on is decided by the window in front of you — SendTarget, the same
+        // resolver ⏎ and a link click go through, and never _active. Nothing asks before either of these
+        // commands acts, so an arm that guessed would drop the wrong world's connection on one keystroke
+        // and say nothing about it; a window that belongs to no connection refuses out loud instead.
+        if (SendTarget() is not { } session)
         {
             RefuseCommand("nothing to reconnect — pick a character first (⌃P ▸ Switch to …)");
             return;
@@ -4286,7 +4341,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private void Disconnect()
     {
-        if (_active is not { } session)
+        if (SendTarget() is not { } session) // the focused window's connection — see Reconnect
         {
             RefuseCommand("nothing to disconnect — pick a character first (⌃P ▸ Switch to …)");
             return;

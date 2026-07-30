@@ -74,6 +74,12 @@ internal static class MacroKeys
         new(ConsoleModifiers.Control, ConsoleKey.B, "arms the pane prefix"),
         new(ConsoleModifiers.Control, ConsoleKey.F, "freezes the pane"),
         new(ConsoleModifiers.Control, ConsoleKey.R, "searches the command history"),
+        // The connection pair. ⌃D is the terminal's own hang-up chord and is spent on the action it
+        // idiomatically means; Alt+R spells "Reconnect" one modifier over from the ⌃R this app has
+        // already given to the history surface. Both act at once — ⌃Q is the only key in this client
+        // that asks anything.
+        new(ConsoleModifiers.Control, ConsoleKey.D, "disconnects the focused character"),
+        new(ConsoleModifiers.Alt, ConsoleKey.R, "reconnects the focused character"),
         new((ConsoleModifiers)0, ConsoleKey.F2, "opens Triggers"),
         new((ConsoleModifiers)0, ConsoleKey.F3, "opens Aliases"),
         new((ConsoleModifiers)0, ConsoleKey.F4, "opens this screen"),

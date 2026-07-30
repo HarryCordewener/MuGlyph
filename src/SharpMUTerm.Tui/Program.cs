@@ -255,8 +255,14 @@ internal static class Program
         // Enter), and a help page naming a key that cannot fire is the defect this file is careful about.
         usage.WriteLine("Typing: Alt+Enter or Ctrl+L inserts a newline · Ctrl+A/E line ends · Ctrl+K/U kill ·");
         usage.WriteLine("        Alt+Left/Right by word · Ctrl+R searches history.");
+        // The connection pair, described by what the key does rather than by what it asks — it asks
+        // nothing. Both act at once, on the character whose pane is focused, and "drops and redials" is
+        // spelt out because a reconnect on a live connection is a disconnect with a dial after it and the
+        // reader has to know that before pressing it.
+        usage.WriteLine("World:  Alt+R reconnects the focused character (drops the connection and redials it at once);");
+        usage.WriteLine("        Ctrl+D disconnects it at once. Neither asks. With nothing connected, each says so.");
         usage.WriteLine("Panes:  Ctrl+B then | - z o x b m i < > splits, zooms, closes and moves; Esc or Ctrl+B");
-        usage.WriteLine("        cancels, and pausing after Ctrl+B pops a panel naming each key. Or drag a tab.");
+        usage.WriteLine("        cancels, and pausing after Ctrl+B pops a panel naming each key. Or drag a tab");
         usage.WriteLine("        strip onto another pane — middle drops it as a tab, an edge splits there.");
     }
 }
