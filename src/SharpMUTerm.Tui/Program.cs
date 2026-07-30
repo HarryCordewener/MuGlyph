@@ -252,6 +252,16 @@ internal static class Program
         usage.WriteLine("        command line); Ctrl+O cycles them; Tab switches command lines. The pane you are on and");
         usage.WriteLine("        the line Enter sends from are both drawn lit, and the focused pane's tab is marked.");
 
+        // Alt, not Ctrl, and the page says why: Ctrl+digit is what a reader will try first (it is what was
+        // asked for) and it cannot work — no digit has a control byte of its own, so a terminal sends the
+        // bare digit, or one already spelt Escape or Backspace. Naming the working chord and the reason
+        // the obvious one is absent is the same honesty this page owes everywhere else.
+        usage.WriteLine("Panes:  Alt+1..Alt+9 go straight to a numbered pane and bring it forward — the numbers the");
+        usage.WriteLine("        sidebar shows beside each window ('pane 2', 'pane 3'...), counted left to right then");
+        usage.WriteLine("        top to bottom. It says so when there is no pane with that number. Ctrl+digit is not");
+        usage.WriteLine("        offered: no terminal sends a distinct Ctrl+digit — 3 and 8 arrive as Escape and");
+        usage.WriteLine("        Backspace, and 1, 9 and 0 as the bare digit.");
+
         // Alt+Shift+arrow is a chord this host does deliver — the parser reads both modifier bits out of
         // CSI 1;4 <final> — which is why it may be named here at all; see TerminalKeyArrivalTests. It is
         // deliberately not Ctrl+Shift+arrow, which this page used to name: kitty_mod is ctrl+shift, and

@@ -138,6 +138,31 @@ public sealed class WorkspaceLayout
     public void ToggleZoom() =>
         ZoomedPaneId = ZoomedPaneId == FocusedPaneId ? null : FocusedPaneId;
 
+    /// <summary>
+    /// Re-points an existing zoom at whichever pane is now focused, and says whether it moved. Returns
+    /// false when nothing is zoomed — this never <em>starts</em> a zoom, it only carries one.
+    /// <para>
+    /// Focus and zoom are separate fields, and a mover that changes one without the other leaves the
+    /// focused pane <em>off screen</em>: a zoomed workspace realises exactly one pane, so the selection,
+    /// the session the command line talks to and the caret would all be on a pane the user cannot see —
+    /// attention on one pane and keystrokes to another, which is the defect the per-window work exists to
+    /// eliminate. The ordinal movers (cycle, and jump-to-number) therefore carry the zoom with them, and
+    /// so the pane you asked for is the pane that fills the screen. The <em>directional</em> movers do
+    /// not, and cannot: while one pane is realised there is no pane "to the left" to ask for, which is
+    /// why ⌃← refuses out loud instead.
+    /// </para>
+    /// </summary>
+    public bool CarryZoomToFocused()
+    {
+        if (ZoomedPaneId is null || ZoomedPaneId == FocusedPaneId)
+        {
+            return false;
+        }
+
+        ZoomedPaneId = FocusedPaneId;
+        return true;
+    }
+
     /// <summary>Toggles the frozen (split-scrollback) state of the focused pane.</summary>
     public void ToggleFreezeFocused()
     {

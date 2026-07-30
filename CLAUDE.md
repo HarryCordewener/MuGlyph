@@ -114,8 +114,8 @@ fallbacks) for inline images/maps.
   ```bash
   dotnet run -c Release --project tests/SharpMUTerm.Core.Tests </dev/null
   ```
-  There are five: Core, Graphics, Scripting, Web, Tui. Primary signal is
-  `dotnet build SharpMUTerm.slnx` plus all five green and warning-free.
+  There are six: Core, Graphics, Scripting, Web, Tui, Crawler. Primary signal is
+  `dotnet build SharpMUTerm.slnx` plus all six green and warning-free.
 - **Building against the local SharpConsoleUI clone surfaces 2 NuGet advisory warnings** for
   AngleSharp. They are the framework's, not ours; a build against the package has none.
 
@@ -270,6 +270,36 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   those windows accepts paste — add a focusable `IPasteTarget` there and both paths will.
 - **The framework's own `ExitKey` defaults to Ctrl+Q** and calls `RequestExit` with nothing in
   between. Ours won only because application shortcuts are tried first. It is set to `null`.
+- **The framework claims `Alt+1`–`Alt+9` too** — `InputCoordinator.HandleAltInput` selects among
+  top-level windows by index. It is the third framework default found outranking us, and the one with
+  the least warning: it is reached from `ProcessInput`'s fall-through for *any* unhandled Alt chord and,
+  unlike the move and resize handlers on the two lines above it, is **not** gated on
+  `IsMovable`/`IsResizable` — so `Movable(false)`, which switched off the ⌃X-swallowing move handler,
+  did nothing here. `⌥1`–`⌥9` are ours (`JumpToPane`, go to the numbered pane) and are claimed as
+  **application shortcuts**, which `InputCoordinator` tries before it offers a key to any window at all;
+  `PreviewKeyPressed` would also have won (`WindowEventDispatcher.ProcessInput` raises it first and
+  returns immediately when handled), one step later. **All nine are claimed, in range or not**: an
+  out-of-range ⌥7 reports and stops rather than falling through to a window selector that would do
+  something else. `⌥0` is deliberately left free — the framework ignores it too, so it stays bindable.
+- **Ctrl+digit is not a chord this terminal has, and that is why the pane jump is Alt.** Read off a
+  pty with `kitten @ send-key` at a raw-mode reader, the same way `Alt+Shift+arrow` was established:
+  every `Alt+digit` is `ESC` + the digit (one Alt chord out of `ProcessEscape`), while Ctrl+digit is
+  `1`→`0x31`, `2`→NUL, `3`→**`0x1B` (Escape)**, `4`–`7`→`0x1C`–`0x1F`, `8`→**`0x7F` (Backspace)**,
+  `9`→`0x39`, `0`→`0x30`. So three of them are keys the client cannot afford to bind over and three are
+  indistinguishable from typing — binding any breaks the plain key, exactly as with Ctrl+H/I/J/M.
+  Recorded per digit in `MacroKeys.DigitBytes`, which is what F4 prints.
+- **Panes are numbered one way, everywhere: `pane N` in `Layout.Panes` order** (left-to-right, then
+  top-to-bottom). The rail's hosting column, the ⌃P `Go to pane N` entries, the move/drag overlays
+  (`PaneLabel`) and the ⌥N chord are four spellings of that one number. `PaneLabel` used to call the
+  first pane `main` — the spelling the rail abandoned because `▪ main   main` is two meanings in one
+  line — so the same pane read `pane 1` in the sidebar and `main` under the cursor. Harmless until a
+  *chord* had to land on the pane a label names; a key that disagrees with the label is worse than no key.
+- **The ordinal pane movers carry a zoom; the directional ones cannot.** A zoomed workspace realises
+  exactly one pane, so ⌃O or ⌥N moving the selection and leaving `ZoomedPaneId` behind puts the
+  selection, the session the bar talks to and the caret on a pane that is **not on the screen** — the
+  "attention on one pane, keystrokes to another" defect again. `WorkspaceLayout.CarryZoomToFocused`
+  re-points an existing zoom (it never starts or ends one) and both movers call it. ⌃←/→/↑/↓ do not and
+  must not: with one pane realised there is no neighbour to ask for, which is why they refuse out loud.
 - **`MarkupControl` does not scroll and does not bottom-anchor.** `PaintDOM` paints rows from index 0
   until the box runs out, with no offset of its own — so a control holding 100 lines in a 10-row box
   renders lines 1–10 for ever and everything appended lands off-screen. Scrolling lives in
@@ -496,7 +526,7 @@ Planned solution layout:
 | `SharpMUTerm.Graphics` | Kitty/Sixel encoders, capability probe, half-block fallback, `InlineImagePolicy` (no UI deps) |
 | `SharpMUTerm.Scripting` | MoonSharp host + scripting API |
 | `SharpMUTerm.Tui` | SharpConsoleUI application |
-| `*.Tests` (Core, Graphics, Scripting, Web, Tui) | TUnit |
+| `*.Tests` (Core, Graphics, Scripting, Web, Tui, Crawler) | TUnit |
 
 ## Milestone M1 — first task (delivered)
 
@@ -511,7 +541,7 @@ Kept for context; **M1 is done** (see *Repository state* above). As originally s
 
 ## Verification
 
-- Primary signal: `dotnet build SharpMUTerm.slnx` plus all five suites (see *Building and testing*).
+- Primary signal: `dotnet build SharpMUTerm.slnx` plus all six suites (see *Building and testing*).
   Keep coverage in `SharpMUTerm.Core.Tests` — ANSI/SGR parser, telnet round-trips, engines.
 - **The TUI is verifiable headlessly** via the snapshot pipeline above; a claim about layout or
   chrome should be backed by a rendered frame you actually looked at, not by reading the markup.
