@@ -246,7 +246,8 @@ wraps no matter how carefully the column is sized). Same rule here.
 ● Corvid connected   ⇈ scrollback 42 · ⌃End live   utf-8   ⌃P palette
 ```
 
-— which fits, with the character count and the focus hint dropped. That is the design target: **at 80
+(`⇈` stands in for `Glyphs.Scrollback`, which is a Nerd Font codepoint; nothing here proposes changing
+it.) That fits, with the character count and the focus hint dropped. That is the design target: **at 80
 columns everything that cannot be learned elsewhere survives, and everything that can is dropped.**
 
 **A note on measurement.** `MarkupWidth` is what the veto and the right-alignment both use, and the row

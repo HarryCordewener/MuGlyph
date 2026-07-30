@@ -562,22 +562,47 @@ That last block is the one that matters most for a protocol whose entire purpose
 themselves. Dropping unknown variables would be the wrong default; a `DISCORD` URL or an
 `INTERMUD` network name is exactly the kind of thing a world's owner puts there and a player wants.
 
-**Where the button goes.** In the WORLDS pane, as a third button after `[+ world]` and before the
-`Del removes …` row, drawn only when a world is selected — the same conditionality `WorldButtons`
-already applies to Remove. Reached by keyboard by walking ↓ off the world list onto the button (buttons
-in that pane are already cursor stops, indexed after the list) and by mouse by clicking it.
+**Where the button goes — and it must not be a chip.** In the WORLDS pane, after `[+ world]`, drawn
+only when a world is selected.
 
-Two hazards, both already known to this screen:
+The obvious design — a `[i info]` chip you walk the cursor onto — is **wrong here, and this screen
+already knows why**. `ScreenModel.Sizes` states the rule:
 
+> an action with no target needs a cursor stop; an action with a target must not steal the cursor from
+> the thing it acts on
+
+because a pane is a list followed by its buttons, and reaching a button with ↑↓ means walking the cursor
+over every row of the list on the way, which drags the selection to the last one. That is the documented
+"only the last world can be deleted" bug, and an INFO chip reached the same way could only ever show
+information for the last world in the list.
+
+INFO has a target. So it is drawn the way Delete is: a **key-hint row** naming the key and what it acts
+on — `i  info on Aetherfall` sitting beside `Del  removes Aetherfall` — and it is run by that key on the
+selected row. Nothing is lost, because the row is a true reading of what the key would do, and
+`ScreenChrome.DeleteHint`'s derivation (advertise the key only where there is something for it to act
+on) is the pattern to copy.
+
+Three consequences:
+
+- **`ScreenButtonKind` needs a third member**, and `Stops()` needs to trim it. Today `Stops()` walks
+  back from the end of a pane's rows while the trailing button is `Kind: Remove`, and its comment says
+  *"this is a count and not a set of holes — the cursor never has to skip a row in the middle"*. A
+  non-stop INFO row therefore has to be **appended among the trailing non-stops**, so the pane reads
+  `list → [+ world] → i info … → Del removes …`. Put it anywhere else and the cursor gains a hole and
+  `ScreenSelection` stops being a plain clamp. `ScreenReachabilityTests` pins that shape on all eight
+  screens and will fail loudly if this is got wrong, which is the right outcome.
+- **The key must be safe.** The WORLDS pane has no editable field, so a plain letter is available there
+  the way `Del` and `Space` already are — but it is only safe *while the cursor is in that pane*, and
+  the CHARACTER detail pane does have fields. Scope it to the pane, and advertise it in the screen's
+  header hint the way `Del remove` is advertised.
 - **Rows past the end of a list.** `WorldsScreenRenderer` carries a comment about exactly this: at
   100×24 two worlds and their buttons ran to twelve rows in a ten-row column, and the rows lost off the
-  bottom were `[+ world]` and the Delete row — *cursor stops that were never drawn*. A third button
-  makes that one row worse. It must be added through `ScreenChrome.Window` like the others, and the
-  narrow case must be checked with a rendered frame, not by counting.
-- **`ScreenButtonKind` has only `Add` and `Remove`.** Both mutate a list. An INFO button navigates. It
-  needs a third kind — `Open`, say — whose activation runs an action rather than editing a collection,
-  and which is drawn as a chip (like Add) rather than as a key hint (like Remove), because it *is* a
-  cursor stop.
+  bottom were `[+ world]` and the Delete row — cursor stops that were never drawn. A third row makes
+  that one row worse. It goes through `ScreenChrome.Window` like the others, and the narrow case is
+  checked with a rendered frame, not by counting.
+
+By mouse, the key-hint row is clickable in the same way the rail's rows are — but the key is the
+primary route and the row must read correctly with no pointer at all.
 
 **Deferred:** whether the INFO screen is a full-screen overlay of its own (a tenth `SettingsScreen`,
 with a `--view mssp` for snapshots) or an overlay *over* F5 that Esc returns from. The first composes

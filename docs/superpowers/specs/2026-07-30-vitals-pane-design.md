@@ -252,10 +252,13 @@ Honest accounting, since the brief asks for it.
   later, so the restore path should tolerate an unknown kind by dropping the window rather than failing
   the whole workspace.
 - **A window whose content is not a line buffer** is the first of its kind. `_lines` is keyed by window
-  id and holds `PaneLine`s; a vitals window has none. Every path that assumes a window has a line buffer
-  — the timestamp re-render, freeze, the scrollback segment, the unread badge — needs to not apply to
-  it. The safe construction is that those paths key off `_lines.ContainsKey(windowId)` rather than off
-  the kind, so a window with no buffer is inert to all of them without any of them naming it.
+  id and holds `PaneLine`s; a vitals window has none. This is less dangerous than it sounds, because
+  `_lines` is already populated **lazily** — the entry is created on the first append — and the paths
+  that read it already cope with its absence (`freeze` reads `_lines.TryGetValue(…) ? buf.Count : 0`;
+  the re-feed falls back to an empty list). So a window with no buffer is already inert to the timestamp
+  re-render, freeze and the scrollback replay, and none of them need to name the new kind.
+  What that inertness rests on is *lazy creation*, not on a rule anyone wrote down — so the invariant
+  worth pinning is "a vitals window never acquires a line buffer", not "these five paths check first".
 - **NAWS** is unaffected (§3), but only because `ReportPaneSizes` iterates sessions. That invariant
   should get a test — `NawsPaneReportTests` is the file, and the assertion is that opening a vitals pane
   changes no session's reported size except through the geometry its neighbours lost.
