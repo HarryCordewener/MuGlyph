@@ -102,6 +102,19 @@ scrolled-back viewport.
 at the pinned half (`ScrollTarget`, `:2742`). `AppendWindowLine` walks the freeze point down as the
 buffer trims.
 
+### The two buffers already disagree about the setting
+
+Not a hypothetical. `AppendWindowLine` re-reads `_config.ScrollbackLines` on **every append**
+(`:1712`), so the pane buffer resizes live and trims itself the moment the setting is committed.
+`ScrollbackBuffer.Capacity` is get-only, fixed by the constructor, and `SessionManager.Open` is
+handed `config.ScrollbackLines` once at open time. So raising or lowering the setting on a running
+client changes one buffer and not the other, and they stay diverged until the session is reopened.
+
+That is precisely TinyFugue's decade-old bug — `/histsize` resizes the history and, per an
+`XXX resize corresponding screen` comment still in its source, not the screen — and it is the third
+instance in this codebase of the failure D1 exists to remove. It is invisible today only because
+nothing reads the session buffer past `Snapshot()`.
+
 ### Two things the existing comments get wrong
 
 - **A spawn window's history is not markup-only at the seam.** `OnSpawnLine` (`:1871`) is handed a
@@ -359,6 +372,23 @@ The mark bitmap is `xcalloc(sx, sy)` — **viewport-sized, not history-sized**; 
 exists purely to count. Two more cheap wins worth stealing verbatim: a repeated search with an
 unchanged term sets `visible_only` so `n` does not re-scan history, and a "regex" with no
 metacharacters (`str[strcspn(str, "^$*+()?[].\\")] == '\0'`) is downgraded to a substring search.
+
+**Reflow is their biggest cost and none of ours — because we store logical lines.** Every terminal
+here stores a wrapped *cell grid*, so a column change has to rewrap the history: kitty allocates an
+entire new `HistoryBuf` and copies every line (its docs warn against large scrollback for exactly
+this reason); Konsole caps the work at `MAX_REFLOW_LINES = 20000`; GNU screen's rewrap is *lossy* in
+two ways — narrowing drops the oldest lines the rewrap expanded past capacity, and its line-length
+scan discards unattributed trailing whitespace on every pass. We store the logical line the wire
+sent and let the control wrap it at paint time, so a terminal resize costs us **nothing**: no
+rewrap, no loss, no O(history) pass. That is a real advantage of the D2 record and it should not be
+given up casually — it is the reason not to "optimise" storage by caching pre-wrapped rows.
+
+The corollary is the one place we are *worse* off. Because wrapping is deferred, we do not know how
+many display rows a record occupies until it is parsed, which is D4's hazard (1) in one sentence.
+A per-record `(width → rowCount)` memo would remove the settling frame entirely — but computing it
+means running the parser we do not own. That is a third argument for the line-accessor control
+below; screen gets the same information for free from a sentinel cell at index `w_width`, because it
+is the thing doing the wrapping.
 
 **Nobody indexes scrollback for search.** The three strategies in the wild are: delegate (kitty pipes
 the whole history into `less` and sends `/`); linear scan over a *virtual* flat address space (GNU
@@ -957,6 +987,7 @@ Two PRs to `nickprotop/ConsoleEx`, in this order:
 | Global vs per-window disk bound | Falls out of D5's per-window numbers once spawn windows have histories |
 | **Restore logs** (BeipMU parity: scrollback survives a restart) | Maintainer's call, and it is a feature not a flag. Mechanically it starts at "stop deleting the spill on dispose", but Konsole `unlink()`s its history file *specifically* so it cannot survive, and VTE can afford a persistent spill only because it encrypts it. So the real question is whether we are willing to hold decrypted session text — including anything a world echoed back — between sessions, and at what protection. Size it in lines, not BeipMU's kilobytes |
 | Whether scrolling up should itself split the pane (⌃F automatically) | Taste, and the consensus is against us: Mudlet, BeipMU and Blightmud all split on scroll-up and merge at the bottom, where ours is a deliberate mode. D4 already makes scroll-away a policy change, so wiring it to freeze is a small increment. Ask the maintainer |
+| **What changing `ScrollbackLines` at runtime does** | Must be decided by Stage 3, because that is when the setting starts governing a buffer whose capacity is fixed at construction. The survey offers three answers and all three are bad: TinTin++ *wipes* the session's scrollback (`init_buffer` frees every line unless the size is unchanged — a realloc, not a resize); TinyFugue resizes one store and not the other, which is the bug above; GNU screen reallocates and rewraps the whole buffer and refuses the command outright while in copy mode. Ours should trim on a decrease and grow in place on an increase, losing nothing either way — the ring already grows geometrically, so only the shrink path is new |
 | Whether the frozen pane's live-tail height is configurable | Blightmud hardcodes 10 rows and has an open complaint about it. Ours is whatever the layout gives, which may already be the better answer — check against a 4K terminal and an 80×24 one |
 
 ---
