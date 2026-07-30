@@ -156,30 +156,60 @@ internal static class Program
         return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
     }
 
-    private static void PrintUsage()
+    private static void PrintUsage() => Console.Write(UsageText);
+
+    /// <summary>
+    /// The <c>--help</c> text. Built into a string rather than written straight to the console so a test
+    /// can hold it to the honesty rule the settings screens are already held to: every key this page names
+    /// has to be one that works, and — the half that bit here — it must not name one that cannot fire.
+    /// Shift+⏎ and Ctrl+⏎ are the case in point: they are what was asked for and no Unix terminal reports
+    /// them distinctly through SharpConsoleUI's input parser, so naming them would send the reader to press
+    /// a key that does nothing.
+    /// </summary>
+    internal static string UsageText
     {
-        Console.WriteLine("SharpMUTerm — a cross-platform TUI MU* client.");
-        Console.WriteLine();
-        Console.WriteLine("Usage: sharpmuterm [host] [port] [options]");
-        Console.WriteLine();
-        Console.WriteLine("  host                 Server hostname or IP (IPv4/IPv6).");
-        Console.WriteLine("  port                 Server port (default 4000).");
-        Console.WriteLine("  --tls                Connect over TLS.");
-        Console.WriteLine("  --insecure           Accept invalid TLS certificates.");
-        Console.WriteLine("  --name <name>        Display name for the world.");
-        Console.WriteLine("  --snapshot           Render one frame (ANSI) headlessly and exit.");
-        Console.WriteLine("  --size <WxH>         Snapshot size in cells (default 160x48).");
-        Console.WriteLine("  --view <name>        Snapshot an overlay (e.g. 'settings') over the workspace.");
-        Console.WriteLine("                       '<name>-edit' opens that settings screen mid field edit.");
-        Console.WriteLine("  --demo-config        Snapshot the built-in demo worlds instead of your own.");
-        Console.WriteLine("  --out <file>         Write the snapshot to a file instead of stdout.");
-        Console.WriteLine("  -h, --help           Show this help.");
-        Console.WriteLine();
-        Console.WriteLine($"Config: {ConfigurationStore.DefaultPath}");
-        Console.WriteLine("With no host, the first configured world is used (if any).");
-        Console.WriteLine();
-        Console.WriteLine("In-app: Up/Down history · Ctrl+N next window · Ctrl+O next pane · Ctrl+W close · Ctrl+P palette · Ctrl+Q quit.");
-        Console.WriteLine("Scroll: PgUp/PgDn a page · Shift+Up/Down a line · Ctrl+Home top · Ctrl+End back to live output.");
-        Console.WriteLine("Panes:  drag a pane's tab strip onto another pane — middle drops it as a tab, an edge splits there.");
+        get
+        {
+            var text = new StringWriter();
+            WriteUsage(text);
+            return text.ToString();
+        }
+    }
+
+    private static void WriteUsage(TextWriter usage)
+    {
+        usage.WriteLine("SharpMUTerm — a cross-platform TUI MU* client.");
+        usage.WriteLine();
+        usage.WriteLine("Usage: sharpmuterm [host] [port] [options]");
+        usage.WriteLine();
+        usage.WriteLine("  host                 Server hostname or IP (IPv4/IPv6).");
+        usage.WriteLine("  port                 Server port (default 4000).");
+        usage.WriteLine("  --tls                Connect over TLS.");
+        usage.WriteLine("  --insecure           Accept invalid TLS certificates.");
+        usage.WriteLine("  --name <name>        Display name for the world.");
+        usage.WriteLine("  --snapshot           Render one frame (ANSI) headlessly and exit.");
+        usage.WriteLine("  --size <WxH>         Snapshot size in cells (default 160x48).");
+        usage.WriteLine("  --view <name>        Snapshot an overlay (e.g. 'settings') over the workspace.");
+        usage.WriteLine("                       '<name>-edit' opens that settings screen mid field edit.");
+        usage.WriteLine("  --demo-config        Snapshot the built-in demo worlds instead of your own.");
+        usage.WriteLine("  --out <file>         Write the snapshot to a file instead of stdout.");
+        usage.WriteLine("  -h, --help           Show this help.");
+        usage.WriteLine();
+        usage.WriteLine($"Config: {ConfigurationStore.DefaultPath}");
+        usage.WriteLine("With no host, the first configured world is used (if any).");
+        usage.WriteLine();
+        usage.WriteLine("In-app: Up/Down history · Ctrl+N next window · Ctrl+W close · Ctrl+P palette · Ctrl+Q quit.");
+        usage.WriteLine("Scroll: PgUp/PgDn a page · Shift+Up/Down a line · Ctrl+Home top · Ctrl+End back to live output.");
+        usage.WriteLine("Focus:  Ctrl+Left/Right/Up/Down move between panes (Ctrl+Down at the bottom reaches the second");
+        usage.WriteLine("        command line); Ctrl+O cycles them; Tab switches command lines. The pane you are on and");
+        usage.WriteLine("        the line Enter sends from are both drawn lit, and the focused pane's tab is marked.");
+
+        // Alt+Enter and Ctrl+L only. Shift+Enter and Ctrl+Enter are deliberately not listed: no Unix
+        // terminal reports them distinctly through SharpConsoleUI's input parser (both arrive as a bare
+        // Enter), and a help page naming a key that cannot fire is the defect this file is careful about.
+        usage.WriteLine("Typing: Alt+Enter or Ctrl+L inserts a newline · Ctrl+A/E line ends · Ctrl+K/U kill ·");
+        usage.WriteLine("        Alt+Left/Right by word · Ctrl+R searches history.");
+        usage.WriteLine("Panes:  Ctrl+B then | - z o x b m i < > splits, zooms, closes and moves; or drag a pane's tab");
+        usage.WriteLine("        strip onto another pane — middle drops it as a tab, an edge splits there.");
     }
 }

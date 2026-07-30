@@ -171,16 +171,33 @@ internal sealed class InputBarControl : BaseControl, IInteractiveControl, IFocus
     /// <summary>
     /// The key table.
     /// <para>
-    /// ⏎ sends, always — that is the one binding a MU* client may not get wrong. The newline chords are
-    /// Shift+⏎, Ctrl+⏎ and Ctrl+L, and the reason there are three is worth stating: SharpConsoleUI's
-    /// Unix input parser (<c>AnsiInputParser</c>) decodes no CSI-u and enables no <c>modifyOtherKeys</c>,
-    /// so it turns both CR (0x0D) and LF (0x0A) into a bare <see cref="ConsoleKey.Enter"/> with no
-    /// modifiers — Shift+⏎ and Ctrl+⏎ are indistinguishable from ⏎ on this maintainer's terminal, and
-    /// Alt+⏎ arrives as Escape <em>then</em> Enter, two keys. They are honoured anyway because the
-    /// Windows <c>Console.ReadKey</c> path does report them and costs nothing to accept. Ctrl+L is the
-    /// chord that always arrives: <see cref="MacroKeys"/> already records that a Ctrl+letter reaches the
-    /// app as its control byte except for I, M, J and H, which the terminal spells Tab, Enter, Enter and
-    /// Backspace.
+    /// ⏎ sends, always — that is the one binding a MU* client may not get wrong. <b>The newline chord is
+    /// Alt+⏎</b>, with ⌃L as a second spelling, and Shift+⏎ / Ctrl+⏎ honoured where a host reports them.
+    /// The reason it is Alt and not the two that were asked for is a fact about the terminal:
+    /// SharpConsoleUI's Unix input parser (<c>AnsiInputParser</c>) decodes no CSI-u and enables no
+    /// <c>modifyOtherKeys</c>, so it turns both CR (0x0D) and LF (0x0A) into a bare
+    /// <see cref="ConsoleKey.Enter"/> carrying no modifier bits at all — Shift+⏎ and Ctrl+⏎ are
+    /// <em>indistinguishable from ⏎</em> there, and a client that bound them would either do nothing or
+    /// stop sending lines. They are accepted here anyway because the Windows <c>Console.ReadKey</c> path
+    /// does report them, and accepting a modifier that never arrives costs nothing.
+    /// </para>
+    /// <para>
+    /// Alt+⏎ <em>does</em> arrive, in two pieces: the parser emits ESC followed by a control byte as two
+    /// key events (<c>ProcessEscape</c>), so Alt+⏎ is Escape and then Enter, in that order, in the same
+    /// input batch. <c>SharpMUTermApp.TryAltEnter</c> puts the pair back together and hands this table a
+    /// synthetic Alt+Enter, which is why the modifier is honoured here rather than the newline being
+    /// inserted from over there: the key table stays the one place that says what Enter does. ⌃L is kept
+    /// as the chord that needs no reassembly — <see cref="MacroKeys"/> records that a Ctrl+letter reaches
+    /// the app as its control byte except for I, M, J and H, which the terminal spells Tab, Enter, Enter
+    /// and Backspace.
+    /// </para>
+    /// <para>
+    /// <b>Word movement is Alt+←/→, not Ctrl+←/→.</b> It was Ctrl, and the chord was given up to
+    /// directional pane navigation (<c>SharpMUTermApp.TryFocusKey</c>) — a deliberate trade, not an
+    /// oversight. Alt+arrow is delivered every bit as reliably (the parser reads the Alt bit out of
+    /// <c>CSI 1;3 D</c>, exactly as it reads Ctrl out of <c>CSI 1;5 D</c>) and is the more widely-used
+    /// spelling of the two, so the capability is not reduced — only respelt, and now advertised, which it
+    /// never was.
     /// </para>
     /// <para>
     /// <b>Ctrl+A is move-to-line-start, not select-all</b>, and it is not up for grabs. The same parser
@@ -218,10 +235,20 @@ internal sealed class InputBarControl : BaseControl, IInteractiveControl, IFocus
 
         var ctrl = key.Modifiers.HasFlag(ConsoleModifiers.Control);
         var shift = key.Modifiers.HasFlag(ConsoleModifiers.Shift);
+        var alt = key.Modifiers.HasFlag(ConsoleModifiers.Alt);
 
         if (key.Key == ConsoleKey.Enter)
         {
-            return ctrl || shift ? Edit(Buffer.InsertNewline()) : Send();
+            return ctrl || shift || alt ? Edit(Buffer.InsertNewline()) : Send();
+        }
+
+        if (alt)
+        {
+            switch (key.Key)
+            {
+                case ConsoleKey.LeftArrow: return Move(Buffer.MoveWordLeft());
+                case ConsoleKey.RightArrow: return Move(Buffer.MoveWordRight());
+            }
         }
 
         if (ctrl)
@@ -233,8 +260,6 @@ internal sealed class InputBarControl : BaseControl, IInteractiveControl, IFocus
                 case ConsoleKey.E: return Move(Buffer.MoveTo(Buffer.Text.Length));
                 case ConsoleKey.K: return Edit(Buffer.KillToEnd());
                 case ConsoleKey.U: return Edit(Buffer.KillToStart());
-                case ConsoleKey.LeftArrow: return Move(Buffer.MoveWordLeft());
-                case ConsoleKey.RightArrow: return Move(Buffer.MoveWordRight());
             }
         }
 

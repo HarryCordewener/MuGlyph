@@ -27,6 +27,15 @@ internal static class Glyphs
     public const string Heartbeat = "\uf21e"; // nf-fa-heartbeat — keepalive (was the recycle mark)
     public const string World = "\uf0ac"; // nf-fa-globe — world/server accent (paired with the spine)
 
+    /// <summary>
+    /// The focused pane's marker, drawn on the active tab of the pane every workspace key acts on. Box
+    /// drawing rather than a Nerd Font icon, deliberately: it is the one glyph here whose job is to be
+    /// legible when nothing else is, so it must not be the character that degrades to a tofu box on a
+    /// plain font. It is also a left <em>edge</em> — what a focus border would have been, had a pane been
+    /// able to afford the cell for one without changing the size it reports over NAWS.
+    /// </summary>
+    public const string FocusedPane = "▌"; // ▌ left half block
+
     // Powerline separators (solid triangles) for flowing segmented bars.
     public const string PowerRight = "\ue0b0"; // 
     public const string PowerLeft = "\ue0b2";  // 

@@ -149,6 +149,15 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private readonly object _paneTabsLock = new();
 
     /// <summary>
+    /// Each realised pane's surface grid, by pane id — the control whose background says whether the pane
+    /// holds the focus. Kept so <see cref="RefreshPaneFocus"/> can repaint the indicator without
+    /// rebuilding the pane area. Rebuilt with it (see <see cref="BuildWorkspaceRow"/>), and touched only
+    /// on the UI thread: unlike <see cref="_paneTabs"/> no mouse frame reads it.
+    /// </summary>
+    private readonly Dictionary<string, SharpConsoleUI.Controls.GridControl> _paneSurfaces =
+        new(StringComparer.Ordinal);
+
+    /// <summary>
     /// The two command lines. <see cref="_input"/> is the one every window has; <see cref="_second"/>
     /// is shown per window and sends to the same place — the point is two persistent drafts, not two
     /// destinations. <see cref="_armed"/> is the one ⏎ sends from, and is what the caret sits on.
@@ -513,6 +522,29 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         {
             PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitRight);
             RebuildPaneArea();
+        }
+
+        // The focus indication, in the one geometry that shows all of it at once: two panes and two
+        // command lines, so a frame carries a focused pane beside an unfocused one *and* an armed bar
+        // above an idle one. `focus` leaves the focus where a split leaves it (the left pane, primary bar
+        // armed); `focus-moved` then drives the real ⌃→ and ⌃↓ handlers, so the pair of frames is the
+        // before and after of the keys rather than two hand-posed states.
+        if (view is not null && view.StartsWith("focus", StringComparison.OrdinalIgnoreCase))
+        {
+            PaneCommands.Apply(_workspace.Layout, PaneCommand.SplitRight);
+            RebuildPaneArea();
+            ToggleSecondBar();
+            ArmBar(_input);
+
+            if (string.Equals(view, "focus-moved", StringComparison.OrdinalIgnoreCase))
+            {
+                RenderFrame(); // the panes need real arranged bounds before a directional move can read them
+                SimulateKey(Stroke('\0', ConsoleKey.RightArrow, ctrl: true));
+
+                // That frame left the driver's front buffer populated, so the closing render would emit
+                // only the cells that changed — see the `drag` view, which hits the same thing.
+                ReArmWholeFrame();
+            }
         }
 
         // Freeze the focused pane so the pinned-scrollback / live-tail split + FROZEN bar render, then
@@ -1575,9 +1607,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     {
         bar.StickyPosition = StickyPosition.Bottom;
         bar.HorizontalAlignment = HorizontalAlignment.Stretch;
-        bar.BandColor = ToColor(new Rgb(0x33, 0x39, 0x4c));
-        bar.IdleBandColor = ToColor(new Rgb(0x26, 0x2b, 0x3a));
+        // Both bands come from the theme through WorkspacePalette, so the armed bar is lit by the very
+        // same tone as the focused pane and the idle one sits on the same recessed plane as the rest of
+        // the chrome. They used to be two hardcoded blue-greys thirteen points apart per channel, which
+        // is what "make it super obvious which input window is selected" was reported about.
+        bar.BandColor = ToColor(WorkspacePalette.ArmedBand(_theme));
+        bar.IdleBandColor = ToColor(WorkspacePalette.IdleBand(_theme));
         bar.TextColor = ToColor(_theme.Resolve(TerminalColor.Default, isBackground: false));
+        bar.IdleTextColor = ToColor(WorkspacePalette.IdleInk(_theme));
         bar.HasSibling = () => _second.Visible;
         bar.Entered += text => OnCommandEntered(kind, text);
         bar.Changed += text => OnInputChanged(kind, text);
@@ -1798,6 +1835,261 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         return true;
+    }
+
+    // --- Alt+⏎ reassembly -----------------------------------------------------------------------
+
+    /// <summary>
+    /// How long after an Escape a following Enter is still the second half of one Alt+⏎ rather than two
+    /// keystrokes. It is SharpConsoleUI's own <c>UnixStdinReader.EscTimeoutMs</c> — the framework's bound
+    /// on how far apart an ESC and the byte after it may be and still belong to one keypress — so this is
+    /// not a number that was tuned until it felt right.
+    /// <para>
+    /// In practice the gap is microseconds, not milliseconds, in <em>both</em> of the paths the reader has:
+    /// a terminal writes <c>ESC CR</c> in one write, so the two land in one <c>read</c>, one parse and one
+    /// dispatch batch; and when the read boundary happens to fall between them the reader waits out this
+    /// same timeout <em>before</em> emitting the Escape and then parses the CR immediately after. So the
+    /// window is generous rather than tight, and a human cannot close it: the fastest deliberate
+    /// Esc-then-Enter is several times this, which is what keeps a real Escape followed by a real ⏎ from
+    /// being mistaken for a newline.
+    /// </para>
+    /// </summary>
+    private static readonly TimeSpan AltEnterWindow = TimeSpan.FromMilliseconds(50);
+
+    /// <summary>
+    /// When the last unclaimed Escape arrived, or null when the previous key was not one. Only an Escape
+    /// that reached the end of the chain sets it — one that closed an overlay, abandoned a drag, disarmed
+    /// the ⌃B prefix or left move mode is an Escape the user meant, and pairing it would turn "back out of
+    /// this" followed by "send my line" into a newline.
+    /// </summary>
+    private DateTimeOffset? _escapeAt;
+
+    /// <summary>
+    /// Reassembles Alt+⏎ from the Escape and Enter the parser splits it into, and inserts a newline in the
+    /// armed command line.
+    /// <para>
+    /// This is the whole of item 3, and it is worth being plain about why it is not simply a modifier
+    /// check. The terminal reports Shift+⏎ and Ctrl+⏎ as a bare ⏎, so those two cannot be bound at all
+    /// here; Alt+⏎ is the one modifier+Enter this host actually delivers, and it delivers it as
+    /// <c>ESC</c> then <c>CR</c> — two <see cref="ConsoleKey"/> events, because
+    /// <c>AnsiInputParser.ProcessEscape</c> emits ESC followed by a <em>control</em> byte as two keys
+    /// (only ESC followed by a printable byte becomes a single Alt chord). Both halves reach this handler,
+    /// in order, so the pair can be recognised.
+    /// </para>
+    /// <para>
+    /// It is safe to consume here specifically because <b>Escape in the command line does nothing</b>: the
+    /// bar's key table falls through it (its <c>KeyChar</c> is a control character) and every other
+    /// meaning Escape has in this app — closing an overlay, abandoning a drag, leaving move mode,
+    /// disarming the prefix — is handled earlier and returns before <see cref="_escapeAt"/> is ever set.
+    /// So the only behaviour this can take away is a lone Escape immediately followed by a send, inside a
+    /// window no hand can hit.
+    /// </para>
+    /// </summary>
+    private bool TryAltEnter(KeyPressedEventArgs e)
+    {
+        var wasPending = _escapeAt;
+        _escapeAt = null;
+
+        if (e.KeyInfo.Key == ConsoleKey.Escape && e.KeyInfo.Modifiers == 0)
+        {
+            // Remembered, not consumed: a lone Escape must still behave exactly as it did (as nothing),
+            // so it falls through the rest of the chain untouched.
+            _escapeAt = _time.GetUtcNow();
+            return false;
+        }
+
+        if (e.KeyInfo.Key != ConsoleKey.Enter
+            || e.KeyInfo.Modifiers != 0
+            || wasPending is not { } at
+            || _time.GetUtcNow() - at > AltEnterWindow)
+        {
+            return false;
+        }
+
+        // Handed to the bar's own key table as the Alt+Enter it was, rather than reaching into the buffer
+        // from here: what ⏎ and its modified forms mean is one list, in InputBarControl.
+        e.Handled = true;
+        return RouteToInput(new ConsoleKeyInfo('\r', ConsoleKey.Enter, shift: false, alt: true, control: false));
+    }
+
+    // --- Focus navigation -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Handles Ctrl+←/→/↑/↓ — move between panes, and at the bottom edge into the command lines — or
+    /// reports that this key is not one of them.
+    /// <para>
+    /// <b>Where it sits.</b> On the window's <c>PreviewKeyPressed</c>, for the reason every other key in
+    /// this window is: focus is pinned to the armed command line, so a pane's own control never sees a
+    /// keystroke. It runs <em>after</em> <see cref="DispatchMacro"/>, which is what keeps
+    /// <see cref="MacroKeys.Verdict"/> honest — that reports a modified navigation key as one a macro
+    /// fires on, and it still does, because a chord the user has deliberately bound is theirs. It runs
+    /// <em>before</em> <see cref="TryScrollKey"/> and <see cref="TryRecallKey"/> and before the command
+    /// line: moving between panes is a workspace gesture and outranks a caret move, and the bars must not
+    /// swallow these — <see cref="TryRecallKey"/> does not look at modifiers at all, which is how Shift+↑
+    /// used to be eaten by history recall.
+    /// </para>
+    /// <para>
+    /// <b>Why Ctrl+←/→ is no longer word-movement on the command line.</b> It was, and that was the one
+    /// real cost of this feature; word movement is now Alt+←/→, which this host delivers just as reliably
+    /// (the parser reads the Alt bit out of <c>CSI 1;3 D</c>) and which is the more widely-used spelling
+    /// of the two. The readline set (⌃A ⌃E ⌃K ⌃U) is untouched.
+    /// </para>
+    /// <para>
+    /// <b>What "focus" means here, given the pin.</b> This app has two focus facts and they are separate
+    /// by design: which pane the workspace keys act on (<c>Layout.FocusedPaneId</c>) and which command
+    /// line ⏎ sends from (<see cref="_armed"/>). Keyboard focus is pinned to the second — today's fix for
+    /// a paste bug — and that pin is not weakened here: these keys move pane <em>selection</em> and bar
+    /// <em>arming</em>, never framework focus, so typing continues to land in the command line from
+    /// wherever you have navigated to. That is why "move into the pane" needs no third state: there is
+    /// nowhere for the keyboard to go.
+    /// </para>
+    /// <para>
+    /// <b>Vertically the panes and the bars are one ladder</b>, because on screen they are: the bars are
+    /// drawn below the panes. Ctrl+↓ prefers a pane below and falls through to the next command line when
+    /// there is none; Ctrl+↑ from the second bar steps up to the first, and otherwise moves between panes.
+    /// The asymmetry is only apparent — each direction consults the station it would reach first. With a
+    /// single bar Ctrl+↓ at the bottom row has nowhere to go and says so, and what it says is the useful
+    /// truth: the command line already has the keyboard.
+    /// </para>
+    /// </summary>
+    private bool TryFocusKey(KeyPressedEventArgs e)
+    {
+        if (!e.KeyInfo.Modifiers.HasFlag(ConsoleModifiers.Control)
+            || e.KeyInfo.Modifiers.HasFlag(ConsoleModifiers.Alt)
+            || e.KeyInfo.Modifiers.HasFlag(ConsoleModifiers.Shift))
+        {
+            return false;
+        }
+
+        var direction = e.KeyInfo.Key switch
+        {
+            ConsoleKey.LeftArrow => PaneDirection.Left,
+            ConsoleKey.RightArrow => PaneDirection.Right,
+            ConsoleKey.UpArrow => PaneDirection.Up,
+            ConsoleKey.DownArrow => PaneDirection.Down,
+            _ => (PaneDirection?)null,
+        };
+
+        if (direction is not { } move)
+        {
+            return false;
+        }
+
+        // Claimed whichever way it turns out, including the no-neighbour edge: a navigation key that is
+        // live in one geometry and types a character in another is the shape of bug that gets reported as
+        // a corrupted command line.
+        e.Handled = true;
+
+        // Up out of the second command line before anything else — it is the station above it.
+        if (move == PaneDirection.Up && ReferenceEquals(_armed, _second) && _second.Visible)
+        {
+            ArmBar(_input);
+            return true;
+        }
+
+        if (PaneNavigation.Neighbour(FocusRects(), _workspace.Layout.FocusedPaneId, move) is { } target)
+        {
+            FocusPane(target);
+            return true;
+        }
+
+        // Down off the last pane lands on the command lines, which are drawn below them.
+        if (move == PaneDirection.Down && _second.Visible && ReferenceEquals(_armed, _input))
+        {
+            ArmBar(_second);
+            return true;
+        }
+
+        RefuseFocusMove(move);
+        return true;
+    }
+
+    /// <summary>
+    /// Moves pane selection one step, or says there is nothing that way — what the ⌃P surface's four
+    /// <c>Focus pane …</c> entries run. It is the keyboard's path minus the command-line fall-through:
+    /// a palette entry named "Focus pane down" is about panes, and arming a command line from a list of
+    /// layout commands would be a different action wearing that label.
+    /// </summary>
+    private void MoveFocus(PaneDirection direction)
+    {
+        if (PaneNavigation.Neighbour(FocusRects(), _workspace.Layout.FocusedPaneId, direction) is { } target)
+        {
+            FocusPane(target);
+            return;
+        }
+
+        RefuseFocusMove(direction);
+    }
+
+    /// <summary>
+    /// Moves pane selection and brings the rest of the app in line with it — the same three steps
+    /// <see cref="CyclePane"/> takes, plus the repaint of the indicator, so ⌃O and the Ctrl+arrows cannot
+    /// end up meaning different things by different routes.
+    /// </summary>
+    private void FocusPane(string paneId)
+    {
+        if (!_workspace.Layout.Focus(paneId))
+        {
+            return;
+        }
+
+        // The input area follows pane focus the way it follows a tab change: both drafts, the second
+        // bar's visibility and the history cursors belong to the newly focused window. The keyboard stays
+        // on the command line — typing belongs to the input, wherever the selection is.
+        ChangeWindow();
+        RefreshPaneFocus();
+        SyncScrollbackState(); // the status row's scrollback segment is the focused pane's
+        ReportPaneSizes();     // a session's NAWS is its own pane's; the focused one may have changed
+    }
+
+    /// <summary>
+    /// The rectangles <see cref="PaneNavigation"/> answers from: the ones the last frame actually arranged,
+    /// so "the pane to my left" is the pane the user can see to their left. They already account for zoom —
+    /// a zoomed workspace realises exactly one pane, so there is correctly nothing to move to.
+    /// <para>
+    /// Before the first frame nothing is realised, so it falls back to solving the tree over a nominal
+    /// area. The fallback answers the same <em>ordering</em> questions (the tree is the same and the split
+    /// fractions are the same), and it exists so a key that arrives before a paint is not silently a
+    /// refusal.
+    /// </para>
+    /// </summary>
+    private IReadOnlyDictionary<string, PaneRect> FocusRects()
+    {
+        var realised = RealisedPanes();
+        if (realised.Count >= _workspace.Layout.Panes.Count)
+        {
+            return realised.ToDictionary(p => p.PaneId, p => p.Rect, StringComparer.Ordinal);
+        }
+
+        return LayoutSolver.Solve(
+            _workspace.Layout.Root, new PaneRect(0, 0, 240, 64), _workspace.Layout.ZoomedPaneId);
+    }
+
+    /// <summary>
+    /// Says on the status row that there is nothing that way. The reporting is the requirement, not a
+    /// nicety: on a single-pane workspace every one of these keys is a legitimate no-op, and a keystroke
+    /// that changes nothing and says nothing is indistinguishable from one that is not bound — which is
+    /// exactly how the pane prefix read from the outside before <see cref="RefusePrefix"/> existed.
+    /// </summary>
+    private void RefuseFocusMove(PaneDirection direction)
+    {
+        var arrow = direction switch
+        {
+            PaneDirection.Left => "←",
+            PaneDirection.Right => "→",
+            PaneDirection.Up => "↑",
+            _ => "↓",
+        };
+
+        var reason = _workspace.Layout.ZoomedPaneId is not null
+            ? "this pane is zoomed — ⌃B z shows the others"
+            : _workspace.Layout.Panes.Count <= 1
+                ? "the workspace has one pane — ⌃B | and ⌃B - split it"
+                : direction == PaneDirection.Down
+                    ? "nothing below — the command line already has the keyboard"
+                    : "no pane that way";
+
+        Notice(reason, MessageSeverity.Warning, $"⌃{arrow}");
     }
 
     // --- Scrollback navigation ------------------------------------------------------------------
@@ -2047,24 +2339,34 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>
     /// The input band's background hex — shared by the bar's own fill (<see cref="InputBarControl"/>)
     /// and the prompt cells (<see cref="PromptMarkup"/>) so the input row reads as one solid full-width
-    /// band. Keep in sync with the <c>BandColor</c> RGB in <see cref="SetUpBar"/>.
+    /// band. It reads the tone out of <see cref="WorkspacePalette"/> rather than restating it: these two
+    /// were a pair of hardcoded hexes carrying a "keep in sync with <see cref="SetUpBar"/>" comment,
+    /// which is a colour the theme should have owned and two places to forget.
     /// </summary>
-    private const string InputBandHex = "#33394c";
+    private string InputBandHex => Hex(WorkspacePalette.ArmedBand(_theme));
 
-    /// <summary>The band behind the bar ⏎ will not send from. Keep in sync with <c>IdleBandColor</c>.</summary>
-    private const string IdleBandHex = "#262b3a";
+    /// <summary>The band behind the bar ⏎ will not send from.</summary>
+    private string IdleBandHex => Hex(WorkspacePalette.IdleBand(_theme));
 
     /// <summary>
-    /// Wraps a prompt label so its cells carry the band background and its brightness says whether this
-    /// is the bar ⏎ sends from. The bar already fills its row with the same colour, so painting the
-    /// label to match makes the whole row a continuous band with no gap at the prompt. Brackets in names
-    /// are escaped to block injection.
+    /// Wraps a prompt label so its cells carry the band background and its styling says whether this is
+    /// the bar ⏎ sends from. The bar already fills its row with the same colour, so painting the label to
+    /// match makes the whole row a continuous band with no gap at the prompt. Brackets in names are
+    /// escaped to block injection.
+    /// <para>
+    /// The armed prompt is <b>bold</b> and the idle one dim — the second cue the band colour is not asked
+    /// to carry on its own: weight still reads on a terminal theme that flattens two dark backgrounds
+    /// together, and to someone who cannot tell the two hues apart. Both spellings are the same
+    /// <em>width</em>, which is not a detail: the prompt's width is what the caret column and the wrap
+    /// column are measured from, so a marker glyph that appeared only on the armed bar would reflow the
+    /// line being typed every time the other bar took over.
+    /// </para>
     /// </summary>
-    private static string PromptMarkup(string prompt, bool armed = true)
+    private string PromptMarkup(string prompt, bool armed = true)
     {
         var text = prompt.Replace("[", "[[").Replace("]", "]]");
         return armed
-            ? $"[on {InputBandHex}]{text}[/]"
+            ? $"[bold on {InputBandHex}]{text}[/]"
             : $"[dim on {IdleBandHex}]{text}[/]";
     }
 
@@ -2668,7 +2970,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
     }
 
-    private static ConsoleKeyInfo Stroke(char c, ConsoleKey key) => new(c, key, false, false, false);
+    private static ConsoleKeyInfo Stroke(char c, ConsoleKey key, bool ctrl = false, bool alt = false) =>
+        new(c, key, shift: false, alt, ctrl);
 
     /// <summary>Maps a <c>--view</c> name to a settings screen (F-key + open factory) for snapshots.</summary>
     private (ConsoleKey Key, Func<ScreenBinding> Open)? SettingsView(string view)
@@ -2988,6 +3291,33 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 return true;
             case "layout:split-down":
                 SplitFocusedPane(PaneCommand.SplitDown);
+                return true;
+            case "layout:focus-left":
+                MoveFocus(PaneDirection.Left); // reports when there is no pane that way
+                return true;
+            case "layout:focus-right":
+                MoveFocus(PaneDirection.Right);
+                return true;
+            case "layout:focus-up":
+                MoveFocus(PaneDirection.Up);
+                return true;
+            case "layout:focus-down":
+                MoveFocus(PaneDirection.Down);
+                return true;
+            case "layout:cycle":
+                if (_workspace.Layout.Panes.Count <= 1)
+                {
+                    RefuseCommand("nowhere to cycle to — the workspace has one pane");
+                    return true;
+                }
+
+                CyclePane();
+                return true;
+            case "term:newline":
+                // The same edit Alt+⏎ makes, through the same key table, so the surface cannot drift from
+                // the chord it advertises.
+                RouteToInput(new ConsoleKeyInfo(
+                    '\r', ConsoleKey.Enter, shift: false, alt: true, control: false));
                 return true;
             case "term:freeze":
             case "term:unfreeze":
@@ -3810,11 +4140,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _paneTabs.Clear();
         }
 
+        _paneSurfaces.Clear();
+
 
         // When a pane is zoomed, render just that pane full-area; otherwise render the whole tree.
         var zoomed = _workspace.Layout.ZoomedPaneId is { } zid ? _workspace.Layout.FindPane(zid) : null;
         var paneArea = zoomed is not null
-            ? OnSurface(BuildPaneTabs(zoomed))
+            ? OnSurface(BuildPaneTabs(zoomed), zoomed.Id)
             : BuildLayoutNode(_workspace.Layout.Root);
 
         // Size the rail to what its rows actually need (clamped), so it never hogs width nor clips.
@@ -3864,7 +4196,21 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// backdrop's colour and go on reading as a hole; a grid's background covers the area it is
     /// arranged in, however little is in it.
     /// </summary>
-    private IWindowControl OnSurface(IWindowControl content)
+    /// <param name="content">The pane's tab strip (or its move/drag stand-in).</param>
+    /// <param name="focused">
+    /// Whether this is <c>Layout.FocusedPane</c> — the pane the scrollback keys, the ⌃B commands, ⌃F and
+    /// the Ctrl+arrows all act on. Nothing rendered it before, so the one pane every keystroke was aimed
+    /// at looked exactly like the ones it was not; it is lit with <see cref="WorkspacePalette.Focus"/>,
+    /// the same tone as the armed command line.
+    /// <para>
+    /// It is a <em>repaint of the same rectangle</em>, which is the constraint: a border or a marker
+    /// column would only exist on the focused pane, so the pane's rectangle would change as focus moved
+    /// — and per-pane NAWS is derived from that rectangle (<see cref="PaneOutputRects"/>), so every
+    /// focus change would announce a new terminal size to the server and reflow the game's own output.
+    /// (The scrollback work turned down a scrollbar for the same reason.)
+    /// </para>
+    /// </param>
+    private IWindowControl OnSurface(IWindowControl content, string? paneId = null)
     {
         var surface = Controls.Grid()
             .WithAlignment(HorizontalAlignment.Stretch)
@@ -3872,8 +4218,45 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         surface.Rows(GridLength.Star(1)).Columns(GridLength.Star(1));
         surface.Place(content, 0, 0, 1, 1);
         var built = surface.Build();
-        built.BackgroundColor = ToColor(WorkspacePalette.Surface(_theme));
+        built.BackgroundColor = ToColor(PaneSurfaceTone(paneId));
+        if (paneId is not null)
+        {
+            _paneSurfaces[paneId] = built;
+        }
+
         return built;
+    }
+
+    /// <summary>The plane a pane is painted on: the lit one when it holds the focus, otherwise the surface.</summary>
+    private Rgb PaneSurfaceTone(string? paneId) =>
+        paneId is not null && IsFocusedPane(paneId)
+            ? WorkspacePalette.Focus(_theme)
+            : WorkspacePalette.Surface(_theme);
+
+    /// <summary>
+    /// Repaints the focus indicator without rebuilding the pane area. A focus move changes two things and
+    /// neither is a layout change: which plane each pane is painted on, and which tab carries the marker.
+    /// Rebuilding would work and is what the ⌃B commands do, but they change the <em>tree</em>; a
+    /// rebuild here would dispose and re-parent every viewport for a repaint, on a key the user is
+    /// expected to press repeatedly to get where they are going.
+    /// </summary>
+    private void RefreshPaneFocus()
+    {
+        foreach (var (paneId, surface) in _paneSurfaces)
+        {
+            // GridControl's setter invalidates for repaint, so this is the whole update.
+            surface.BackgroundColor = ToColor(PaneSurfaceTone(paneId));
+        }
+
+        lock (_paneTabsLock)
+        {
+            foreach (var (paneId, tabs) in _paneTabs)
+            {
+                PaintTabChips(tabs, IsFocusedPane(paneId));
+            }
+        }
+
+        RefreshTabTitles(); // carries the ▌ marker onto the focused pane's active tab
     }
 
     /// <summary>Renders the current rail rows to markup (collapsed or expanded).</summary>
@@ -3946,12 +4329,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         {
             if (_dragActive)
             {
-                return OnSurface(BuildDragPane(pane));
+                return OnSurface(BuildDragPane(pane), pane.Id);
             }
 
-            return OnSurface(_moveMode && _moveLetters.TryGetValue(pane.Id, out var letter)
-                ? BuildMovePane(pane, letter)
-                : BuildPaneTabs(pane));
+            return OnSurface(
+                _moveMode && _moveLetters.TryGetValue(pane.Id, out var letter)
+                    ? BuildMovePane(pane, letter)
+                    : BuildPaneTabs(pane),
+                pane.Id);
         }
 
         var split = (SplitNode)node;
@@ -4000,11 +4385,54 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         return grid.Build();
     }
 
+    /// <summary>Whether a pane is the one every workspace keystroke is aimed at.</summary>
+    private bool IsFocusedPane(string paneId) =>
+        string.Equals(paneId, _workspace.Layout.FocusedPaneId, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Colours a pane's tab chips by whether the pane holds the focus. This is the cue that carries the
+    /// signal: the focused pane's active tab is painted in the very band the armed command line is painted
+    /// in, so one colour means "you are here" in both of the places it can be said, and the strip is
+    /// already drawn — so, like the plane behind it, this consumes no cells and cannot move the pane's
+    /// rectangle or the NAWS size derived from it.
+    /// <para>
+    /// The framework's four properties split on <em>its own</em> keyboard focus, which in this app is
+    /// never the tab strip: focus is pinned to the armed command line, so the <c>…Focused…</c> variants
+    /// would never be reached. Both are therefore set to the same value and driven by <em>our</em> pane
+    /// focus, which is the fact the user is asking about.
+    /// </para>
+    /// <para>
+    /// Elevation alone was not enough. A pane's plane is what the game's own colours are read against, so
+    /// it can only be lifted so far before it starts competing with them — and a lift small enough to be
+    /// safe there reads, in a rendered frame, as a gentle elevation rather than as "super obvious", which
+    /// is what was asked for. The chip has no such constraint: nothing is read on it but its own label.
+    /// </para>
+    /// </summary>
+    private void PaintTabChips(TabControl tabs, bool focused)
+    {
+        var activeBg = ToColor(focused ? WorkspacePalette.ArmedBand(_theme) : WorkspacePalette.Surface(_theme));
+        var activeFg = ToColor(focused
+            ? _theme.Resolve(TerminalColor.Default, isBackground: false)
+            : WorkspacePalette.IdleInk(_theme));
+        var restBg = ToColor(focused ? WorkspacePalette.Focus(_theme) : WorkspacePalette.Surface(_theme));
+        var restFg = ToColor(WorkspacePalette.IdleInk(_theme));
+
+        tabs.ActiveFocusedBackgroundColor = activeBg;
+        tabs.ActiveUnfocusedBackgroundColor = activeBg;
+        tabs.ActiveFocusedForegroundColor = activeFg;
+        tabs.ActiveUnfocusedForegroundColor = activeFg;
+        tabs.InactiveFocusedBackgroundColor = restBg;
+        tabs.InactiveUnfocusedBackgroundColor = restBg;
+        tabs.InactiveFocusedForegroundColor = restFg;
+        tabs.InactiveUnfocusedForegroundColor = restFg;
+    }
+
     /// <summary>Builds a leaf pane's tab strip from its window ids, tracking it under its pane id.</summary>
     private IWindowControl BuildPaneTabs(PaneNode pane)
     {
         var builder = Controls.TabControl();
         var ids = new List<string>();
+        var focused = IsFocusedPane(pane.Id);
         foreach (var windowId in pane.Tabs)
         {
             if (_workspace.FindWindow(windowId) is not { } window)
@@ -4012,7 +4440,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 continue;
             }
 
-            builder.AddTab(TabTitles.For(window, ActiveCharacterKey()), BuildTabContent(pane, windowId, window));
+            // The marker rides the focused pane's *active* tab: the strip is plain text to the framework,
+            // so a glyph is the only per-pane cue the strip can carry, and it is the shape half of the
+            // focus signal — it reads on a monochrome terminal, where a luminance step does not.
+            builder.AddTab(
+                TabTitles.For(window, ActiveCharacterKey(), focused && pane.ActiveTab == windowId),
+                BuildTabContent(pane, windowId, window));
             ids.Add(windowId);
         }
 
@@ -4029,6 +4462,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         {
             tabs.ActiveTabIndex = pane.ActiveIndex;
         }
+
+        PaintTabChips(tabs, focused);
 
         var paneId = pane.Id;
         tabs.TabChanged += (_, e) => OnTabChanged(paneId, e.NewTab);
@@ -4251,6 +4686,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     internal int HeaderMarkupWidth => MarkupWidth(_header.Text);
 
+    /// <summary>
+    /// The header's markup as it currently stands — including, while the prefix is armed, the strip listing
+    /// the ⌃B keymap. Internal because that strip is one of the surfaces this app advertises keys on, and
+    /// two surfaces naming the same keymap have to agree; the honesty tests read it rather than re-deriving
+    /// the list.
+    /// </summary>
+    internal string HeaderText => _header.Text;
+
     /// <summary>Whether the framework's keyboard focus is on the bar ⏎ sends from — the app's one rule.</summary>
     internal bool ArmedBarHasFocus => ReferenceEquals(_window.FocusManager.FocusedControl, ActiveBar());
 
@@ -4297,6 +4740,56 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
     /// <summary>The two band colours a command line paints itself in — armed, and the one ⏎ ignores.</summary>
     internal (Color Armed, Color Idle) InputBandColors => (_input.BandColor, _input.IdleBandColor);
+
+    /// <summary>
+    /// Which pane every workspace keystroke is aimed at. Internal because the focus tests assert on this
+    /// <em>and</em> on the frame: "the model moved" and "the screen says so" are two claims, and a focus
+    /// indicator is precisely the thing that can satisfy the first while failing the second.
+    /// </summary>
+    internal string FocusedPaneId => _workspace.Layout.FocusedPaneId;
+
+    /// <summary>Every pane's id in layout order, for the tests that walk a geometry end to end.</summary>
+    internal IReadOnlyList<string> PaneIds => _workspace.Layout.Panes.Select(p => p.Id).ToArray();
+
+    /// <summary>
+    /// The plane each pane is painted on, by pane id — read off the controls the last frame was built
+    /// from, so a test asserts the colour the compositor was actually handed rather than re-deriving it
+    /// from the palette it came out of.
+    /// </summary>
+    internal IReadOnlyDictionary<string, Color> PaneSurfaceColors =>
+        _paneSurfaces.ToDictionary(p => p.Key, p => p.Value.BackgroundColor, StringComparer.Ordinal);
+
+    /// <summary>The focused and unfocused pane planes, as <see cref="WorkspacePalette"/> resolves them.</summary>
+    internal (Color Focused, Color Unfocused) PaneBandColors =>
+        (ToColor(WorkspacePalette.Focus(_theme)), ToColor(WorkspacePalette.Surface(_theme)));
+
+    /// <summary>
+    /// The markup each bar's prompt is drawn from. Internal because the armed/idle distinction is carried
+    /// by the prompt's <em>weight</em> as well as by the band behind it, and weight is a markup tag rather
+    /// than a colour — so this is where a test reads the second cue.
+    /// </summary>
+    internal string PrimaryPromptMarkup => _input.Prompt;
+
+    /// <inheritdoc cref="PrimaryPromptMarkup"/>
+    internal string SecondPromptMarkup => _second.Prompt;
+
+    /// <summary>Every realised pane's tab-strip labels, so a test can find the focus marker in the strip.</summary>
+    internal IReadOnlyDictionary<string, IReadOnlyList<string>> PaneTabTitles
+    {
+        get
+        {
+            var titles = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            lock (_paneTabsLock)
+            {
+                foreach (var (paneId, tabs) in _paneTabs)
+                {
+                    titles[paneId] = tabs.TabPages.Select(t => t.Title).ToArray();
+                }
+            }
+
+            return titles;
+        }
+    }
 
     /// <summary>
     /// One output viewport's scroll state, as the framework reports it after a real frame. Internal so a
@@ -4475,10 +4968,30 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 return null;
             }
 
+            // Alt+⏎ → newline, reassembled from the Escape and Enter the parser splits it into. First in
+            // the chain because it is the only entry that has to see *every* key: it remembers a lone
+            // Escape and must forget it again the moment anything else arrives, whoever ends up claiming
+            // that key. Nothing competes for either half — MacroKeys.Verdict reports Enter and Escape as
+            // chords no binding can be written on, so no macro can be shadowed here.
+            if (TryAltEnter(e))
+            {
+                return null;
+            }
+
             if (DispatchMacro(e.KeyInfo) is { } sent)
             {
                 e.Handled = true;
                 return sent;
+            }
+
+            // Ctrl+arrows: move between panes, and at the bottom edge into the command lines. Ahead of
+            // both the scrollback keys and recall because it is a workspace gesture rather than a move
+            // inside one, and ahead of the command line because the bars would otherwise eat it —
+            // Ctrl+←/→ used to be word movement there (it is Alt+←/→ now) and TryRecallKey ignores
+            // modifiers entirely. After the macros, for the same reason the rest of this chain is.
+            if (TryFocusKey(e))
+            {
+                return null;
             }
 
             // Scrollback: PgUp/PgDn, Shift+↑/↓, ⌃Home/⌃End. After the macros for the same reason recall
@@ -5146,12 +5659,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
         _workspace.Layout.CycleFocus();
 
-        // The input area follows pane focus the same way it follows a tab change: both drafts, the
-        // second bar's visibility, and the history cursors are the newly focused window's. The keyboard
-        // stays on the command line rather than moving to the pane — typing belongs to the input.
+        // Through the same path the Ctrl+arrows take, so ⌃O and a directional move cannot come to mean
+        // different things: the input area follows pane focus (drafts, the second bar, the history
+        // cursors all belong to the newly focused window), the indicator repaints, and the keyboard stays
+        // on the command line — typing belongs to the input, wherever the selection is.
         ChangeWindow();
-        RefreshTabTitles();
-        UpdateInputChrome();
+        RefreshPaneFocus();
+        SyncScrollbackState();
+        ReportPaneSizes();
     }
 
     /// <summary>Closes the focused pane's active window (Ctrl+W). The main window can't be closed.</summary>
@@ -5299,7 +5814,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             {
                 if (page.Tag is string id && _workspace.FindWindow(id) is { } window)
                 {
-                    page.Title = TabTitles.For(window, focusedCharacter);
+                    page.Title = TabTitles.For(
+                        window, focusedCharacter, IsFocusedPane(paneId) && activeTab == id);
                     // The × follows the active tab, so keep it in step with every title refresh.
                     page.IsClosable = CanCloseTab(id, activeTab);
                 }
@@ -5814,6 +6330,40 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// keepalive sparkline, host/encoding, char-count (or history hint), and palette hint form a
     /// cluster right-aligned to the far edge — mirroring the header's left/right split.
     /// </summary>
+    /// <summary>The least space kept between the status row's identity and its right-hand cluster.</summary>
+    private const int MinStatusGap = 3;
+
+    /// <summary>
+    /// The status row's focus-navigation hint, or empty when there is nothing to navigate. It names the
+    /// keys that move between the things the row is otherwise silent about — which pane the workspace keys
+    /// act on, and which command line ⏎ sends from.
+    /// <para>
+    /// Contextual on purpose, and this is the codebase's own idiom rather than a preference: the ⌃P
+    /// surface lists <c>Back to live output</c> only when there is somewhere to come back from, and the
+    /// settings screens advertise <c>⏎ edit</c> only when a row can be opened. A hint for a second command
+    /// line that is not on screen, or for panes on a workspace that has one, is the same defect as a
+    /// screen naming a key it does not offer — read from the other end.
+    /// </para>
+    /// <para>
+    /// Both halves are named when both apply, because ⌃↓ genuinely spans them: it walks down the panes and
+    /// then on into the second line. Neither claims Shift+⏎ or Ctrl+⏎ anywhere — see <see cref="TryAltEnter"/>
+    /// for why those cannot fire on this terminal; the newline chord is advertised on the ⌃P surface and in
+    /// <c>--help</c>, where there is room to name it and its second spelling both.
+    /// </para>
+    /// </summary>
+    private string FocusHint()
+    {
+        var panes = _workspace.Layout.Panes.Count > 1 && _workspace.Layout.ZoomedPaneId is null;
+        var bars = _second.Visible;
+        return (panes, bars) switch
+        {
+            (true, true) => "[dim]⌃←→↑↓ pane · ⇥ line[/]",
+            (true, false) => "[dim]⌃←→↑↓ pane[/]",
+            (false, true) => "[dim]⇥ · ⌃↑↓ line[/]",
+            _ => string.Empty,
+        };
+    }
+
     private string StatusBarMarkup(string character, string host, int port, string state)
     {
         var accent = ActiveWorld() is { } world ? AccentHex(world.Accent) : "#00f5b7";
@@ -5844,10 +6394,23 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             : $"[dim]{ActiveBar().Text.Length} chars[/]");
 
         right.Add("[dim]⌃P palette[/]");
+
+        // The focus hint goes in last and only if it fits. This row is a *sticky* band whose length
+        // changes at runtime, and a cluster that overflows the width wraps it onto a second row — which
+        // takes that row off the workspace (see SyncInputHeights' veto, which PaintStatus re-runs for
+        // exactly this reason). A hint that quietly costs a row of output on a 100-column terminal is a
+        // worse trade than a hint that is only there when there is room for it, and this is the same
+        // measurement the header already makes to right-align its own cluster.
         var rightBar = string.Join("   ", right);
+        var room = HeaderWidth() - MarkupWidth(left) - MarkupWidth(rightBar) - MinStatusGap;
+        if (FocusHint() is { Length: > 0 } focusHint && MarkupWidth(focusHint) + 3 <= room)
+        {
+            right.Insert(right.Count - 1, focusHint);
+            rightBar = string.Join("   ", right);
+        }
 
         // Right-align the cluster to the far edge; identity stays pinned left.
-        var gap = Math.Max(3, HeaderWidth() - MarkupWidth(left) - MarkupWidth(rightBar));
+        var gap = Math.Max(MinStatusGap, HeaderWidth() - MarkupWidth(left) - MarkupWidth(rightBar));
         return $"{left}{new string(' ', gap)}{rightBar}";
     }
 

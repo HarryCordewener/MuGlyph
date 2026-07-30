@@ -31,7 +31,16 @@ public enum PaneCommand
 /// <summary>
 /// Maps prefix keys to <see cref="PaneCommand"/>s and applies them to a <see cref="WorkspaceLayout"/>.
 /// Pure and UI-agnostic: the SharpConsoleUI key handler resolves a key here, then applies the result,
-/// keeping the tmux keymap out of the view code and unit-testable.
+/// keeping the part of the tmux keymap that is <em>about the layout</em> out of the view code and
+/// unit-testable.
+/// <para>
+/// It is deliberately <b>not</b> the whole ⌃B keymap, and reading it as such is a mistake worth naming:
+/// <c>b</c> collapses the connection rail, <c>m</c> arms move mode and <c>i</c> raises the second command
+/// line, and none of the three is a change to the split tree, so none can be a <see cref="PaneCommand"/>
+/// that <see cref="Apply"/> could perform. Those live in the app's own <c>RunPrefixCommand</c>. The
+/// keymap a user actually reads is the armed prefix strip in the header, and it lists all of them; a test
+/// checking an advertised ⌃B chord against <em>this</em> resolver would call three live keys unbound.
+/// </para>
 /// </summary>
 public static class PaneCommands
 {

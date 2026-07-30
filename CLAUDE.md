@@ -106,7 +106,9 @@ python3 tools/ansi_frame_to_image.py frame.ansi frame.html   # or .svg
 - **Views:** `worlds`/`settings`, `triggers`, `route`, `highlight`, `aliases`, `timers`, `keypad`,
   `set`, `textansi`, `input`, `logging`, `password`, `freeze`, `spawn`, `split`, `move`, `drag`,
   `history`, `history-search`, `history-search-filter`, `draft`, `draft2`, `menu`, `menu-split`,
-  `messages`, `quit`, `deletions`, `web`, `scrollback`, `scrollback-up`, `freeze-scrollback`, plus the
+  `messages`, `quit`, `deletions`, `web`, `scrollback`, `scrollback-up`, `freeze-scrollback`,
+  `focus`/`focus-moved` (a split *and* a second command line — the one geometry showing a focused pane
+  beside an unfocused one and an armed bar above an idle one, before and after a real ⌃→), plus the
   default workspace
   (no `--view`). Any settings screen also takes a `-edit` suffix, which opens it and drives real
   keys in so the frame shows a field mid-edit. State toggles: `collapsed`, `prefix`, `timestamps`.
@@ -195,6 +197,23 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
 - **Only `MarkupControl.AppendLine` and `FeedRange` hand pane content to a control** — the seam a
   windowed feed replaces. Appending re-parses the whole control (the parse cache is keyed on a content
   version), so never "refresh" a pane by re-`SetContent`-ing the full buffer on a scroll or a frame.
+- **Focus is indicated by recolouring what is already drawn — never by spending a cell.** Per-pane NAWS
+  is derived from the pane rectangle (`PaneOutputRects`), so a border, gutter or marker column that only
+  the focused pane has would re-announce a different terminal size to every connected server on every
+  focus change and reflow the game's own output. The cues are the pane's own plane
+  (`WorkspacePalette.Focus`), the active tab's chip colour (`TabControl.Active*BackgroundColor`), and a
+  `▌` in the tab *title* — all zero-cost. `FocusIndicationTests.MovingFocusDoesNotMoveAnyPaneRectangle`
+  is the test that stops this being "improved" into a border. Colours live in `WorkspacePalette`, whose
+  constants are all derived from a `ScreenPalette` pair so the workspace and the settings screens share
+  one idea of what focus looks like; the focus step is `CursorBg ÷ EditBg`.
+- **The Ctrl+arrows move pane *selection*, not keyboard focus.** The pin
+  (`FocusChanged → PinFocusToArmedBar`) is untouched: typing always lands in the armed command line
+  wherever you have navigated to, which is why "move into the pane" needs no third piece of state.
+  `TryFocusKey` sits in `HandleWindowKey` **after** `DispatchMacro` (so `MacroKeys.Verdict` reporting a
+  macro on `Ctrl+Left` as live stays true) and **before** `TryScrollKey`/`TryRecallKey` and the command
+  line (which would otherwise eat them — `TryRecallKey` ignores modifiers). Word movement moved from
+  `Ctrl+←/→` to `Alt+←/→` to make room. Vertically the panes and the bars are one ladder: ⌃↓ off the
+  last pane arms the second command line, ⌃↑ leaves it.
 - **The scrollback keys are routed from `PreviewKeyPressed`** (`TryScrollKey`), and the wheel from the
   driver (`ScrollPaneUnderPointer`), for the same reason everything else in this window is: focus is
   pinned to the armed bar, so `ScrollablePanelControl.ProcessKey` — which returns false unless it has
@@ -202,9 +221,33 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
 - **Control chords collapse onto their ASCII bytes, so some are unbindable.** `AnsiInputParser`
   decodes no CSI-u and enables no `modifyOtherKeys`: `Ctrl+H` arrives as `Backspace` with
   `control: false` (byte 0x08), and I/M/J are Tab/Enter/Enter — the app cannot even tell the modifier
-  was held, so binding those breaks the plain key instead. `Alt+Backspace` is not available either:
-  ESC followed by a *control* byte is emitted as **two** keys (Escape, then Backspace), so only
-  `ESC` + a printable byte becomes an Alt chord. `MacroKeys.Verdict` is the readable form of all this.
+  was held, so binding those breaks the plain key instead. **`Ctrl+⏎` and `Shift+⏎` are the same
+  problem and cannot be bound at all**: CR (0x0D) and LF (0x0A) both become a bare `ConsoleKey.Enter`
+  with no modifier bits. They stay in `InputBarControl`'s key table because the Windows
+  `Console.ReadKey` path does report them, but **no surface may advertise them** — that is
+  test-enforced (`AdvertisedKeyHonestyTests`). `MacroKeys.Verdict` is the readable form of all this.
+- **ESC + a control byte arrives as two keys, and that is a chord you can reassemble.** Only
+  `ESC` + a *printable* byte becomes a single Alt chord; `ESC` + a control byte is emitted as
+  **two** key events (`AnsiInputParser.ProcessEscape`) — which is why `Alt+Backspace` is not
+  available. **`Alt+⏎` is, though**, and it is the newline chord: `SharpMUTermApp.TryAltEnter` pairs
+  an Escape with an Enter arriving inside the framework's own `UnixStdinReader.EscTimeoutMs` (50 ms)
+  and hands the bar a synthetic Alt+Enter. It is safe because Escape in the command line is a genuine
+  no-op and every other meaning of Escape is handled earlier in `HandleWindowKey`; and it is reliable
+  because both halves land in *one* read, one parse and one dispatch batch (a terminal writes `ESC CR`
+  in a single write), so the observed gap is microseconds, not milliseconds. ⌃L is kept as the second
+  spelling. **Getting `Ctrl+⏎`/`Shift+⏎` properly needs the Kitty keyboard protocol, and that cannot
+  be done consumer-side** — see below.
+- **The input stack cannot be extended from here.** Enabling the Kitty keyboard protocol is trivial
+  (`IConsoleDriver.WriteClipboardOsc52` is a de-facto public raw-escape emitter, and `Start`/`Stop`
+  already pair `CSI ?2004h`/`l` for bracketed paste). *Decoding* it is the wall: `AnsiInputParser`,
+  `UnixStdinReader`, `InputEvent` and `TerminalRawMode` are all `internal`; `NetConsoleDriver` has
+  **zero** virtual members, a private `WriteOutput`, field-like events a subclass cannot raise, and it
+  constructs its parser and reader as *locals* inside `Start()`. So enabling reporting without a
+  matching decoder makes the affected keys **vanish silently** (`DispatchCsi`'s `default:` emits
+  `UnknownSequenceEvent`, which `UnixStdinReader` drops). Owning input means a from-scratch
+  `IConsoleDriver` (~900–1400 lines re-authoring internal termios + parser logic). The cheap unblock is
+  upstream: make `AnsiInputParser`/`InputEvent` public and add an `UnknownSequenceHandler` hook, or add
+  an input-reader factory to `NetConsoleDriverOptions`. ~15 lines there; do not try it from here.
 - **A global shortcut runs before any window**, so a chord in `MacroKeys.AppShortcuts` can never reach
   a control's own key table. That is why the command line has no ⌃W (`CloseActiveWindow` claims it) and
   why `InputBuffer.KillWordLeft` currently has no chord that can reach it.
