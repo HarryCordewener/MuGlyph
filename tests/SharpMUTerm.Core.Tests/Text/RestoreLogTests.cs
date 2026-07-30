@@ -50,9 +50,13 @@ public class RestoreLogTests
     public async Task DefaultRoot_SitsBesideTheConfigurationAndItsSecrets()
     {
         // The config directory, not a cache one: unlike the spill these files are meant to survive.
-        var config = Path.Combine("/somewhere", "SharpMUTerm", "config.json");
+        // The base has to be absolute on the platform running the test — "/somewhere" is rootless on
+        // Windows, and DefaultRoot's Path.GetFullPath then completes it with the current drive, which is
+        // that method doing its job rather than a bug for a fixture to assert against.
+        var directory = Path.Combine(Path.GetTempPath(), "somewhere", "SharpMUTerm");
+        var config = Path.Combine(directory, "config.json");
         await Assert.That(RestoreLog.DefaultRoot(config))
-            .IsEqualTo(Path.Combine("/somewhere", "SharpMUTerm", RestoreLogOptions.DirectoryName));
+            .IsEqualTo(Path.Combine(directory, RestoreLogOptions.DirectoryName));
     }
 
     [Test]
@@ -97,6 +101,26 @@ public class RestoreLogTests
         await Assert.That(chat.Lines.Count).IsEqualTo(1);
         await Assert.That(chat.Lines[0].Line.Text).IsEqualTo("[Chat] Rivane: crypt run?");
         await Assert.That(chat.Lines[0].Stamp).IsEqualTo("09:25");
+    }
+
+    /// <summary>
+    /// A log can be read while its writer is still open — by the same instance and by another one. It
+    /// reads as a triviality on Linux and is not one: a Windows <c>CreateFile</c> refuses an open whose
+    /// access the existing handle's share mode does not permit, and <see cref="File.ReadAllBytes"/> asks
+    /// for exactly the mode that a file held open for appending refuses. Three tests here failed on
+    /// Windows for that one reason and none of them said so; this one does.
+    /// </summary>
+    [Test]
+    public async Task ALogIsReadableWhileItsWriterIsStillOpen()
+    {
+        using var root = new TempRoot();
+        using var log = Open(root);
+        log.Append(Main, "Corvid", Line("said while the file is open"), "09:24");
+
+        await Assert.That(log.Read().Single().Lines.Single().Line.Text).IsEqualTo("said while the file is open");
+
+        using var other = Open(root);
+        await Assert.That(other.Read().Single().Lines.Single().Line.Text).IsEqualTo("said while the file is open");
     }
 
     /// <summary>

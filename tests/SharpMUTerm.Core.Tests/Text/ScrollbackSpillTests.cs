@@ -572,13 +572,33 @@ public class ScrollbackSpillTests
         Exception? failure = null;
         using var done = new ManualResetEventSlim(false);
 
+        // The two threads are gated against each other at both ends, and both gates are load-bearing.
+        // Appending 20,000 lines takes ~15 ms, which is well inside the time a thread can take to start
+        // on a loaded machine: without this the reader could begin after the writer had already finished
+        // and the run would report reads == 0 — a measurement of the scheduler, not of the store. It is
+        // exactly what a Windows CI run reported once, and it reproduces on Linux by delaying the reader.
+        var reads = 0;
+        using var readerRunning = new ManualResetEventSlim(false);
+
         var writer = new Thread(() =>
         {
             try
             {
+                readerRunning.Wait(TimeSpan.FromSeconds(10));
                 for (var i = 0; i < total; i++)
                 {
                     buffer.Append(Line(i));
+                }
+
+                // ...and do not retire until the reader has served at least one range. It is still
+                // running — `done` is what stops it — so this settles the moment it comes round again,
+                // and gives up if it has already fallen over with something for the assertions below.
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                while (Volatile.Read(ref reads) == 0
+                       && Volatile.Read(ref failure) is null
+                       && clock.Elapsed < TimeSpan.FromSeconds(10))
+                {
+                    Thread.Yield();
                 }
             }
             catch (Exception ex)
@@ -591,9 +611,9 @@ public class ScrollbackSpillTests
             }
         });
 
-        var reads = 0;
         var reader = new Thread(() =>
         {
+            readerRunning.Set();
             try
             {
                 while (!done.IsSet)
@@ -618,7 +638,7 @@ public class ScrollbackSpillTests
                         }
                     }
 
-                    reads++;
+                    Interlocked.Increment(ref reads);
                 }
             }
             catch (Exception ex)
