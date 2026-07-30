@@ -41,6 +41,64 @@ public class PanePrefixEndToEndTests
         return new SharpMUTermApp(new AppConfiguration(), Headless, new HeadlessConsoleDriver(Width, Height));
     }
 
+    private static readonly string ChatId = Workspace.SpawnWindowId("Chat");
+
+    private static readonly string OocId = Workspace.SpawnWindowId("OOC");
+
+    /// <summary>
+    /// One pane holding three tabs — <c>main</c>, a Chat spawn and an OOC spawn — with the tab at
+    /// <paramref name="activeIndex"/> the visible one. Three is the smallest strip that has a
+    /// <em>middle</em>, and a middle is the only place a reorder can move a tab without it also
+    /// arriving at an end; with two tabs every legal move lands at one, which is what let the strip
+    /// and the model disagree for as long as they did.
+    /// </summary>
+    private static SharpMUTermApp ThreeTabs(int activeIndex)
+    {
+        Console.SetIn(TextReader.Null);
+        var config = new AppConfiguration
+        {
+            LastSession = new WorkspaceState
+            {
+                Windows =
+                {
+                    new WorkspaceWindowState { Id = "main", Title = "Main", Kind = WindowKind.Main },
+                    new WorkspaceWindowState { Id = ChatId, Title = "Chat", Kind = WindowKind.Spawn },
+                    new WorkspaceWindowState { Id = OocId, Title = "OOC", Kind = WindowKind.Spawn },
+                },
+                Root = new LayoutNodeState
+                {
+                    Type = "pane",
+                    Id = "p1",
+                    Tabs = { "main", ChatId, OocId },
+                    ActiveIndex = activeIndex,
+                },
+                FocusedPaneId = "p1",
+            },
+        };
+
+        return new SharpMUTermApp(config, Headless, new HeadlessConsoleDriver(Width, Height));
+    }
+
+    /// <summary>The window ids of <see cref="ThreeTabs"/>, by the short names the test cases name them.</summary>
+    private static string WindowId(string shortName) => shortName switch
+    {
+        "chat" => ChatId,
+        "ooc" => OocId,
+        _ => "main",
+    };
+
+    /// <summary>The inverse: a window id as the short name a test case spells it.</summary>
+    private static string ShortName(string windowId) =>
+        windowId == ChatId ? "chat" : windowId == OocId ? "ooc" : windowId;
+
+    /// <summary>
+    /// A tab order as one comparable string, which is the whole reason it is a string: TUnit's
+    /// <c>IsEquivalentTo</c> defaults to order-<em>insensitive</em> collection equivalence, so
+    /// <c>[a,b]</c> and <c>[b,a]</c> satisfy it — and a reorder assertion that cannot see order is not
+    /// an assertion at all.
+    /// </summary>
+    private static string Order(IEnumerable<string> windowIds) => string.Join(",", windowIds.Select(ShortName));
+
     private static ConsoleKeyInfo Key(char c) => new(c, ConsoleKey.NoName, false, false, false);
 
     private static ConsoleKeyInfo Arrow(ConsoleKey key) => new('\0', key, false, false, false);
@@ -86,7 +144,9 @@ public class PanePrefixEndToEndTests
 
         app.SimulatePrefixedKey(Key('>'));
 
-        await Assert.That(Panes(app).Single().Tabs).IsEquivalentTo(new[] { before[1], before[0] });
+        await Assert.That(Order(Panes(app).Single().Tabs)).IsEqualTo(Order(new[] { before[1], before[0] }));
+        await Assert.That(Order(app.PaneTabStrip("p1").Select(t => t.WindowId)))
+            .IsEqualTo(Order(new[] { before[1], before[0] }));
     }
 
     /// <summary>
@@ -100,10 +160,58 @@ public class PanePrefixEndToEndTests
         var before = Panes(app).Single().Tabs.ToList();
 
         app.SimulatePrefixedKey(Arrow(ConsoleKey.RightArrow));
-        await Assert.That(Panes(app).Single().Tabs).IsEquivalentTo(new[] { before[1], before[0] });
+        await Assert.That(Order(Panes(app).Single().Tabs)).IsEqualTo(Order(new[] { before[1], before[0] }));
+        await Assert.That(Order(app.PaneTabStrip("p1").Select(t => t.WindowId)))
+            .IsEqualTo(Order(new[] { before[1], before[0] }));
 
         app.SimulatePrefixedKey(Arrow(ConsoleKey.LeftArrow));
-        await Assert.That(Panes(app).Single().Tabs).IsEquivalentTo(before);
+        await Assert.That(Order(Panes(app).Single().Tabs)).IsEqualTo(Order(before));
+        await Assert.That(Order(app.PaneTabStrip("p1").Select(t => t.WindowId))).IsEqualTo(Order(before));
+    }
+
+    /// <summary>
+    /// <b>The reorder has to move the strip the user is looking at, not only the model behind it.</b>
+    /// Three tabs, both directions, from all three positions — the grid the report only named one cell
+    /// of ("3 tabs, move the middle one right, it says it is already at the end").
+    /// <para>
+    /// The refusal was reading a model the screen had stopped agreeing with. <c>TabControl</c> cannot
+    /// move a page — <c>TabPages</c> is a copy and the only mutators add — so the old
+    /// <c>RefreshTabTitles</c>, which repaints each page by its own <c>Tag</c>, left the strip in its
+    /// original order after every reorder. The move looked like a no-op, and the press after it refused
+    /// truthfully about a model that had the tab at the end and falsely about a strip that showed it in
+    /// the middle. Asserting the *strip* is the point of this test: the model half passed throughout.
+    /// </para>
+    /// </summary>
+    [Test]
+    [Arguments(0, '<', "main,chat,ooc", "main", true)]
+    [Arguments(0, '>', "chat,main,ooc", "main", false)]
+    [Arguments(1, '<', "chat,main,ooc", "chat", false)]
+    [Arguments(1, '>', "main,ooc,chat", "chat", false)]
+    [Arguments(2, '<', "main,ooc,chat", "ooc", false)]
+    [Arguments(2, '>', "main,chat,ooc", "ooc", true)]
+    public async Task ReorderingATabMovesItOnTheStripAndRefusesOnlyAtARealEnd(
+        int activeIndex, char key, string expected, string moved, bool refused)
+    {
+        var app = ThreeTabs(activeIndex);
+
+        app.SimulatePrefixedKey(Key(key));
+
+        // The model, the strip on screen, and which tab is still the active one — all three, because the
+        // bug was exactly the model moving while the other two stayed where they were.
+        await Assert.That(Order(Panes(app).Single().Tabs)).IsEqualTo(expected);
+        await Assert.That(Order(app.PaneTabStrip("p1").Select(t => t.WindowId))).IsEqualTo(expected);
+        await Assert.That(app.PaneActiveTab("p1")).IsEqualTo(WindowId(moved));
+
+        // Loud either way: a tab genuinely at the end still says so, and one that had somewhere to go
+        // must not be told it did not.
+        if (refused)
+        {
+            await Assert.That(app.StatusMarkup).Contains("already at that end");
+        }
+        else
+        {
+            await Assert.That(app.StatusMarkup).DoesNotContain("already at that end");
+        }
     }
 
     /// <summary>Any other key spends the prefix and does nothing — the next key is typing again.</summary>
