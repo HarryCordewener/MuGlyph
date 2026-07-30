@@ -95,6 +95,25 @@ no payload, which is a legitimate signal — raises no callback. Whatever we des
 unreachable through this library, so it is not designed for; §9 records it as swallowed rather than
 handled.
 
+**Four more measured behaviours, each a real server divergence:**
+
+| sent | what we get |
+|---|---|
+| `Char.Vitals{"hp":1}` — **no space** between package and payload | **nothing.** No callback at all. Some servers omit the separator; against those we are deaf, and it is indistinguishable from a server that sends nothing. |
+| `char.vitals {"hp":1}` | delivered with case preserved — so package comparison must be case-insensitive on our side (§9) |
+| `Char.Vitals  {"hp":1}` — two spaces | payload delivered as `" {\"hp\":1}"`, leading space included. Trim before parsing. |
+| `Char.Items.List ["a","b"]` | delivered; a top-level array is a legitimate payload and the store must hold one (§5.2) |
+
+The no-separator case is the sharpest of these because the failure is *silent and total*: a world that
+spells GMCP that way looks exactly like a world with no GMCP, and the only way to tell is a packet
+capture. It is worth an upstream report alongside the truncation.
+
+One more, not a library defect but worth knowing: the GMCP payload is decoded with the interpreter's
+`CurrentEncoding`, so a non-ASCII payload is mangled if that has not been seeded. `TelnetSession`
+already seeds it (`SeedInterpreterEncoding`, and `CLAUDE.md` explains why at length) — but a harness
+that builds an interpreter without doing so will see `René` come back as `Ren??`, which is a confusing
+way to discover the store is fine and the transport was not.
+
 **MSDP receive works, and nesting survives.** Feeding
 
 ```
@@ -143,11 +162,349 @@ question §8 would otherwise have had to leave open: **we parse MSSP ourselves.*
 
 ## 2. Prior art
 
-Every claim in this section is cited. Where clients disagree, the disagreement is the point — GMCP is
-a de-facto standard, and "what a client must tolerate" is mostly a list of things one server does that
-the spec does not mention.
+Every claim here is cited. Where clients or servers disagree, the disagreement *is* the finding — GMCP
+is a de-facto standard, and "what a client must tolerate" is mostly a list of things one server does
+that the spec does not mention.
 
-<!-- PRIOR-ART -->
+**Housekeeping first:** `tintin.mudhalls.net`, the domain this project's earlier notes reference, does
+not resolve. `tintin.sourceforge.io/protocols/*` now 301s to **`https://mudhalla.net/tintin/protocols/*`**,
+which is where every Scandum spec cited below lives.
+
+### 2.1 GMCP is two specs, and you need both
+
+The **transport** spec — negotiation, framing, message format — is
+<https://mudhalla.net/tintin/protocols/gmcp>, and it *deliberately refuses to define `Core.*`*: "Each
+MUD server is expected to define and document its own packages."¹
+
+The **package** spec — `Core.Hello`, `Core.Supports.*`, `Core.Ping` — came from the defunct
+mudstandards.org and survives at <https://www.gammon.com.au/gmcp>² (Nick Gammon's preservation of Mike
+Potter's original), at <https://nexus.ironrealms.com/GMCP>³, and in the
+[Achaea GMCP Spec PDF (2014-03-11)](https://www.achaea.com/local/Achaea_GMCP_Spec_20140311.pdf)⁴. A
+revived <https://mudstandards.org/> carries the most current package index.⁵
+
+That split matters here because a client that implements only the first has no `Core.Hello`, which is
+approximately our current situation.
+
+Negotiation, verbatim from the transport spec: option **201**; `IAC WILL GMCP` from the server,
+`IAC DO GMCP` from us; "The client should never initiate a negotiation, however, if this happens the
+server should abide by the state change."¹ Framing is
+`IAC SB GMCP <package.subpackage.command> <data> IAC SE`, and — importantly for §1.1 — "The `<data>`
+field is optional and should be separated from the package field with a space. **When sending a command
+without a data section the space should be omitted.**"¹
+
+**Package names are case-insensitive; JSON keys are case-sensitive.** All four sources say this
+identically.¹⁻⁴ In the wild both spellings ship: IRE sends `Char.Vitals`, Aardwolf sends
+`char.vitals`.⁶
+
+**The payload is not always a JSON object.** Gammon enumerates the legal forms — `null`, `12345`,
+`99.95`, `true`, `"Hello World"`, an array, an object, or *nothing at all* — and warns: "Some JSON
+parsers allow primitive Value data outside of arrays and objects, but some do not. If your JSON parser
+does not allow primitive Values outside of arrays or objects, this can be easily solved by adding `[`
+and `]` characters around the `<data>` value."² Both MUSHclient GMCP plugins do literally that:
+`if not string.match (params, "^[%[{]") then params = "[" .. params .. "]" end`.⁷
+
+And there is genuinely non-JSON traffic. Aardwolf accepts client→server commands that are bare
+unquoted words — `request char`, `group on`, `config autoexit` — and its own wiki says "Most of the
+standard tags such as 'core.' are in JSON format, most of the Aardwolf specific tags are not."⁶
+
+**IRE ships numbers as strings.** `Char.Vitals { "hp": "4500", "maxhp": "4800", … }`, with the wiki
+noting "It is generally safe to assume that the known values are numbers (even though encoded as
+strings), but other datatypes can be present".³ Aardwolf sends real JSON numbers.⁶ Any client that
+reads a vitals figure must accept both.
+
+**`Comm.Channel.Text` embeds raw ANSI** as `` escapes.³ Mudlet's parser rewrites a literal ESC
+byte to `\\u001B` before parsing, with the comment "replace ANSI escape character with escaped version,
+to handle improperly passed ANSI codes" — i.e. some servers send the raw byte, which is not valid JSON.⁸
+
+### 2.2 `Core.Supports.Set`: the number after the package is contested
+
+This is the single biggest interop hazard in GMCP and it is worth stating flatly.
+
+| Source | What the number means |
+|---|---|
+| Nexus wiki³, mudstandards.org⁵ | the module **version** — "a positive non-zero integer" |
+| Achaea GMCP Spec PDF⁴ | "the module name and **whether it is enabled**" — and Remove: "any appended 1 or 0 is ignored" |
+| Aardwolf, empirically⁶ | strictly `0` or `1`; its debug output is `GMCP Error: core.supports.set -> setting should be 0 or 1 - received 3` |
+
+**Send `1`.** It is the only value that is correct under all three readings. Mudlet is the one client
+that ships anything else — `Char.Login 2` — and it does so against IRE servers specifically.⁸
+
+Set/Add/Remove semantics from the package spec:² `Set` replaces any earlier list wholesale; `Add`
+behaves like `Set` if none was sent, and "the new version number takes precedence over the previously
+sent one, **even if the newly sent number is lower**"; `Remove` ignores version numbers entirely.
+
+### 2.3 What each client sends on connect
+
+| Client | `Core.Hello` | `Core.Supports.Set` |
+|---|---|---|
+| **Mudlet**⁸ | `{ "client": "Mudlet", "version": "<ver><build>" }` | `["Char 1", "Char.Skills 1", "Char.Items 1", "Room 1", "IRE.Rift 1", "IRE.Composer 1", "Client.Media 1", "Char.Login 2"]` (+ `External.Discord 1` conditionally) |
+| **MUSHclient** (Gammon plugin)⁷ | `{ "client": "MUSHclient", "version": "<Version()>" }` | `["Char 1", "Comm 1", "Room 1"]`, hard-coded |
+| **MUSHclient** (Aardwolf plugin)⁷ | same plus `"ident": "<persistent GUID>"` | identical hard-coded three |
+| **BeipMU**⁹ | `{"client":"Beip", "version":"<build>"}` | `["WebView 1", "Beip.Stats 1", "Beip.Tilemap 1", "Beip.Id 1", "Client.Media 1"]` |
+| **Nexus**³ | `{ "client": "Nexus", "version": "3.1.90" }` | — |
+| **Blightmud**¹⁰ | `{"version":"<ver>","client":"blightmud"}` | **never sends `Set`** — only per-module `Core.Supports.Add ["<mod> 1"]`, and no modules by default |
+| **TinTin++**¹¹ | **nothing** — no built-in GMCP at all; a script must send it |
+
+Two observations that bear directly on §4.3. Every client that ships a default set ships a *small* one
+— three to eight packages, `Char` and `Room` in all of them, `Comm.Channel` in none of them. And
+Mudlet's is the only one that is not hard-coded at the call site; its `gmod` layer
+(<https://github.com/Mudlet/Mudlet/blob/development/src/mudlet-lua/lua/GMCP.lua>) is a
+**reference-counted module manager** so two scripts cannot disable each other's packages, and
+`enableModule("IRE.Rift")` sends *every prefix of the path*: `Core.Supports.Add ["IRE 1","IRE.Rift 1"]`.⁸
+
+Both MUSHclient plugins carry the same apologetic comment about their hard-coded list — "This
+hard-coded block may need to be made into a config table as we add more message types."⁷ That is the
+argument for §4.3's per-world setting, written by someone who did not build it.
+
+### 2.4 Storage and dispatch: Mudlet is the model, with one correction to make
+
+**Mudlet** writes into a per-profile Lua global `gmcp`, splitting the dotted path and auto-creating
+nested tables, **preserving the server's exact case** — so `gmcp.char.vitals` and `gmcp.Char.Vitals`
+both exist in the wild depending on the server.⁸ It raises **one event per path prefix**; the source
+comment is unambiguous:
+
+> `// events: for key "foo.bar.top" we raise: gmcp.foo, gmcp.foo.bar and gmcp.foo.bar.top`
+> `// with the actual key given as parameter e.g. event=gmcp.foo, param="gmcp.foo.bar"`⁸
+
+**And it replaces subtrees rather than merging them, by default.** This is the correction to make,
+because it is the opposite of what §5.2 originally proposed:
+
+> `// only merge tables (instead of replacing them) if the key has been registered as a`
+> `// need to merge key by the user default is Char.Status only`⁸
+
+`Host.cpp` seeds that allowlist with exactly one entry: `mGMCP_merge_table_keys.append("Char.Status")`.
+The reason is documented on the IRE side — `Char.Status` sends deltas, "messages only contain changed
+values"³ — while everything else sends complete state.
+
+Replacement is not merely the default, it is **required** for collection-valued packages. Aardwolf's
+wiki says so directly: "As with room exits, group information needs to be **cleared with each GMCP data
+refresh** so that members who have left the group do not remain in the data."⁶ The Aardwolf MUSHclient
+plugin goes further and nukes the whole `room` subtree on `room.info`, with a comment explaining it was
+added to stop exits accumulating across rooms.⁷
+
+§5.2 is rewritten accordingly.
+
+Other clients, briefly:
+
+- **MUSHclient** has no built-in GMCP; a plugin answers `OnPluginTelnetRequest(201, "WILL")` and sends
+  the handshake from the `SENT_DO` callback.¹² There is **no `TelnetSubnegotiationSend` function** in
+  MUSHclient's 418-function API, so plugins IAC-stuff by hand and call `SendPkt`.⁷ The Aardwolf
+  plugin's model is unusual and instructive: `BroadcastPlugin` announces **only which message
+  arrived**, and consumers pull the data back with `CallPlugin(id, "gmcpdata_as_string", …)`.⁶
+- **TinTin++** — and this corrects a common belief — has **no built-in `$gmcp{}` table and does not
+  auto-accept GMCP or MSDP.** Its negotiation table has parsers for `IAC SB GMCP`/`MSDP` but no entry
+  for `IAC WILL GMCP`, so a script must reply `#EVENT {IAC WILL GMCP} { #SEND {\xFF\xFD\xC9}; }`.¹¹ ¹³
+  Everything else is events: `IAC SB GMCP` with `%0 module %1 data %2 plain data`.¹⁴ `$gmcp{}` is a
+  *user-script convention*, not a feature. Note also "**Only one event can be defined for each event
+  type**".¹⁴
+- **Blightmud** implements GMCP/MSDP/MSSP/TTYPE in bundled Lua over generic Rust primitives; scripts
+  get `gmcp.on_ready`, `gmcp.register(module)`, `gmcp.receive(module, cb)`, `gmcp.send`.¹⁰ Data reaches
+  scripts as a **raw JSON string with the leading space retained**, and `gmcp.receive` **replays the
+  last cached body immediately on registration** — a nice property for a pane that is created after the
+  data arrived.
+- **BeipMU** sends its handshake eagerly on `WILL GMCP` and offers `Connection.SetOnGMCP(fn)` (one
+  callback per connection, every message as one undivided raw string) plus a WebView-scoped
+  prefix-filtered variant.⁹ Its prefix matching requires a following dot, returns on first match, and
+  is case-sensitive — three behaviours worth *not* copying.
+- **Nexus** has a single global `onGMCP` reflex with `gmcp_method` and `gmcp_args`, and no persistent
+  table at all; a script that wants to keep something calls `client.set_variable`.¹⁵
+
+**No client filters inbound packages against its own `Core.Supports.Set`.** Mudlet, both MUSHclient
+plugins, Blightmud and BeipMU all accept and process whatever arrives. §3's principle 5 is the
+consensus, not a preference.
+
+### 2.5 Multi-session isolation — TinTin++ has the model to copy
+
+This is the question `GmcpStats` gets wrong, and the two clients that support several simultaneous
+worlds answer it the same way.
+
+**TinTin++**: variables are per-session throughout (`ses->list[LIST_VARIABLE]`), a new session gets a
+**copy** of the global session's lists (gated on `#CONFIG {INHERITANCE}`), and events are dispatched
+with a session pointer, so a GMCP message in one session fires only that session's handlers.¹¹ Crossing
+sessions is **explicit syntax**: `#{name} {command}` runs a command in a named session without changing
+the active one, and `@<name>{text}` parses text in another session and prints the result here.¹⁶ So
+`@sessionB{$gmcp[Char][Vitals][hp]}` is how you read another session's data.
+
+**Mudlet**: one profile per window, each `Host` owning its own Lua interpreter, so `gmcp`, `msdp` and
+`mssp` are per-profile globals in per-profile states. `raiseEvent` is profile-local; crossing profiles
+is opt-in via `raiseGlobalEvent` — which carries an explicit warning that "execution control is handed
+to the receiving profiles so that means that long running events may lock up the profile that raised
+the event".¹⁷ That is a synchronous cross-profile design worth *not* copying.
+
+**MUSHclient**: one world per window, plugins per world, plugin state saved "on a per-plugin, per-world
+basis"; cross-world access requires `GetWorld`/`GetWorldById`.¹²
+
+The shape is unanimous: **per-session state by default, explicit and awkward syntax to cross.** §5.3
+is that shape, with `WindowSession(windowId)` as the "explicit syntax".
+
+### 2.6 MSDP
+
+Spec: <https://mudhalla.net/tintin/protocols/msdp>.¹⁸ Option **69**; `MSDP_VAR` 1, `MSDP_VAL` 2,
+`TABLE_OPEN` 3, `TABLE_CLOSE` 4, `ARRAY_OPEN` 5, `ARRAY_CLOSE` 6. "Variables and values cannot contain
+the NUL, MSDP_VAL, MSDP_VAR, MSDP_TABLE_OPEN, MSDP_TABLE_CLOSE, MSDP_ARRAY_OPEN, MSDP_ARRAY_CLOSE, or
+IAC byte."
+
+**MSDP's advantage over GMCP is that it is self-describing**, and the GMCP spec concedes the point:
+"Unlike GMCP, MSDP provides the client with a list of supported variables when requested, so it's not a
+requirement for MUD servers to provide documentation on the packages it supports."¹ `LIST` takes
+`COMMANDS`, `LISTS`, `CONFIGURABLE_VARIABLES`, `REPORTABLE_VARIABLES`, `REPORTED_VARIABLES`,
+`SENDABLE_VARIABLES`. The five commands the spec calls essential are `LIST`, `REPORT` (subscribe,
+push-on-change), `UNREPORT`, `SEND` (one-shot pull) and `RESET`.¹⁸
+
+**A parser trap that §4.4's design must accommodate.** Client→server argument lists are deliberately
+looser than server→client arrays: "To minimize the implementation burden for servers, the client is
+expected to send command arguments as simple value reassignments" — repeated `MSDP_VAL` with **no**
+`ARRAY_OPEN`/`CLOSE` — while "When responding to the client, the server should use a proper array if
+applicable."¹⁸ Mudlet's decoder carries a flag literally named `no_array_marker_bug` for this.⁸ We only
+send, so we only need the loose form; but anything we write must not assume the strict one.
+
+Standard variables include `CHARACTER_NAME`, `HEALTH`, `HEALTH_MAX`, `MANA`, `MANA_MAX`, `MOVEMENT`,
+`MOVEMENT_MAX`, `EXPERIENCE`, `OPPONENT_HEALTH`, `ROOM` (a table of `VNUM`/`NAME`/`AREA`/`COORDS`/
+`TERRAIN`/`EXITS`), and the client-settable `CLIENT_NAME`, `CLIENT_VERSION`, `PLUGIN_ID`.¹⁸ Note that
+`HEALTH` "may be absolute or a percentage depending on the MUD" — the spec says "Use 0-100 for
+percentages" without requiring it, so a consumer cannot assume.¹⁸
+
+**Who runs which.** MSDP is the Diku/Merc/ROM/SocketMUD lineage; GMCP/ATCP2 is Rapture/IRE plus
+Aardwolf, MUME, Avatar and Genesis.¹ Both can coexist through **MSDP-over-GMCP**, implemented in
+Scandum's server-side MTH snippet¹⁹ — the MSDP payload wrapped in a GMCP package literally named
+`MSDP`, where uniquely "the package name is considered case sensitive and MSDP must be fully
+capitalized".¹ In practice, though, Mudlet's manual says plainly: "some servers don't both send MSDP
+and GMCP at the same time, so even if you enable both in Mudlet, the server will choose to send only
+one of them."²⁰ That supports §4.4's staging: MSDP buys server coverage, not new capability.
+
+Client support: **Mudlet** (off by default; on enabling it sends `LIST COMMANDS` and its
+`CLIENT_NAME`/`CLIENT_VERSION`)⁸, **Blightmud** (full, decoded to Lua tables, auto-sends
+`LIST REPORTABLE_VARIABLES`, with `msdp.get/set/register/report/unreport/list/send`)¹⁰, **TinTin++**
+(parser + events only)¹⁴. **MUSHclient: zero occurrences of `MSDP` in the source. BeipMU: option 69
+exists only as a debug pretty-print label.**⁹ ¹²
+
+### 2.7 MSSP — and the finding that changes what our INFO screen is
+
+Spec: <https://mudhalla.net/tintin/protocols/mssp>.²¹ Option **70**; `MSSP_VAR` 1, `MSSP_VAL` 2. Sent
+**on connect, before login**. Required fields `NAME`, `PLAYERS`, `UPTIME`; then a long generic,
+categorisation, world, protocol, commercial and hiring set.
+
+Three rules that shape a parser and a screen:
+
+- **A variable may repeat, and "the last reported value should be used as the default value…
+  multiple values should be ordered from least to most relevant."**²¹ So `PORT` legitimately arrives
+  three times. A dictionary of `name → single value` loses this; §8.3's `name → list` does not.
+- **"Variable names should exist of upper case letters and may contain spaces."**²¹ `CRAWL DELAY`,
+  `XTERM 256 COLORS`, `PAY TO PLAY`. Clients "can substitute spaces with underscores as the recommended
+  solution" — but must accept the spaces on the wire.
+- **`-1` means "not available"** for numeric world variables.²¹ An INFO screen must render that as
+  *unknown*, never as `-1 rooms`.
+
+**Who consumes MSSP: crawlers, overwhelmingly.** The spec's own framing is "a transparant protocol
+**for MUD crawlers**".²¹ Live and crawling as of today: MudVerse²², MUD MSSP Stats (Iberia)²³,
+MudStats.com²⁴ (which the spec page still mislabels "defunct"), Grapevine²⁵. Grapevine's behaviour is
+worth knowing for the sibling crawler: it announces TTYPE `Grapevine`, waits 10 s for `IAC WILL MSSP`,
+falls back to a plaintext `mssp-request\n`, gives up at 20 s, and **stops the instant MSSP arrives** —
+it never logs in.²⁵ Note also that `CRAWL DELAY` exists and **no live crawler was found that honours
+it**.
+
+**Who displays MSSP: almost nobody, and nobody in a server browser.** The spec's Clients list has two
+entries.²¹ In detail:
+
+- **Mudlet** — enabled by default, exposes a Lua `mssp` table, `lua mssp` dumps it, Ctrl+9 prints it.
+  **`dlgConnectionProfiles.cpp` contains no MSSP references at all** — the connection dialog and the
+  bundled game list show nothing from it.⁸ Its one genuinely user-facing use is excellent and we should
+  steal it: `cTelnet::promptTlsConnectionAvailable()` reads the `TLS`/`SSL` and `HOSTNAME` fields and
+  offers *"A more secure connection on port %1 is available… Update to port %1 and connect with
+  encryption?"*⁸
+- **TinTin++** — accepts MSSP **only in debug mode**. `client_recv_will_mssp()` sends `IAC DO MSSP`
+  only inside `if (HAS_BIT(ses->telopts, TELOPT_FLAG_DEBUG))`.¹¹ With debug off it never asks.
+- **Blightmud** — supported; sets an `MSSP` tag in the top bar, plus `mssp.get()` / `mssp.print()`.¹⁰
+- **MUSHclient, BeipMU** — not supported at all.⁹ ¹²
+- **No client anywhere has a `/mssp` command or an MSSP-driven server browser.**
+
+So the INFO screen §8.4 designs is, as far as this survey can tell, **genuinely novel**. That is a
+reason to be careful rather than pleased: nobody has discovered the ergonomics for us, and §8.4's three
+states are guesses that want a user in front of them.
+
+**PennMUSH implements MSSP**, which matters twice over — it is the SharpMUSH family's lineage and the
+most likely server anyone tests this against. `report_mssp()` in `src/bsd.c` auto-sends nine fields:
+`NAME`, `PLAYERS`, `UPTIME`, `PORT`, `SSL`, `PUEBLO`, `CODEBASE` (`"PennMUSH %sp%s"`), `FAMILY`
+(hardcoded `"TinyMUD"`), `WEBSITE`; everything else comes from `mush.cnf` `mssp NAME/value` lines.²⁶
+Two gotchas for the crawler: Penn probes with `IAC DO LINEMODE` first and only sends its telnet-option
+block once the client proves telnet-awareness (60 s timeout), so a raw-socket crawler never sees
+`IAC WILL MSSP`; and its plaintext fallback compares `!strcmp(command, "MSSP-REQUEST")` —
+**case-sensitive uppercase** — while Grapevine and MudVerse both send lowercase `mssp-request`.²⁶
+
+### 2.8 TTYPE / MTTS
+
+Spec: <https://mudhalla.net/tintin/protocols/mtts>.²⁷ Note the polarity inversion relative to
+GMCP/MSDP/MSSP: the **server** sends `IAC DO TTYPE` and the **client** replies `IAC WILL TTYPE`.
+
+Three rounds, then a repeat. Round 1 is the client name, "preferably in all caps. Appending the client
+version is optional." Round 2 is the terminal type: "Console clients should report the name of the
+terminal emulator, other clients should report one of the four most generic terminal types" — `DUMB`,
+`ANSI`, `VT100`, `XTERM`, optionally with `-256COLOR` or `-TRUECOLOR`. Round 3+ is `MTTS <bitvector>`,
+and "Receiving the same terminal type twice indicates to the server that the end of the list of
+available terminal types has been reached."²⁷ `IAC DONT TTYPE` resets the cycle.
+
+```
+1 ANSI    2 VT100    4 UTF-8    8 256 COLORS    16 MOUSE TRACKING
+32 OSC COLOR PALETTE    64 SCREEN READER    128 PROXY
+256 TRUECOLOR    512 MNES    1024 MSLP    2048 SSL
+```
+
+| Client | round 1 | round 2 | MTTS |
+|---|---|---|---|
+| **TinTin++**¹¹ | `TINTIN++` | `$TERM` | computed; VT100 claimed only when *not* split; mouse sets 16 **and** 1024; MNES always |
+| **Mudlet**⁸ | `MUDLET` (+ version only if opted in) | `ANSI-TRUECOLOR` | 2349 typical |
+| **Blightmud**¹⁰ | `BLIGHTMUD` | `$TERM` uppercased (default `XTERM-256COLOR`) | 271 |
+| **BeipMU**⁹ | user preference | `ANSI` | 269 |
+| **us, today** | `TNC` | `XTERM` | 3853 |
+
+**Why round 1 is load-bearing**, in Mudlet's own words:
+
+> "Some servers use KaVir's protocol snippet, which expects the client to provide both its name and a
+> decimal version number during Telnet TTYPE negotiation. However, including a version number is not in
+> accordance with the relevant RFCs as the period character is not permitted therein; so since 2024,
+> Mudlet has stopped sending it by default. **As a result, servers that rely on this information may
+> assume Mudlet is version 1.0 or earlier, and consequently restrict color support to 16 colors instead
+> of enabling 256-color mode.**"⁸
+
+Mudlet now auto-detects the KaVir snippet and re-enables the version. That is a concrete case of the
+client name changing what a server sends, and it is the answer to "does anyone actually look at this".
+RFC 1010's constraint is real and Mudlet enforces it: up to 40 characters from uppercase letters,
+digits, hyphen and slash — so Mudlet maps `.`→`/` and space→`-` and truncates.⁸
+
+Two of our current claims are wrong on their face against that table: **nobody else claims MSLP (1024)
+except TinTin++, and only as a side effect of mouse tracking**, and we claim it while implementing
+nothing. And every other terminal client reports a *real* terminal type — `$TERM`, uppercased —
+where we report a constant `XTERM`.
+
+### Sources
+
+1. GMCP transport spec: <https://mudhalla.net/tintin/protocols/gmcp>
+2. GMCP package spec (mudstandards preservation): <https://www.gammon.com.au/gmcp>
+3. Nexus GMCP wiki: <https://nexus.ironrealms.com/GMCP>
+4. Achaea GMCP Spec, 2014-03-11: <https://www.achaea.com/local/Achaea_GMCP_Spec_20140311.pdf>
+5. mudstandards.org (revived): <https://mudstandards.org/gmcp/core>, <https://mudstandards.org/gmcp/core_hello>
+6. Aardwolf GMCP: <https://www.aardwolf.com/wiki/index.php/Clients/GMCP>
+7. MUSHclient GMCP plugins: <https://raw.githubusercontent.com/fiendish/aardwolfclientpackage/MUSHclient/MUSHclient/lua/gmcphelper.lua>, and `plugins/GMCP_handler_NJG.xml` in <https://github.com/nickgammon/mushclient>
+8. Mudlet source: `src/ctelnet.cpp`, `src/TLuaInterpreter.cpp`, `src/Host.cpp`, `src/mudlet-lua/lua/GMCP.lua`, `src/mudlet-lua/lua/LuaGlobal.lua` — <https://github.com/Mudlet/Mudlet>
+9. BeipMU: <https://github.com/BeipDev/BeipMU/blob/master/Documentation/GMCP.md>, `src/Telnet.cpp`, `src/WebView.cpp`
+10. Blightmud: `resources/lua/gmcp.lua`, `msdp.lua`, `mssp.lua`, `ttype.lua`, `resources/help/gmcp.md` — <https://github.com/Blightmud/Blightmud>
+11. TinTin++ source: `src/telopt_client.c`, `src/variable.c`, `src/session.c` — <https://github.com/scandum/tintin>
+12. MUSHclient plugin callbacks: <https://www.gammon.com.au/mushclient/doc/general/plugin_callbacks.html>; function index: <https://www.gammon.com.au/mushclient/functions/>
+13. GMCP in TinTin++ tutorial: <https://www.legendmud.org/index.php/GMCP_TinTin++_Tutorial>
+14. TinTin++ `#event`: <https://mudhalla.net/tintin/manual/event.php>
+15. Nexus GMCP data: <https://nexus.ironrealms.com/GMCP_Data>
+16. TinTin++ `#session`: <https://mudhalla.net/tintin/manual/session.php>; `#config`: <https://mudhalla.net/tintin/manual/config.php>
+17. Mudlet `raiseGlobalEvent`: <https://wiki.mudlet.org/w/Manual:Lua_Functions#raiseGlobalEvent>
+18. MSDP spec: <https://mudhalla.net/tintin/protocols/msdp>
+19. MTH (MUD Telopt Handler): <https://github.com/scandum/mth>; KaVir's snippet: <https://github.com/scandum/msdp_protocol_snippet_by_kavir>
+20. Mudlet supported protocols: <https://wiki.mudlet.org/w/Manual:Supported_Protocols>
+21. MSSP spec: <https://mudhalla.net/tintin/protocols/mssp>; news log: <https://mudhalla.net/tintin/protocols/mssp/news.php>
+22. MudVerse MSSP: <https://www.mudverse.com/mssp>
+23. MUD MSSP Stats: <https://iberia.jdai.pt/mudstats/mudlist>
+24. MudStats: <http://mudstats.com/>
+25. Grapevine MSSP: <https://grapevine.haus/mssp>
+26. PennMUSH `src/bsd.c`, `src/conf.c`, `game/mushcnf.dst`: <https://github.com/pennmush/pennmush>
+27. MTTS spec: <https://mudhalla.net/tintin/protocols/mtts>
 
 ---
 
@@ -217,6 +574,13 @@ false→true transition. That is a boolean read on a path that already does one;
 reflection, and no upstream change. It is also the *only* correct moment: sending earlier is sending
 into an unnegotiated option, and sending on a timer is a race.
 
+**And it must be a transition, not a once-per-connection flag**, because GMCP is torn down and
+re-established mid-session. The spec is explicit about copyover: "before the actual copyover, the MUD
+server should send `IAC WONT GMCP`, the client in turn should fully disable GMCP" (§2.1). A
+false→true edge detector handles that for free; a `_helloSent` boolean does not, and would leave us
+silently unsubscribed after every server reboot. `IAC DONT TTYPE` resets the terminal-type cycle the
+same way (§2.8), and the same reasoning applies there.
+
 ### 4.3 `Core.Supports.Set`
 
 Sent immediately after `Core.Hello`, in the same batch.
@@ -231,9 +595,15 @@ The proposed opening set, and why each is on it:
 
 | Package | Why |
 |---|---|
-| `Char 1` | The umbrella under which `Char.Vitals`, `Char.Status`, `Char.Name` all arrive. This is the vitals pane's entire supply. |
-| `Char.Vitals 1` | Named explicitly as well as under `Char`, because some servers match the exact string rather than the prefix. Redundant on a correct server and free. |
-| `Room 1` | Room name and exits. Cheap (one message per movement) and the obvious second consumer after vitals. |
+| `Char 1` | The umbrella under which `Char.Vitals`, `Char.Status`, `Char.Name` all arrive. This is the vitals pane's entire supply. Every client surveyed asks for it (§2.3). |
+| `Char.Vitals 1` | Named explicitly as well as under `Char`, because some servers match the exact string rather than the prefix — and because Mudlet's `gmod` sends every prefix of a path for the same reason (§2.3). Redundant on a correct server and free. |
+| `Room 1` | Room name and exits. Cheap (one message per movement) and the obvious second consumer after vitals. In every client's default set (§2.3). |
+
+**The number must be `1`.** Its meaning is genuinely contested — the Nexus wiki and mudstandards.org
+call it a version, the Achaea spec calls it an enable flag, and Aardwolf hard-rejects anything else with
+`setting should be 0 or 1 - received 3` (§2.2). `1` is the only value correct under all three readings.
+Mudlet is the sole client shipping anything higher (`Char.Login 2`) and does so against IRE
+specifically. Do not treat this field as a version negotiation; it is not one, reliably.
 
 And what is deliberately **off** at stage 1:
 
@@ -323,13 +693,33 @@ Room.Info.exits     = ["north", "east"]
 
 Three properties matter and each is a decision:
 
-**Merge, do not replace.** A server sending `Char.Vitals {"hp":"990"}` after
-`Char.Vitals {"hp":"1000","maxhp":"1200"}` is sending a *delta*; replacing the subtree would drop
-`maxhp` and a gauge would go blank mid-fight. Merging is what Mudlet does and what every gauge script in
-the wild assumes. The cost is that nothing ever gets smaller: a server that sends a key once and never
-again leaves it there for the session. That is the right trade — a stale key is visible and a missing
-one is not — but it means the store is not a faithful transcript of the last message, and a consumer
-that needs "what did the server just say" needs the change notification (§6.2), not the store.
+**Replace the subtree by default; merge only for configured paths.** This reverses an earlier draft of
+this document, which said "merge, always", on the reasoning that a partial `Char.Vitals` would otherwise
+blank a gauge mid-fight. The research says that is the wrong default and names the reason:
+
+- **Mudlet replaces**, and merges only for an allowlist whose default has exactly one entry. Its own
+  source comment: *"only merge tables (instead of replacing them) if the key has been registered as a
+  need to merge key by the user default is `Char.Status` only"* (§2.4). `Char.Status` is on the list
+  because IRE documents it as a delta package — "messages only contain changed values" — and nothing
+  else is.
+- **Merging is actively wrong for collection-valued packages.** Aardwolf's wiki: "As with room exits,
+  group information needs to be **cleared with each GMCP data refresh** so that members who have left
+  the group do not remain in the data." A merged `Room.Info.exits` accumulates the exits of every room
+  you have ever visited; a merged group list never loses a member. The Aardwolf MUSHclient plugin nukes
+  the whole `room` subtree on `room.info` for exactly this reason (§2.4).
+
+So: on a message for package `P`, the subtree at `P` is **discarded and rebuilt** from the payload,
+unless `P` is on a per-world **merge allowlist**, in which case the payload's keys are copied over the
+existing ones and absent keys survive.
+
+The allowlist ships with `Char.Status` on it, matching Mudlet, and is editable per world beside the
+`Core.Supports.Set` list (§4.3) — because which packages a server sends as deltas is a fact about the
+server, and the one client that got this right made it configurable rather than guessing.
+
+The cost of replacement is the failure mode the first draft feared, and it is real: a server that sends
+`Char.Vitals` deltas and is *not* on the allowlist will make a gauge flicker. That is a visible,
+diagnosable, one-setting fix. The cost of merging is a value that is silently and permanently wrong,
+which is not.
 
 **One namespace for GMCP and MSDP.** MSDP's `{"ROOM":{"VNUM":"6008"}}` becomes `MSDP.ROOM.VNUM`; GMCP's
 `Char.Vitals` becomes `Char.Vitals.*`. They are prefixed apart rather than mapped onto each other, because
@@ -413,6 +803,19 @@ Three things about this shape:
 - **It fires on the read loop**, like every other session event. Consumers marshal (`OnUi`) exactly as
   they do for `LinePrinted`. That is not a new hazard; it is the existing one, and stating it here means
   nobody has to rediscover it.
+- **It fires whether or not the payload parsed.** Mudlet does the same, and it is deliberate there: the
+  prefix events are raised outside the branch that stores the value, so "a handler firing does not
+  guarantee the table was updated" (§2.4). A consumer that needs to know whether anything landed reads
+  `ChangedPaths`, which is empty when nothing did.
+
+**One event with a package name, not one event per path prefix.** Mudlet raises `gmcp.foo`,
+`gmcp.foo.bar` and `gmcp.foo.bar.top` for a single message (§2.4), which is what package authors expect
+*in Mudlet* — but it is an artefact of Lua's flat event namespace, where the only way to subscribe to a
+subtree is to name every ancestor. We already have prefix matching in the subscriber
+(`ScriptHost.PackageMatches` matches a registered name or any `name.` prefix), so raising three events
+where one will do would be three UI marshals for one message. The observable behaviour is the same and
+the cost is a third. Where a Mudlet script would register on `gmcp.Char`, ours registers on `Char` and
+gets `Char.Vitals`.
 
 **Coalescing is a consumer concern, not the store's.** A store that batched updates would delay the
 one consumer that wants them promptly, and a pane that redraws too often is a pane that should
@@ -464,15 +867,35 @@ marshalling script callbacks onto the UI thread — if it does, a live table is 
 We currently identify as `TNC` on an `XTERM` claiming `MTTS 3853` (§1.1). What we should say:
 
 ```
-round 1   SharpMUTerm
-round 2   XTERM-256COLOR        (or XTERM-TRUECOLOR where the terminal reports it)
+round 1   SHARPMUTERM
+round 2   the terminal's own $TERM, uppercased
 round 3+  MTTS <bitvector>
 ```
 
-The bitvector should claim what we can actually do and nothing else — including **MOUSE TRACKING (16)**,
-which we support and do not claim, and *not* claiming MSLP (1024), which we do not implement. Whether
-UTF-8 (4) is claimed should follow the CHARSET outcome rather than being a constant, because a world
-pinned to Latin-1 is a world where we are not sending UTF-8.
+**Round 1: uppercase, and no version number by default.** The spec asks for all caps and every client
+complies — `TINTIN++`, `MUDLET`, `BLIGHTMUD` (§2.8). RFC 1010 permits only uppercase letters, digits,
+hyphen and slash, up to 40 characters, which is why a version is awkward: the `.` is illegal, and
+Mudlet stopped sending one in 2024 for that reason — *and then discovered that servers running KaVir's
+protocol snippet consequently assume version 1.0 and restrict colour support to 16 colours* (§2.8).
+Mudlet's answer is to auto-detect the snippet and re-enable the version. Ours should be the same
+posture: send the bare name, and treat "some servers downgrade us without it" as a known, reported
+problem rather than something to pre-emptively work around. **Deferred:** whether to copy Mudlet's
+auto-detection; it needs a server that does this to test against.
+
+**Round 2: report the real terminal.** Every terminal client in the survey reports `$TERM`, uppercased
+— TinTin++ and Blightmud both do (§2.8) — and the spec says console clients *should*: "Console clients
+should report the name of the terminal emulator, other clients should report one of the four most
+generic terminal types." We are a console client running inside Kitty, WezTerm or Ghostty, and telling
+a server `XTERM` when the terminal says `xterm-kitty` throws away the only piece of information the
+field carries. Fall back to `XTERM-256COLOR` when `$TERM` is unset or illegal under RFC 1010.
+
+**Round 3+: claim what is true.** Today's `3853` is wrong in both directions. It does not claim
+**MOUSE TRACKING (16)**, which this client implements (`ScrollPaneUnderPointer`, pane drag-and-drop,
+clickable rail rows and links). It does claim **MSLP (1024)**, which we do not implement at all — and
+no other client claims it except TinTin++, and only as a side effect of its mouse-tracking bit (§2.8).
+Whether UTF-8 (4) is claimed should follow the CHARSET outcome rather than being a constant, because a
+world pinned to Latin-1 is a world where we are not sending UTF-8. Whether SSL (2048) is claimed should
+follow whether the transport supports TLS, which it does.
 
 The obstacle is that `TelnetInterpreter.TerminalTypes` is public-get / private-set. Two routes, and the
 same pair as everywhere else in this stack: reflection at connect time — the seam `TelnetSession`
@@ -496,9 +919,33 @@ consumers are crawlers and listing sites, not interactive clients.
 
 That is why the question "is this worth surfacing?" was open. **It is now settled: yes.** The
 maintainer's requirement is an **INFO** affordance on a world in the F5 Worlds & Characters screen,
-opening a read-only MSSP report for that world. §8.3 designs it.
+opening a read-only MSSP report for that world. §8.4 designs it.
 
-### 8.2 Parsing — and the boundary with the crawler
+It is worth knowing that this puts us ahead of every client surveyed. Mudlet parses MSSP and exposes it
+to Lua but shows none of it in its connection dialog; TinTin++ only asks for it in debug mode; Blightmud
+shows a tag; MUSHclient and BeipMU do not implement it at all; and no client anywhere has an MSSP-driven
+server browser (§2.7). Being first is a reason for caution, not confidence — nobody has found the
+ergonomics for us, and §8.4's three states are reasoned guesses that want a user in front of them.
+
+### 8.2 The other use of MSSP, which is better than the screen
+
+Mudlet found the one genuinely load-bearing use of MSSP and it is not a report: `TLS`/`SSL` and
+`HOSTNAME` tell you that the server you have just connected to *in plaintext* also offers an encrypted
+port. Mudlet's `promptTlsConnectionAvailable()` offers "A more secure connection on port %1 is
+available… Update to port %1 and connect with encryption?" (§2.7).
+
+We should do this, and it is smaller than the screen. The pieces already exist: `WorldDefinition`
+carries `UseTls` and a port, F5 edits both, and `Notice` is the surface for something that is news
+rather than state. On connect, if MSSP reports an SSL port and the world is not using TLS, raise a
+notice naming the port and what would change it. It does **not** reconnect on its own — a client that
+silently redirects your connection somewhere else is a client you cannot trust — and it does not nag: once
+per world, recorded in the client message log.
+
+**Deferred:** whether the notice should offer a one-key action (reconnect on the secure port, and offer
+to save it) or only report. Offering is better if the action is unambiguous; it is one more thing that
+can fire at a bad moment. Settled by trying it.
+
+### 8.3 Parsing — and the boundary with the crawler
 
 A separate effort is building an **MSSP crawler**: a standalone tool that connects to servers, reads
 MSSP and follows `REFERRAL` to find more. It needs exactly the model this screen needs. Two
@@ -522,10 +969,22 @@ public static class MsspVariables
 }
 ```
 
-A dictionary of **name → list of values**, not a typed record with a property per field. Three reasons:
-MSSP allows a variable to repeat (`REFERRAL` does, by design, and that is precisely what the crawler
-follows); a typed record cannot hold a variable nobody has heard of; and §1.1 is a demonstration of what
-a typed record does to the fields it does not know about.
+A dictionary of **name → list of values**, not a typed record with a property per field. Three reasons,
+and the spec supports all of them (§2.7): a variable may legitimately repeat — "the same variable can be
+sent more than once with different values, in which case **the last reported value should be used as the
+default value**… multiple values should be ordered from least to most relevant", which `PORT` and
+`REFERRAL` both exercise; a typed record cannot hold a variable nobody has heard of; and §1.1 is a
+demonstration of what a typed record does to the fields it does not know about.
+
+Two more rules the model must carry, both from the spec:
+
+- **Names may contain spaces** — `CRAWL DELAY`, `XTERM 256 COLORS`, `PAY TO PLAY`. The spec suggests
+  clients "substitute spaces with underscores as the recommended solution", but that is a display and
+  lookup convenience; the wire form is the space, and lookups must normalise rather than the parse
+  rewriting what arrived.
+- **`-1` means "not available"** for numeric world variables. The screen renders that as *unknown*,
+  never as `-1 rooms`. This is the same rule as §4's "no fact, no cell", arriving from the protocol
+  rather than from us.
 
 **We do not use `MSSPConfig`.** The library's model drops every list, every boolean and every unknown
 variable, and never populates its own `Extended` bag (§1.1). Since `MSSPProtocol` hands us a parsed
@@ -540,7 +999,23 @@ variable, and never populates its own `Extended` bag (§1.1). Since `MSSPProtoco
 above is what Core exposes and what both the screen and the crawler consume. `MsspConfigReader` — which
 also flattens dictionaries and lists into comma-joined strings — is deleted with it.
 
-### 8.3 The INFO screen
+**Three things the crawler needs that the screen does not**, recorded here because they belong with the
+shared model rather than being rediscovered:
+
+- **PennMUSH will not talk to a raw socket.** It probes with `IAC DO LINEMODE` and only sends its
+  telnet-option block — including `IAC WILL MSSP` — once the client has proved it understands telnet,
+  with a 60-second timeout (§2.7). A crawler that opens a socket and waits gets nothing from the entire
+  Penn family, which is the family this client's sibling server belongs to.
+- **The plaintext fallback is case-sensitive in Penn.** Penn compares `!strcmp(command, "MSSP-REQUEST")`
+  — uppercase — while Grapevine and MudVerse both send lowercase `mssp-request` (§2.7). Send uppercase.
+- **`CRAWL DELAY` exists and nobody honours it.** No live crawler was found that respects it (§2.7).
+  Honouring it would cost nothing and would make ours the polite one.
+
+And the property that makes the crawler cheap: MSSP arrives **before login**, and Grapevine's crawler
+disconnects the instant it has the data without ever authenticating (§2.7). There is no credential
+handling anywhere in this.
+
+### 8.4 The INFO screen
 
 **What it is.** A read-only report of the last MSSP a world sent us, reached from the world's row on F5.
 
@@ -648,7 +1123,10 @@ All of it lands on the telnet read loop, and all of it must be survivable there.
 | **Unsolicited package** — a server sends `Comm.Channel` we never subscribed to | Stored. It costs one path and one dictionary entry, and refusing it would mean a Lua script cannot see data the client received. |
 | **Malformed JSON** | The message is dropped, the store is untouched, and one line goes to the client message log (`ClientDiagnostics`, ⌃P ▸ *Show client messages*) — **not** to the output pane, which is the server's stream and the character's transcript. Rate-limited: a server emitting broken JSON per line must not fill the log. |
 | **Truncated payload** — the 8192-byte cap in §1.1 | The commonest cause of the row above, and it must not be reported as the row above. When the whole message measures exactly 8192 bytes, say *truncated at the telnet layer's 8 KiB limit* and name the package. Verified: `Char.Big` + 300 KiB arrives as 8183 payload bytes with no error. |
-| **Non-JSON payload** — `Package somevalue`, which some servers send | Stored as a string at the package path. Not an error. This is a real divergence between servers and the library hands us the raw payload either way (verified: `Char.Vitals 42` arrives as the two-byte string `42`). |
+| **A bare JSON primitive** — `Package 42`, `Package true`, `Package "hello"`, `Package null` | **Legal, and explicitly enumerated by the spec** (§2.1). `System.Text.Json` accepts top-level primitives, so no workaround is needed — but the standard fix if a parser did not is Gammon's: wrap the payload in `[` `]` before parsing, which is what both MUSHclient plugins do. Stored as a scalar at the package path. |
+| **A payload that is not JSON at all** — Aardwolf's `request char`, `group on` | Stored as a string at the package path. Not an error. Those are *client→server* in Aardwolf's case (§2.1), but a server sending the same shape must not break us; verified that `Char.Vitals 42` arrives as the two-byte string `42`. |
+| **A raw ESC byte in the payload** | Not valid JSON, and servers do it — `Comm.Channel.Text` carries ANSI, normally as `` escapes but not always. Mudlet rewrites a literal ESC to `\\u001B` before parsing, with a comment saying it is there "to handle improperly passed ANSI codes" (§2.1). Copy that: it turns a parse failure into data. |
+| **`IAC WONT GMCP` mid-session** | Tear down: the subscription is gone and the store's GMCP paths are stale. This is the documented copyover sequence (§2.1), and §4.2's false→true edge detector re-sends `Core.Hello` when it comes back. |
 | **Empty payload** — `Package` with nothing after it | **Unreachable.** The library raises no callback for it (§1.1). Nothing is designed for a case we cannot observe; if a future library version starts delivering it, treat it as a signal — raise `Changed` with an empty path set, store nothing. |
 | **Huge payload** | Already capped below anything we would choose, at 8192 bytes, by the library (§1.1). A cap of our own would never fire, and an unreachable guard claiming to be a safety net is worse than none — the same reasoning `TelnetSessionOptions.ResolveKeepalive` gives for having no minimum clamp. If the 8 KiB cap is ever lifted upstream, a cap here becomes necessary in the same change. |
 | **Path explosion** — a server using a unique path per object | A per-session path cap (proposed: 4096) above which new paths are refused and one warning is logged. Existing paths keep updating. Without a cap the store is an unbounded leak driven by the wire. |
@@ -710,17 +1188,20 @@ answer when nothing is connected, which is exactly when someone is asking. `/gmc
 
 **Stage 2 — identity and the first real consumer.**
 
-- TTYPE/MTTS: state `SharpMUTerm`, a real terminal type, an honest bitvector (§7).
-- Per-world `Core.Supports.Set` editing on F5.
+- TTYPE/MTTS: state `SHARPMUTERM`, the real `$TERM`, an honest bitvector (§7).
+- Per-world `Core.Supports.Set` and merge-allowlist editing on F5.
 - The [vitals pane](2026-07-30-vitals-pane-design.md), which is the first thing that renders any of this.
 - Volunteer `IAC DO GMCP`.
 
 **Stage 3 — MSSP.**
 
-- `MsspReport` + `MsspVariables` in Core; upstream fix or own parse (§8.2).
+- `MsspReport` + `MsspVariables` in Core; upstream fix or own parse (§8.3).
+- **The TLS-upgrade notice (§8.2)** — first, because it is the smallest piece and the only one with a
+  security payoff.
 - The `mssp.json` cache.
-- The INFO button and the read-only report screen (§8.3).
-- Coordinate with the crawler: it consumes `MsspReport` and does not parse MSSP itself.
+- The INFO button and the read-only report screen (§8.4).
+- Coordinate with the crawler: it consumes `MsspReport` and does not parse MSSP itself; the three Penn
+  gotchas in §8.3 belong to it.
 
 **Stage 4 — MSDP.**
 
@@ -753,3 +1234,7 @@ promise. `docs/PLAN.md:46`'s `GmcpRouter` should be renamed to `SessionData` in 
 | Upstream PR vs. reflection for `TerminalTypes` | Not either/or: reflection unblocks stage 2, the PR removes it. The question is only whether stage 2 waits, and it should not. |
 | Whether the 8 KiB GMCP truncation (§1.1) is a bug or a deliberate limit | Ask upstream. It is silent either way, which is the part that is certainly wrong: a message that loses its tail should say so. This is the highest-value upstream report of the three named in this document, because it makes a *correct* server look like a broken one, and no amount of care on our side can recover the dropped bytes. |
 | Whether MSSP should also be shown at connect, in the output pane | Nobody has asked for it, and it is the server's stream. Deliberately not designed here. |
+| Whether the TLS-upgrade notice offers an action or only reports (§8.2) | Trying it. Offering is better if the action is unambiguous; it is one more thing that can fire at a bad moment. |
+| Whether to copy Mudlet's KaVir-snippet auto-detection for the TTYPE version number (§7) | A server that does this, to test against. Until then, send the bare uppercase name and treat a 16-colour downgrade as a reportable bug rather than something to pre-empt. |
+| Whether an MSSP report should be keyed by `host:port` or by resolved IP | Two worlds pointed at one host share a report either way; a host that moves does not. `host:port` is proposed because it is what the user typed and what the config holds. Revisit if anyone runs several games behind one hostname on one port, which is not a thing. |
+| Whether we honour `CRAWL DELAY` in the sibling crawler | Not our call, but recorded: no live crawler honours it, and honouring it costs nothing and would make ours the polite one (§8.3). |
