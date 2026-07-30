@@ -9,14 +9,15 @@ using SharpMUTerm.Tui;
 namespace SharpMUTerm.Tui.Tests;
 
 /// <summary>
-/// Ctrl+Shift+arrow, driven through the real app: a real window, a real frame, and the pane rectangles
+/// Alt+Shift+arrow, driven through the real app: a real window, a real frame, and the pane rectangles
 /// the framework itself arranged.
 /// <para>
-/// The claim being checked is a claim about <em>cells</em> — "this pane is now two columns wider" — and
+/// The claim being checked is a claim about <em>cells</em> — "this pane is now one column wider" — and
 /// it has three places to go wrong that a Core unit test cannot see. The chord may never reach the
-/// handler (the scrollback keys and the command line are both downstream of it, and Shift+↑/↓ is
-/// scrollback's). The framework's grid may round its star weights somewhere other than
-/// <see cref="LayoutSolver"/> does, so a border asked for two cells moves one or three. And the resize
+/// handler (the scrollback keys and the command line are both downstream of it; Shift+↑/↓ is
+/// scrollback's and Alt+←/→ is the command line's word movement, and neither looks at the other
+/// modifier). The framework's grid may round its star weights somewhere other than
+/// <see cref="LayoutSolver"/> does, so a border asked for one cell moves none or two. And the resize
 /// re-reports NAWS to every server in the affected panes, so a held key is a flood aimed at someone
 /// else's game unless it goes through the rate limit rather than around it. So these assert on arranged
 /// bounds and on painted cells, and on the bytes a recording telnet transport received.
@@ -51,11 +52,22 @@ public class PaneResizeEndToEndTests
     }
 
     private static ConsoleKeyInfo Resize(ConsoleKey arrow) =>
-        new('\0', arrow, shift: true, alt: false, control: true);
+        new('\0', arrow, shift: true, alt: true, control: false);
 
     private static ConsoleKeyInfo Ctrl(ConsoleKey key) => new('\0', key, false, false, true);
 
     private static ConsoleKeyInfo Plain(char c, ConsoleKey key) => new(c, key, false, false, false);
+
+    /// <summary>Empties the armed command line and types <paramref name="text"/> into it, key by key.</summary>
+    private static void Type(SharpMUTermApp app, string text)
+    {
+        app.SimulateKey(Ctrl(ConsoleKey.E));
+        app.SimulateKey(Ctrl(ConsoleKey.U));
+        foreach (var c in text)
+        {
+            app.SimulateKey(Plain(c, ConsoleKey.NoName));
+        }
+    }
 
     /// <summary>The demo workspace's spawn window — the second tab, and after a split the second pane.</summary>
     private static string ChatWindowId => Workspace.SpawnWindowId("Chat");
@@ -72,7 +84,8 @@ public class PaneResizeEndToEndTests
     /// <summary>
     /// <b>The chord is claimed before anything downstream can eat it.</b> Two things sit below it in
     /// <c>HandleWindowKey</c> and both would fail silently: the scrollback keys, which own Shift+↑/↓ and
-    /// would make ⌃⇧↑ scroll the transcript, and the command line, which types whatever is left over.
+    /// would make ⌥⇧↑ scroll the transcript, and the command line, which owns Alt+←/→ for word movement
+    /// and looks at neither the Shift bit nor, before this, any modifier at all on the bare arrows.
     /// Rendered on the <c>scrollback</c> view — the only geometry with more output than a pane holds, so
     /// a scroll is observable at all — and against Shift+↑ itself, so the claim is that the chord is
     /// <em>distinct</em> from its neighbour rather than merely inert.
@@ -106,19 +119,134 @@ public class PaneResizeEndToEndTests
 
             await Assert.That(app.ArmedInputText)
                 .IsEqualTo(string.Empty)
-                .Because($"Ctrl+Shift+{arrow} must not be typed into the command line");
+                .Because($"Alt+Shift+{arrow} must not be typed into the command line");
             await Assert.That(app.ScrollTargetView!.Value.Offset)
                 .IsEqualTo(resting)
-                .Because($"Ctrl+Shift+{arrow} must not reach the scrollback keys");
+                .Because($"Alt+Shift+{arrow} must not reach the scrollback keys");
         }
+    }
+
+    /// <summary>
+    /// <b>A command line with something typed in it must not eat the chord — and the caret must not
+    /// move.</b> This is the maintainer's own situation and the assertion whose absence let the defect
+    /// ship. <c>InputBarControl.ProcessKey</c> reached an <em>unguarded</em> arrow switch below its
+    /// <c>alt</c> and <c>ctrl</c> blocks, so <c>Alt+Shift+←</c> was a plain caret move, claimed with
+    /// <c>return true</c> — and <c>Move(Buffer.MoveLeft())</c> is true exactly when there is a character
+    /// to the left of the caret. So the bug had a signature: the chord worked on an empty line and died
+    /// on the first thing you typed. Both halves are pressed here, and the <em>same</em> resize is
+    /// required of each, so a control that starts claiming modified arrows again fails on the pair rather
+    /// than on a mood.
+    /// <para>
+    /// The caret is read off <see cref="SharpMUTermApp.CaretOnScreen"/> — the cell the driver was handed —
+    /// rather than off the buffer's index, because "the caret did not move" is a claim about the screen.
+    /// </para>
+    /// </summary>
+    [Test]
+    [Arguments("")]
+    [Arguments("look behind the altar")]
+    public async Task TheChordResizesWhateverIsTypedAndNeverMovesTheCaret(string typed)
+    {
+        var app = App();
+        app.RenderSnapshot("split");
+        Type(app, typed);
+        app.RenderNextFrame();
+        await Assert.That(app.ArmedInputText).IsEqualTo(typed);
+
+        var caret = app.CaretOnScreen();
+        var before = app.PaneOutputRects()[app.FocusedPaneId];
+
+        Press(app, ConsoleKey.LeftArrow);
+
+        await Assert.That(app.PaneOutputRects()[app.FocusedPaneId].Width)
+            .IsEqualTo(before.Width - PaneResize.StepCells)
+            .Because($"⌥⇧← must narrow the pane with \"{typed}\" on the command line");
+        await Assert.That(app.ArmedInputText)
+            .IsEqualTo(typed)
+            .Because("the chord is not text");
+        await Assert.That(app.CaretOnScreen())
+            .IsEqualTo(caret)
+            .Because("the command line's caret must not have moved a cell");
+
+        // And the way back, which is the arrow the caret would have moved *towards* if the bar had it.
+        Press(app, ConsoleKey.RightArrow);
+        await Assert.That(app.PaneOutputRects()[app.FocusedPaneId].Width).IsEqualTo(before.Width);
+        await Assert.That(app.CaretOnScreen()).IsEqualTo(caret);
+    }
+
+    /// <summary>
+    /// <b>One press is one cell.</b> Asserted as the literal number rather than through
+    /// <see cref="PaneResize.StepCells"/>, and read off <em>painted</em> cells: every other arithmetic
+    /// assertion in this file is written in terms of the constant, so all of them would follow the
+    /// constant anywhere it went and none of them says what it should be. It was two.
+    /// </summary>
+    [Test]
+    public async Task OnePressMovesThePaintedBorderByExactlyOneCell()
+    {
+        var app = App();
+        app.RenderSnapshot("split");
+
+        var (focused, _) = app.PaneBandColors;
+        var rects = app.PaneOutputRects();
+        var left = app.FocusedPaneId;
+        var right = app.PaneIds.Single(id => id != left);
+        var row = Math.Min(
+            rects[left].Y + rects[left].Height, rects[right].Y + rects[right].Height) - 1;
+
+        var before = ColumnsPainted(Grid(app.RenderWholeFrame()), row, Sgr(focused));
+        Press(app, ConsoleKey.RightArrow);
+        var after = ColumnsPainted(Grid(app.RenderWholeFrame()), row, Sgr(focused));
+
+        await Assert.That(after - before).IsEqualTo(1).Because("one press moves the border one cell");
+    }
+
+    /// <summary>
+    /// <b>The reported inversion, on painted cells, from both ends of a stacked split.</b> ⌥⇧↑ makes the
+    /// focused pane taller whichever of the two it is — the arrow names what happens to <em>this</em>
+    /// pane, and never which way the divider travels. Pressed from the bottom pane it used to do the
+    /// opposite; a test that only exercised the top one could not tell the two rules apart, because on
+    /// the top pane they agree.
+    /// </summary>
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task UpMakesTheFocusedPaneTallerFromEitherEndOfAStackedSplit(bool fromTheBottom)
+    {
+        var app = App();
+        app.RenderSnapshot();
+        app.SimulatePrefixedKey(Plain('-', ConsoleKey.Subtract)); // ⌃B - : stacked, top focused
+        app.RenderNextFrame();
+
+        if (fromTheBottom)
+        {
+            app.SimulateKey(new ConsoleKeyInfo('\0', ConsoleKey.DownArrow, false, false, control: true));
+            app.RenderNextFrame();
+        }
+
+        var (focused, _) = app.PaneBandColors;
+        var panes = app.PaneSnapshot().Rects;
+        var mine = app.FocusedPaneId;
+        var other = app.PaneIds.Single(id => id != mine);
+        var column = Math.Min(
+            panes[mine].X + panes[mine].Width, panes[other].X + panes[other].Width) - 1;
+
+        var before = RowsPainted(Grid(app.RenderWholeFrame()), column, Sgr(focused));
+        await Assert.That(before).IsEqualTo(panes[mine].Height);
+
+        Press(app, ConsoleKey.UpArrow);
+
+        await Assert.That(RowsPainted(Grid(app.RenderWholeFrame()), column, Sgr(focused)))
+            .IsEqualTo(before + PaneResize.StepCells)
+            .Because($"⌥⇧↑ on the {(fromTheBottom ? "bottom" : "top")} pane must make that pane taller");
+        await Assert.That(app.PaneSnapshot().Rects[other].Height)
+            .IsEqualTo(panes[other].Height - PaneResize.StepCells);
     }
 
     // --- the frames -----------------------------------------------------------------------------
 
     /// <summary>
     /// <b>The column boundary really moves, by the cells claimed.</b> Two frames of the same split, either
-    /// side of one ⌃⇧→, decoded to cell grids: the left pane's band is two columns wider and the right
-    /// pane's is two narrower, in <em>painted</em> cells — and the arranged output rectangles agree,
+    /// side of one ⌥⇧→, decoded to cell grids: the left pane's band is one column wider and the right
+    /// pane's is one narrower, in <em>painted</em> cells — and the arranged output rectangles agree,
     /// which is what the servers are told.
     /// </summary>
     [Test]
@@ -152,7 +280,7 @@ public class PaneResizeEndToEndTests
 
         await Assert.That(afterLeft)
             .IsEqualTo(beforeLeft + PaneResize.StepCells)
-            .Because("the focused pane's painted band is two columns wider");
+            .Because("the focused pane's painted band is one column wider");
         await Assert.That(afterRight).IsEqualTo(beforeRight - PaneResize.StepCells);
 
         var after = app.PaneOutputRects();
@@ -162,8 +290,8 @@ public class PaneResizeEndToEndTests
     }
 
     /// <summary>
-    /// The same read on a stacked split: ⌃⇧↓ moves the <em>row</em> boundary two rows down, counted in
-    /// painted cells down a column that runs through both panes.
+    /// The same read on a stacked split: ⌥⇧↑ makes the focused pane one row taller, counted in painted
+    /// cells down a column that runs through both panes.
     /// </summary>
     [Test]
     public async Task OnePressMovesThePaintedRowBoundaryOnAStackedSplit()
@@ -189,12 +317,12 @@ public class PaneResizeEndToEndTests
         var beforeTop = RowsPainted(Grid(app.RenderWholeFrame()), column, Sgr(focused));
         await Assert.That(beforeTop).IsEqualTo(panes[top].Height);
 
-        Press(app, ConsoleKey.DownArrow);
+        Press(app, ConsoleKey.UpArrow);
 
         var afterFrame = Grid(app.RenderWholeFrame());
         await Assert.That(RowsPainted(afterFrame, column, Sgr(focused)))
             .IsEqualTo(beforeTop + PaneResize.StepCells)
-            .Because("the focused pane's painted band is two rows taller");
+            .Because("the focused pane's painted band is one row taller");
         await Assert.That(RowsPainted(afterFrame, column, Sgr(unfocused)))
             .IsEqualTo(panes[bottom].Height - PaneResize.StepCells);
 
@@ -272,8 +400,8 @@ public class PaneResizeEndToEndTests
     }
 
     /// <summary>
-    /// <b>The walk up the tree, on the real thing.</b> ⌃⇧↑ from a pane whose own parent is a <em>row</em>
-    /// climbs to the column split above it and shortens the whole top row — both panes in it, together.
+    /// <b>The walk up the tree, on the real thing.</b> ⌥⇧↑ from a pane whose own parent is a <em>row</em>
+    /// climbs to the column split above it and makes the whole top row taller — both panes in it, together.
     /// A resize that only knew about the focused pane's own parent would report "nothing that way" here,
     /// which is the case tmux's rule exists for.
     /// </summary>
@@ -291,18 +419,18 @@ public class PaneResizeEndToEndTests
         Press(app, ConsoleKey.UpArrow);
         var after = app.PaneOutputRects();
 
-        await Assert.That(after[top].Height).IsEqualTo(before[top].Height - PaneResize.StepCells);
+        await Assert.That(after[top].Height).IsEqualTo(before[top].Height + PaneResize.StepCells);
         await Assert.That(after[beside].Height)
-            .IsEqualTo(before[beside].Height - PaneResize.StepCells)
+            .IsEqualTo(before[beside].Height + PaneResize.StepCells)
             .Because("the border belongs to the row, so its other pane moves with it");
-        await Assert.That(after[below].Height).IsEqualTo(before[below].Height + PaneResize.StepCells);
+        await Assert.That(after[below].Height).IsEqualTo(before[below].Height - PaneResize.StepCells);
         await Assert.That(after[top].Width).IsEqualTo(before[top].Width); // and nothing moved sideways
     }
 
     // --- refusing out loud ----------------------------------------------------------------------
 
     /// <summary>
-    /// <b>A direction with no border says so.</b> On a side-by-side split ⌃⇧↓ has nothing to move; the
+    /// <b>A direction with no border says so.</b> On a side-by-side split ⌥⇧↓ has nothing to move; the
     /// status row carries the reason and the message log keeps it, so a notice that dismissed itself is
     /// still recoverable through ⌃P. Silence here is the client's single most-repeated defect.
     /// </summary>
@@ -319,7 +447,7 @@ public class PaneResizeEndToEndTests
         app.RenderNextFrame();
 
         await Assert.That(app.Messages.Entries.Count).IsGreaterThan(said);
-        await Assert.That(app.Messages.Entries[^1].Text).Contains("⌃⇧↓");
+        await Assert.That(app.Messages.Entries[^1].Text).Contains("⌥⇧↓");
         await Assert.That(app.StatusMarkup).Contains("rows");
 
         foreach (var (paneId, rect) in before)
@@ -345,7 +473,7 @@ public class PaneResizeEndToEndTests
             app.SimulateKey(Resize(arrow));
             await Assert.That(app.Messages.Entries.Count)
                 .IsGreaterThan(said)
-                .Because($"Ctrl+Shift+{arrow} on one pane must report, not sit there");
+                .Because($"Alt+Shift+{arrow} on one pane must report, not sit there");
         }
     }
 
@@ -377,7 +505,7 @@ public class PaneResizeEndToEndTests
     /// <summary>
     /// <b>A burst of resizes costs a bounded number of NAWS reports, ending on the final size.</b> This is
     /// the one that is not a local glitch if it is wrong: per-pane NAWS is derived from the pane
-    /// rectangle, so a held Ctrl+Shift+→ without the rate limit writes a new terminal size to a real MU*
+    /// rectangle, so a held Alt+Shift+→ without the rate limit writes a new terminal size to a real MU*
     /// server on every key repeat and makes it reflow its output each time. Forty presses inside a second
     /// span four of the limit's windows; the assertion is that the server hears a handful of sizes and
     /// that the last one is what is on screen.
@@ -506,10 +634,10 @@ public class PaneResizeEndToEndTests
     /// unused until it was reported missing.
     /// </summary>
     [Test]
-    [Arguments("layout:wider", ConsoleKey.RightArrow, "⌃⇧→")]
-    [Arguments("layout:narrower", ConsoleKey.LeftArrow, "⌃⇧←")]
-    [Arguments("layout:taller", ConsoleKey.DownArrow, "⌃⇧↓")]
-    [Arguments("layout:shorter", ConsoleKey.UpArrow, "⌃⇧↑")]
+    [Arguments("layout:wider", ConsoleKey.RightArrow, "⌥⇧→")]
+    [Arguments("layout:narrower", ConsoleKey.LeftArrow, "⌥⇧←")]
+    [Arguments("layout:taller", ConsoleKey.UpArrow, "⌥⇧↑")]
+    [Arguments("layout:shorter", ConsoleKey.DownArrow, "⌥⇧↓")]
     public async Task EveryResizeEntryNamesTheChordThatDoesTheSameThing(string id, ConsoleKey arrow, string chord)
     {
         var viaKey = App();
@@ -538,11 +666,11 @@ public class PaneResizeEndToEndTests
     [Test]
     public async Task TheChordIsAdvertisedWhereKeysAreAdvertised()
     {
-        await Assert.That(Program.UsageText).Contains("Ctrl+Shift+Left/Right/Up/Down");
+        await Assert.That(Program.UsageText).Contains("Alt+Shift+Up/Down/Left/Right");
 
         var roomy = App(160, 48);
         roomy.RenderSnapshot("split");
-        await Assert.That(roomy.StatusMarkup).Contains("⌃⇧←→↑↓ size");
+        await Assert.That(roomy.StatusMarkup).Contains("⌥⇧←→↑↓ size");
         await Assert.That(roomy.StatusMarkup).Contains("⌃←→↑↓ pane");
 
         // One pane: nothing to resize, so nothing is claimed.
@@ -556,13 +684,13 @@ public class PaneResizeEndToEndTests
         var narrow = App(76, 30);
         narrow.RenderSnapshot("split");
         await Assert.That(narrow.StatusMarkup).Contains("⌃←→↑↓ pane");
-        await Assert.That(narrow.StatusMarkup).DoesNotContain("⌃⇧←→↑↓ size");
+        await Assert.That(narrow.StatusMarkup).DoesNotContain("⌥⇧←→↑↓ size");
     }
 
     /// <summary>
     /// <b>A macro bound to the chord still wins it.</b> The resize sits after <c>DispatchMacro</c> in the
     /// key chain for the same reason pane navigation does — a chord the user has deliberately bound is
-    /// theirs — so the F4 screen's claim that a macro on <c>Ctrl+Shift+Right</c> fires stays true. This
+    /// theirs — so the F4 screen's claim that a macro on <c>Alt+Shift+Right</c> fires stays true. This
     /// pins both halves: the verdict, and the behaviour it describes.
     /// </summary>
     [Test]
@@ -570,7 +698,7 @@ public class PaneResizeEndToEndTests
     {
         foreach (var descriptor in new[]
         {
-            "Ctrl+Shift+Left", "Ctrl+Shift+Right", "Ctrl+Shift+Up", "Ctrl+Shift+Down",
+            "Alt+Shift+Left", "Alt+Shift+Right", "Alt+Shift+Up", "Alt+Shift+Down",
         })
         {
             await Assert.That(MacroKeys.Verdict(descriptor).Fires)
@@ -582,7 +710,7 @@ public class PaneResizeEndToEndTests
         var config = DemoScene.Build();
         config.TriggerSets[0].Macros.Add(new SharpMUTerm.Core.Automation.Macro
         {
-            Name = "east", Key = "Ctrl+Shift+Right", Command = "east", Enabled = true,
+            Name = "east", Key = "Alt+Shift+Right", Command = "east", Enabled = true,
         });
 
         var app = new SharpMUTermApp(config, Headless, new HeadlessConsoleDriver(120, 34));

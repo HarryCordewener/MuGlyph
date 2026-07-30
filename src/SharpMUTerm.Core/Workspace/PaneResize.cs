@@ -39,20 +39,31 @@ public readonly record struct PaneResizeResult(PaneResizeOutcome Outcome, int Ce
 /// same source <see cref="PaneNavigation"/> answers from — rather than from re-solving the fractions,
 /// because the framework's grid and <see cref="LayoutSolver"/> round independently and the border the
 /// user is moving is the one on screen. Both round cumulatively over the same weights, so a border
-/// asked to move two cells moves two cells.
+/// asked to move a cell moves a cell.
 /// </para>
 /// <para>
 /// <b>Which split an arrow acts on</b> — tmux's rule. The focused pane's own parent may not divide space
 /// along the arrow's axis (a pane in a stacked pair inside a side-by-side pair has a <em>column</em>
-/// parent, and ⌃⇧→ is about columns). So the ancestors are walked from the pane upward and the first
+/// parent, and ⌥⇧→ is about columns). So the ancestors are walked from the pane upward and the first
 /// split running in that axis is the one that moves. When no ancestor does, there is genuinely no border
 /// to move, and the caller is expected to <em>report</em> that rather than swallow it: a key that changes
 /// nothing and says nothing is indistinguishable from one that is not bound.
 /// </para>
 /// <para>
+/// <b>What an arrow means: the focused pane's own size, never the divider's position.</b> ↑ taller,
+/// ↓ shorter, → wider, ← narrower — up and right make it bigger, down and left smaller — and that
+/// sentence is true from either side of the split. It used to be true only of the horizontal pair: the
+/// vertical arrows read as "move the border that way", so with the <em>bottom</em> pane focused ↑ made
+/// it shorter, and the answer to "what does ⌥⇧↑ do" needed to know where in the tree you were standing.
+/// Which sibling pays is an implementation detail nobody should have to reason about.
+/// </para>
+/// <para>
 /// <b>Who pays.</b> The sibling on the side the border is on — the next child, or the previous one when
-/// the focused subtree is last. So the pane always grows when the arrow says wider and shrinks when it
-/// says narrower, whichever end of the split it sits at; only the side the border moves on differs.
+/// the focused subtree is last. So the pane always grows when the arrow says bigger and shrinks when it
+/// says smaller, whichever end of the split it sits at; only the side the border moves on differs. With
+/// three or more children the payer is the nearest one on the side the growth comes from, and the
+/// <em>same</em> border moves back on the opposite arrow — so → then ← is an exact undo rather than a
+/// gesture that walks the pane across its split.
 /// </para>
 /// <para>
 /// <b>Only the affected panes move.</b> One split's <c>Sizes</c> are rewritten and their sum is
@@ -64,13 +75,19 @@ public readonly record struct PaneResizeResult(PaneResizeOutcome Outcome, int Ce
 public static class PaneResize
 {
     /// <summary>
-    /// Cells one keypress moves the border. Two, not one: a resize is a gesture people repeat — dragging
-    /// a border a third of the way across a 200-column terminal is thirty presses at two cells and sixty
-    /// at one — and two cells is still fine enough to line a pane up with a column of game output. It is
-    /// not so coarse that a floor becomes unreachable either: the clamp applies a partial step, so the
-    /// last press before the minimum moves one cell rather than being refused.
+    /// Cells one keypress moves the border. <b>One</b>, so that "one press, one cell" is a sentence with
+    /// no exceptions in it and a border can be put exactly where it is wanted. It was two, on the argument
+    /// that a resize is a gesture people repeat and two halves the presses across a 200-column terminal;
+    /// what a user actually watches is the border, and one that skips a column cannot be lined up with one.
+    /// <para>
+    /// <b>The same step on both axes, deliberately.</b> The case for two was made about columns, and a
+    /// terminal has an order of magnitude fewer rows than columns — so a step chosen for width is a
+    /// proportionally much coarser jump in height, which is an argument for a <em>smaller</em> row step,
+    /// not a larger one. At one cell there is nothing left to split, and one constant keeps every surface
+    /// that describes this ("by one character cell") saying one thing.
+    /// </para>
     /// </summary>
-    public const int StepCells = 2;
+    public const int StepCells = 1;
 
     /// <summary>
     /// The narrowest a pane may be squeezed to, in columns. A pane is a tab strip over a text area: below
@@ -92,12 +109,12 @@ public static class PaneResize
 
     /// <summary>
     /// Moves the border of the nearest ancestor split running in the arrow's axis, so the focused pane
-    /// grows (<see cref="PaneDirection.Right"/>, <see cref="PaneDirection.Down"/>) or shrinks
-    /// (<see cref="PaneDirection.Left"/>, <see cref="PaneDirection.Up"/>) by up to
+    /// grows (<see cref="PaneDirection.Right"/>, <see cref="PaneDirection.Up"/>) or shrinks
+    /// (<see cref="PaneDirection.Left"/>, <see cref="PaneDirection.Down"/>) by up to
     /// <paramref name="step"/> cells.
     /// </summary>
     /// <param name="layout">The layout to mutate.</param>
-    /// <param name="direction">Which way the size goes — right/down bigger, left/up smaller.</param>
+    /// <param name="direction">Which way the size goes — right/up bigger, left/down smaller.</param>
     /// <param name="rects">
     /// Every pane's rectangle in cells, as arranged. The caller supplies them for the same reason
     /// <see cref="PaneNavigation.Neighbour"/> takes them: the question is about what is on screen.
@@ -120,7 +137,11 @@ public static class PaneResize
 
         var horizontal = direction is PaneDirection.Left or PaneDirection.Right;
         var axis = horizontal ? SplitDirection.Row : SplitDirection.Column;
-        var delta = direction is PaneDirection.Right or PaneDirection.Down ? step : -step;
+
+        // The sign is read off the focused pane's size, not off which way the divider would travel: ↑/→
+        // grow it and ↓/← shrink it, and MoveBorder always adds `delta` to the focused subtree's own
+        // extent. That is what makes the meaning independent of where in the split the pane sits.
+        var delta = direction is PaneDirection.Right or PaneDirection.Up ? step : -step;
 
         // Nearest first: the path runs root → pane, so walking it backwards is walking up from the pane.
         var path = Ancestry(layout.Root, layout.FocusedPaneId);
@@ -178,7 +199,7 @@ public static class PaneResize
     public static string Describe(PaneResizeOutcome outcome, PaneDirection direction)
     {
         var horizontal = direction is PaneDirection.Left or PaneDirection.Right;
-        var bigger = direction is PaneDirection.Right or PaneDirection.Down;
+        var bigger = direction is PaneDirection.Right or PaneDirection.Up;
 
         return outcome switch
         {

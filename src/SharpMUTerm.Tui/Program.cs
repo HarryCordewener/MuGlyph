@@ -252,11 +252,14 @@ internal static class Program
         usage.WriteLine("        command line); Ctrl+O cycles them; Tab switches command lines. The pane you are on and");
         usage.WriteLine("        the line Enter sends from are both drawn lit, and the focused pane's tab is marked.");
 
-        // Ctrl+Shift+arrow is a chord this host does deliver — the parser reads both modifier bits out of
-        // CSI 1;6 <final> — which is why it may be named here at all; see TerminalKeyArrivalTests.
-        usage.WriteLine("Size:   Ctrl+Shift+Left/Right/Up/Down resize the focused pane by two character cells "
-            + "(it says so when");
-        usage.WriteLine("        there is no split that way, or the pane beside it is at its smallest).");
+        // Alt+Shift+arrow is a chord this host does deliver — the parser reads both modifier bits out of
+        // CSI 1;4 <final> — which is why it may be named here at all; see TerminalKeyArrivalTests. It is
+        // deliberately not Ctrl+Shift+arrow, which this page used to name: kitty_mod is ctrl+shift, and
+        // kitty consumes ctrl+shift+left/right for its own tabs, so half of that chord never arrived.
+        usage.WriteLine("Size:   Alt+Shift+Up/Down/Left/Right make the focused pane taller, shorter, narrower or");
+        usage.WriteLine("        wider by one character cell — the arrow says what happens to the pane, wherever it");
+        usage.WriteLine("        sits (it says so when there is no split that way, or the pane paying is at its");
+        usage.WriteLine("        smallest).");
 
         // Alt+Enter and Ctrl+L only. Shift+Enter and Ctrl+Enter are deliberately not listed: no Unix
         // terminal reports them distinctly through SharpConsoleUI's input parser (both arrive as a bare
