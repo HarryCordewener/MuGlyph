@@ -4025,10 +4025,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         {
             for (var i = 0; i < panes.Count; i++)
             {
-                // Through PaneLabel so the sidebar, the move/drag overlays, the ⌃P entries and the ⌥N
-                // chord are all reading one spelling of one number. They were two expressions and they
-                // disagreed about the first pane.
-                paneLabels[panes[i].Id] = PaneLabel(panes[i].Id);
+                // Through PaneOrdinal so the sidebar, the move/drag overlays, the ⌃P entries and the ⌥N
+                // chord are all reading one number. They were two expressions and they disagreed about
+                // the first pane.
+                paneLabels[panes[i].Id] = RailPaneLabel(i + 1);
             }
         }
 
@@ -4126,6 +4126,29 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <paramref name="paneLabels"/> is empty then and "which of the one pane" is not information.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// What the sidebar's hosting column calls pane <paramref name="ordinal"/>: the chord that goes there,
+    /// <c>⌥3</c>, rather than the words <c>pane 3</c>.
+    /// <para>
+    /// The sidebar's width comes out of the pane area and is reported to every connected session over
+    /// NAWS, so four cells on every row is four cells off every pane. This is the one surface where the
+    /// noun is redundant — the column's position already says "where this is" — and dropping it pays for
+    /// itself twice: it is shorter, and <c>⌥3</c> names the key that goes there, which <c>pane 3</c> left
+    /// the reader to infer.
+    /// </para>
+    /// <para>
+    /// It is not a second spelling of the number. <see cref="PaneLabel"/> still says <c>pane N</c>
+    /// everywhere the noun carries meaning — <c>split pane 2 left</c>, <c>Go to pane 3</c>, <c>there is no
+    /// pane 7</c> — and both read the same ordinal. What changed is the abbreviation, not the count.
+    /// </para>
+    /// <para>
+    /// The sigil is also what keeps the column legible beside the unread badge. A bare <c>3</c> after a
+    /// count of <c>2</c> is <c>2  3</c>, two numbers with nothing to tell them apart; the word used to do
+    /// that work, and something has to.
+    /// </para>
+    /// </summary>
+    private static string RailPaneLabel(int ordinal) => $"⌥{ordinal}";
+
     private string? CharacterPaneLabel(string sessionKey, IReadOnlyDictionary<string, string> paneLabels)
     {
         if (paneLabels.Count == 0)

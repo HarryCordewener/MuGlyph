@@ -142,7 +142,7 @@ internal static class RailRenderer
         var marker = row.Active ? "[bold]▸[/]" : " ";
         var dot = row.Connected ? "●" : "○";
         var name = row.Active ? $"[bold]{Escape(row.Label)}[/]" : Escape(row.Label);
-        var tail = row.Pane is { Length: > 0 } pane ? $"  [dim]{Escape(pane)}[/]" : string.Empty;
+        var tail = row.Pane is { Length: > 0 } pane ? $" [dim]{Escape(pane)}[/]" : string.Empty;
         return $"{Indent(row)}{Link(row, $"{marker} [{Accent(row)}]{dot}[/] {name}{UnreadField(row.Unread)}{tail}")}";
     }
 
@@ -203,11 +203,12 @@ internal static class RailRenderer
         var name = Escape(row.Label);
         var where = row.Closed ? "closed" : row.Pane is { Length: > 0 } pane ? pane : null;
 
-        // Two spaces, not three. The reserved badge fields sit between the label and this column and are
-        // blank far more often than not, so they already hold the gap open; a third on top of them would
-        // be paid for in sidebar columns, which come out of the panes. Not one, though: a populated
-        // unread badge ends right here, and `2 pane 2` reads as one thing rather than two.
-        var tail = where is null ? string.Empty : $"  [dim]{Escape(where)}[/]";
+        // One space. The reserved badge fields sit between the label and this column and are blank far more
+        // often than not, so they already hold the gap open; anything on top of them is paid for in sidebar
+        // columns, which come out of the panes. Two used to be needed because the column said `pane 2` and a
+        // populated unread badge ending right here made `2 pane 2` read as one thing; the sigil in `⌥2`
+        // now does that work in a cell that carries meaning of its own.
+        var tail = where is null ? string.Empty : $" [dim]{Escape(where)}[/]";
         return $"{Indent(row)}{Link(row, $"[dim]▪[/] {name}{Unsent(row.Unsent)}{UnreadField(row.Unread)}{tail}")}";
     }
 

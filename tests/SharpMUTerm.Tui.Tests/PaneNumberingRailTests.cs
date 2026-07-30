@@ -46,11 +46,11 @@ public class PaneNumberingRailTests
         app.RenderNextFrame();
 
         await Assert.That(app.ActiveSessionKey).IsEqualTo("Alfa.Ann");
-        await Assert.That(CharacterPane(app, "Ann")).IsEqualTo("pane 1");
+        await Assert.That(CharacterPane(app, "Ann")).IsEqualTo("⌥" + "1");
         await Assert.That(CharacterPane(app, "Bob"))
-            .IsEqualTo("pane 2")
+            .IsEqualTo("⌥" + "2")
             .Because("⌥2 goes to Bob from here, and the sidebar has to be where you find that out");
-        await Assert.That(CharacterPane(app, "Cal")).IsEqualTo("pane 3");
+        await Assert.That(CharacterPane(app, "Cal")).IsEqualTo("⌥" + "3");
     }
 
     /// <summary>
@@ -70,7 +70,7 @@ public class PaneNumberingRailTests
             app.SimulateKey(Alt(1));
             app.RenderNextFrame();
 
-            var digit = int.Parse(CharacterPane(app, name)!["pane ".Length..]);
+            var digit = int.Parse(CharacterPane(app, name)![1..]);
             app.SimulateKey(Alt(digit));
 
             await Assert.That(app.ActiveSessionKey)
@@ -92,9 +92,9 @@ public class PaneNumberingRailTests
         app.RenderNextFrame();
 
         await Assert.That(app.ActiveSessionKey).IsEqualTo("Cara.Cal");
-        await Assert.That(CharacterPane(app, "Ann")).IsEqualTo("pane 1");
-        await Assert.That(CharacterPane(app, "Bob")).IsEqualTo("pane 2");
-        await Assert.That(CharacterPane(app, "Cal")).IsEqualTo("pane 3");
+        await Assert.That(CharacterPane(app, "Ann")).IsEqualTo("⌥" + "1");
+        await Assert.That(CharacterPane(app, "Bob")).IsEqualTo("⌥" + "2");
+        await Assert.That(CharacterPane(app, "Cal")).IsEqualTo("⌥" + "3");
     }
 
     /// <summary>
@@ -144,9 +144,9 @@ public class PaneNumberingRailTests
         app.RenderNextFrame();
         await Assert.That(app.PaneIds.Count).IsEqualTo(2);
 
-        await Assert.That(CharacterPane(app, "Ann")).IsEqualTo("pane 1");
+        await Assert.That(CharacterPane(app, "Ann")).IsEqualTo("⌥" + "1");
         await Assert.That(CharacterPane(app, "Cal"))
-            .IsEqualTo("pane 2")
+            .IsEqualTo("⌥" + "2")
             .Because("the panes on the screen must be numbered 1 and 2, not 1 and 3");
 
         app.SimulateKey(Alt(1));
@@ -173,7 +173,7 @@ public class PaneNumberingRailTests
         app.RenderSnapshot();
 
         await Assert.That(app.PaneIds.Count).IsEqualTo(1);
-        await Assert.That(app.RailLines.Any(l => Regex.IsMatch(l, @"pane \d+")))
+        await Assert.That(app.RailLines.Any(l => Regex.IsMatch(l, @"⌥\d+")))
             .IsFalse()
             .Because("with one pane, naming it says nothing and costs the panes their columns");
     }
@@ -193,7 +193,7 @@ public class PaneNumberingRailTests
         {
             var paneId = app.PaneIdOf(window);
             var ordinal = app.PaneIds.ToList().IndexOf(paneId!) + 1;
-            await Assert.That(CharacterPane(app, name)).IsEqualTo($"pane {ordinal}");
+            await Assert.That(CharacterPane(app, name)).IsEqualTo($"⌥{ordinal}");
         }
     }
 
@@ -219,7 +219,7 @@ public class PaneNumberingRailTests
                 continue;
             }
 
-            var match = Regex.Match(line, @"pane \d+");
+            var match = Regex.Match(line, @"⌥\d+");
             return match.Success ? match.Value : null;
         }
 

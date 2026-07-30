@@ -77,7 +77,8 @@ public class RailWindowRowTests
     /// <summary>
     /// <b>The two columns never wear the same word.</b> The hosting-pane column called the first pane
     /// "main" too, so a row could read <c>▪ main   main</c> — the naive fix for the label, and two different
-    /// meanings in one line. Panes are spelt <c>pane N</c>, which no window title is.
+    /// meanings in one line. The sidebar spells a pane <c>⌥N</c> — the chord that goes there — which no
+    /// window title is, and which is four cells narrower than the words it replaced.
     /// </summary>
     [Test]
     public async Task TheHostingPaneColumnNeverRepeatsTheWindowsOwnName()
@@ -91,7 +92,7 @@ public class RailWindowRowTests
 
         foreach (var row in windows)
         {
-            await Assert.That(row).Contains("pane ");
+            await Assert.That(row).Contains("⌥");
             await Assert.That(row.Trim()).IsNotEqualTo("▪ main   main");
         }
     }
@@ -109,18 +110,20 @@ public class RailWindowRowTests
         await Assert.That(app.PaneIds.Count).IsEqualTo(1);
         foreach (var row in Rail(app).Where(r => r.TrimStart().StartsWith("▪", StringComparison.Ordinal)))
         {
-            await Assert.That(row).DoesNotContain("pane ");
+            await Assert.That(row).DoesNotContain("⌥");
         }
 
         // The rows do end in blanks now, and that is the reserved badge fields rather than slack — so the
         // claim this used to make with DoesNotEndWith(" ") is made by width instead, which is the thing
         // that actually mattered: a single-pane rail must not pay for a column with nothing in it. (It
         // used to: three spaces were emitted unconditionally and the sidebar was three cells wider.)
+        // The column is now `⌥N` behind a single space rather than `pane N` behind two, so what it costs
+        // when it *is* drawn is three cells, not seven.
         var single = MainWindowRowWidth(app);
         await Assert.That(app.DispatchCommand("layout:split-right")).IsTrue();
         app.RenderNextFrame();
 
-        await Assert.That(Rail(app).Single(MainRow)).Contains("pane ");
+        await Assert.That(Rail(app).Single(MainRow)).Contains("⌥");
         await Assert.That(MainWindowRowWidth(app)).IsGreaterThan(single);
     }
 

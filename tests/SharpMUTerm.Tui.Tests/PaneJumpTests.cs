@@ -78,7 +78,7 @@ public class PaneJumpTests
 
             // The rail's own word for where the now-active window is.
             await Assert.That(RailPaneLabel(three.App))
-                .IsEqualTo($"pane {n}")
+                .IsEqualTo($"⌥{n}")
                 .Because($"⌥{n} must land on the pane the sidebar calls pane {n}");
 
             // The session, so the command line is talking to the pane you are looking at.
@@ -381,7 +381,7 @@ public class PaneJumpTests
         await Assert.That(app.StatusMarkup)
             .DoesNotContain("main")
             .Because("the first pane is pane 1 everywhere, or ⌥1 names something the screen does not");
-        await Assert.That(app.RailLines.Any(l => l.Contains("pane 1", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(app.RailLines.Any(l => l.Contains("⌥1", StringComparison.Ordinal))).IsTrue();
 
         app.SimulateKey(Plain('\x1b', ConsoleKey.Escape)); // leave move mode
     }
@@ -527,7 +527,7 @@ public class PaneJumpTests
     {
         foreach (var line in app.RailLines.Where(l => l.Contains('▪', StringComparison.Ordinal)))
         {
-            var match = Regex.Match(line, @"pane \d+");
+            var match = Regex.Match(line, @"⌥\d+");
             if (match.Success)
             {
                 return match.Value;
