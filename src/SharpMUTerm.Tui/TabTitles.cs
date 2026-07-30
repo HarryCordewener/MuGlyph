@@ -11,8 +11,10 @@ namespace SharpMUTerm.Tui;
 /// <remarks>
 /// <para>SharpConsoleUI renders tab titles as plain text, so the design's per-character accent
 /// <em>colour</em> dot can't ride on the label — the traceability signal that survives is the <c>⌁</c>
-/// cross-character marker, which this emits. Accent colour still shows in the rail and (for the focused
-/// pane) its border.</para>
+/// cross-character marker, which this emits. Accent colour still shows in the rail; the focused
+/// <em>pane</em> is marked by the <c>▌</c> this emits plus the lit plane it is painted on
+/// (<see cref="WorkspacePalette.Focus"/>), because a pane cannot be given a border without changing its
+/// rectangle and so the per-pane NAWS size it reports.</para>
 /// <para>The close affordance is deliberately <em>not</em> here. A <c>✕</c> written into the label is
 /// just text: the framework's tab hit test sees it as part of the title and a click on it merely
 /// selects the tab. The real close button is <c>TabPage.IsClosable</c>, which the framework draws
@@ -21,7 +23,19 @@ namespace SharpMUTerm.Tui;
 /// </remarks>
 internal static class TabTitles
 {
-    public static string For(WorkspaceWindow window, string? focusedCharacterKey = null)
+    /// <param name="window">The window the tab stands for.</param>
+    /// <param name="focusedCharacterKey">
+    /// The session key of the character in focus, so a window belonging to another one can be marked.
+    /// </param>
+    /// <param name="focusedPane">
+    /// Whether this tab is the <em>active</em> tab of the <em>focused pane</em> — the one pane the
+    /// scrollback keys, the ⌃B commands and the Ctrl+arrows all act on. It gets a leading <c>▌</c>: the
+    /// pane's own plane is lit as well, and the glyph is what carries the signal on a terminal where the
+    /// two planes flatten together. It leads rather than trails because that is the edge of the strip a
+    /// reader's eye starts at, and it is on the active tab only, so a pane never shows two.
+    /// </param>
+    public static string For(
+        WorkspaceWindow window, string? focusedCharacterKey = null, bool focusedPane = false)
     {
         ArgumentNullException.ThrowIfNull(window);
 
@@ -43,6 +57,8 @@ internal static class TabTitles
             ? " ⌁"
             : string.Empty;
 
-        return owner + window.Title + unread + pen + cross;
+        var focus = focusedPane ? Glyphs.FocusedPane + " " : string.Empty;
+
+        return focus + owner + window.Title + unread + pen + cross;
     }
 }

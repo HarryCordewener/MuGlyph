@@ -134,13 +134,30 @@ public static class CommandCatalog
             : new CommandItem(
                 CommandGroup.Terminal, "Show second input", "term:input2-on", "this window · ⌃B i"));
 
-        // LAYOUT
-        items.Add(new CommandItem(CommandGroup.Layout, "Split right", "layout:split-right"));
-        items.Add(new CommandItem(CommandGroup.Layout, "Split down", "layout:split-down"));
+        // The newline chord. Here for the same reason the scrollback keys are: a chord that works and is
+        // named nowhere is a chord nobody finds, which is precisely how this one was reported as missing.
+        // Alt+⏎ is the modifier+Enter this host delivers — a terminal reports Shift+⏎ and Ctrl+⏎ as a
+        // bare ⏎, so naming those would be advertising a key that cannot fire.
+        items.Add(new CommandItem(
+            CommandGroup.Terminal, "Insert a newline in the command line", "term:newline", "Alt+⏎ · ⌃L"));
+
+        // LAYOUT — every entry carries the chord that runs it, because this surface is where the client
+        // is discovered from and the ⌃B keymap is otherwise visible only while the prefix is armed.
+        items.Add(new CommandItem(CommandGroup.Layout, "Split right", "layout:split-right", "⌃B |"));
+        items.Add(new CommandItem(CommandGroup.Layout, "Split down", "layout:split-down", "⌃B -"));
         items.Add(context.Zoomed
-            ? new CommandItem(CommandGroup.Layout, "Unzoom pane", "layout:unzoom")
-            : new CommandItem(CommandGroup.Layout, "Zoom pane", "layout:zoom"));
-        items.Add(new CommandItem(CommandGroup.Layout, "Close pane", "layout:close"));
+            ? new CommandItem(CommandGroup.Layout, "Unzoom pane", "layout:unzoom", "⌃B z")
+            : new CommandItem(CommandGroup.Layout, "Zoom pane", "layout:zoom", "⌃B z"));
+        items.Add(new CommandItem(CommandGroup.Layout, "Close pane", "layout:close", "⌃B x"));
+
+        // Directional pane focus. Listed whether or not the workspace has a second pane, deliberately:
+        // this is the surface that teaches the keyboard, and the entries are how a reader learns the
+        // workspace splits at all. Each refuses out loud when there is nothing that way.
+        items.Add(new CommandItem(CommandGroup.Layout, "Focus pane left", "layout:focus-left", "⌃←"));
+        items.Add(new CommandItem(CommandGroup.Layout, "Focus pane right", "layout:focus-right", "⌃→"));
+        items.Add(new CommandItem(CommandGroup.Layout, "Focus pane up", "layout:focus-up", "⌃↑"));
+        items.Add(new CommandItem(CommandGroup.Layout, "Focus pane down", "layout:focus-down", "⌃↓"));
+        items.Add(new CommandItem(CommandGroup.Layout, "Focus the next pane", "layout:cycle", "⌃O · ⌃B o"));
 
         // SETTINGS — one entry per configuration screen, in the order the host lists them (its F-key
         // order). Every screen or none: a surface offering one of them and hiding the rest would read

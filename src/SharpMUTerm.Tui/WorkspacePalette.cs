@@ -52,11 +52,105 @@ internal static class WorkspacePalette
     /// </summary>
     private const double RuleLift = 0.45;
 
+    /// <summary>
+    /// How far the <em>focused</em> plane is lifted off the unfocused one, as a fraction of it. Like
+    /// <see cref="BackdropScale"/> this is not a number somebody liked: it is the mean of
+    /// <c>CursorBg ÷ EditBg</c> across the three channels — the step the settings screens already take
+    /// to say "the keyboard is here", measured off the card the cursor bar sits on
+    /// (<see cref="ScreenPalette.CursorBg"/> is documented as exactly that). Reusing it means the
+    /// workspace and F5 do not have two different ideas of what focus looks like, and it is a step of
+    /// about three fifths rather than the thirteen points per channel the two input bands used to
+    /// differ by — which is the whole complaint.
+    /// <para>
+    /// It is a <em>scale</em>, not a mix toward a hue, deliberately: multiplying keeps the theme's own
+    /// colour and changes only its luminance, so the cue survives a monochrome terminal and a
+    /// colour-blind reader, and a light theme lifts the same way a dark one does.
+    /// </para>
+    /// </summary>
+    private const double FocusScale = 1.595;
+
+    /// <summary>
+    /// How far the idle input band is recessed from the theme's chrome tone. Like the other constants
+    /// here it is measured off what the design already chose: the mean of the old hardcoded
+    /// <c>#262b3a</c> over the default theme's <see cref="Theme.StatusBackground"/>, across the three
+    /// channels. The idle band therefore lands where it always did — the tone was never the complaint —
+    /// while <see cref="ArmedBand"/> moves away from it by a step the eye can actually find.
+    /// </summary>
+    private const double IdleBandScale = 0.814;
+
+    /// <summary>
+    /// How far the armed input band leans toward <see cref="Theme.Prompt"/>. Enough to read as a
+    /// different <em>colour</em> and not merely a brighter one, which is the cue that survives a reader
+    /// who sees luminance but not hue being given the opposite problem; small enough that the band is
+    /// still the theme's chrome rather than a stripe of accent across the bottom of the window.
+    /// </summary>
+    private const double PromptTint = 0.28;
+
     /// <summary>The plane a pane's output is painted on — tab strip, scrollback and empty rows alike.</summary>
     internal static Rgb Surface(Theme theme)
     {
         ArgumentNullException.ThrowIfNull(theme);
         return Mix(theme.Background, theme.StatusBackground, ChromeTint);
+    }
+
+    /// <summary>
+    /// The plane the <em>focused</em> pane's output is painted on, and the band behind the command line
+    /// ⏎ sends from. One tone for both on purpose: "this is where you are" should be one thing to learn,
+    /// not two, and the two questions a user has — which pane am I acting on, which line am I typing
+    /// into — are then answered by the same colour in the two places it can appear.
+    /// <para>
+    /// It costs no cells. A focused pane is the same rectangle as an unfocused one, repainted; that
+    /// matters because per-pane NAWS is derived from the pane rectangle, so a border or a marker column
+    /// would re-announce a different terminal size to the server on every focus change and reflow the
+    /// game's own output. See <c>SharpMUTermApp.PaneOutputRects</c>.
+    /// </para>
+    /// </summary>
+    internal static Rgb Focus(Theme theme) => Scale(Surface(theme), FocusScale);
+
+    /// <summary>
+    /// The chrome band a command line is drawn on when ⏎ will <em>not</em> send from it. It is the theme's
+    /// status/chrome tone recessed by <see cref="IdleBandScale"/> — the input area belongs to the chrome
+    /// family, not to the pane surface, which is why it is measured off
+    /// <see cref="Theme.StatusBackground"/> and not off <see cref="Surface"/>.
+    /// <para>
+    /// It sits where the design's own idle band sat; the tone was never the complaint. What was wrong was
+    /// the <em>distance</em> to the armed one — the two hardcoded hexes were a ratio of about 1.33 apart,
+    /// thirteen points per channel, which is genuinely close to invisible. <see cref="ArmedBand"/> now
+    /// takes the same focus step everything else does, and picks up the theme's prompt hue on the way.
+    /// </para>
+    /// </summary>
+    internal static Rgb IdleBand(Theme theme)
+    {
+        ArgumentNullException.ThrowIfNull(theme);
+        return Scale(theme.StatusBackground, IdleBandScale);
+    }
+
+    /// <summary>
+    /// The band behind the command line ⏎ <em>does</em> send from: the idle band lifted by the same
+    /// <see cref="FocusScale"/> a focused pane is lifted by, and then pushed a little toward
+    /// <see cref="Theme.Prompt"/> — the theme's own colour for a prompt, which is what this band is.
+    /// <para>
+    /// The hue is affordable here and not on a pane: a pane's plane is what the game's own colours are
+    /// read against, so <see cref="Focus"/> stays a pure luminance lift, while the input band is chrome
+    /// and was already tinted. Between them the armed and idle bands now differ in luminance <em>and</em>
+    /// hue, on top of the bold-versus-dim prompt and the bright-versus-dim ink — four cues, of which
+    /// three survive a terminal that cannot render the fourth.
+    /// </para>
+    /// </summary>
+    internal static Rgb ArmedBand(Theme theme)
+    {
+        ArgumentNullException.ThrowIfNull(theme);
+        return Mix(Scale(IdleBand(theme), FocusScale), theme.Prompt, PromptTint);
+    }
+
+    /// <summary>
+    /// Text on an idle band: the theme's foreground pulled most of the way down to that band. Dimmer
+    /// than the armed bar's ink, so the pair still reads apart if a terminal flattens both backgrounds.
+    /// </summary>
+    internal static Rgb IdleInk(Theme theme)
+    {
+        ArgumentNullException.ThrowIfNull(theme);
+        return Mix(theme.Foreground, IdleBand(theme), 0.55);
     }
 
     /// <summary>
