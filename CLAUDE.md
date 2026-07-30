@@ -183,6 +183,22 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   derive the text's origin and scroll from one place** (`InputBarControl.Geometry`): the paint has always
   been clamped to the rows it was *given* and the cursor was not, so on any frame where the arranged
   height was short of the requested one they disagreed about the scroll.
+- **The caret was placed from a rectangle only the *mouse* refreshed — an upstream bug, fixed in the
+  clone, and a whole class of defect no test here can see.** `ControlBounds.ControlContentBounds` is
+  written by `WindowEventDispatcher.UpdateControlLayout()` and by nothing else, and that has exactly one
+  caller: `ProcessMouseEvent`. Both cursor readers preferred it and fell through to the layout node's
+  (always fresh) `AbsoluteBounds` only while it was still `Rectangle.Empty` — so the caret was correct
+  until **the first mouse event the window ever saw**, which populated the cache and froze the caret at
+  wherever the pointer had last seen the control. Every later layout change (the input bar growing on
+  F8, the second bar showing or hiding) then moved the text and left the caret behind, permanently:
+  typing does not fix it, and leaving the terminal and coming back does, because that crosses it with
+  the pointer. Fixed in `../SharpConsoleUI` (`CursorBoundsStalenessTests`) by preferring the node in
+  both readers. **Two things follow for this repo.** The fix only reaches builds against the *clone* —
+  a `-p:UseSharpConsoleUIPackage=true` build still has it until a release ships it. And nothing in our
+  suite can catch this class of bug: the framework only registers its driver-mouse handler inside
+  `Run()`, which no test calls, so `ControlContentBounds` is never populated headlessly and every caret
+  test here silently exercises the *fresh* path. A caret report that our tests cannot reproduce is
+  evidence for looking upstream, not evidence that it is not happening.
 - **Ask the driver for the terminal size, never a literal.** `_system.ConsoleDriver.ScreenSize` is
   correct from the moment the window system exists — before any window does. Chrome built in the
   app constructor against a literal wrapped the header on the first frame of any narrower terminal,
