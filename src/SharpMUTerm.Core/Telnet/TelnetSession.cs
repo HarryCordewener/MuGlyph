@@ -1,7 +1,9 @@
+using System.Collections.Immutable;
 using System.Reflection;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using SharpMUTerm.Core.Telnet.Mssp;
 using SharpMUTerm.Core.Transport;
 using TelnetNegotiationCore.Builders;
 using TelnetNegotiationCore.Interpreters;
@@ -44,6 +46,50 @@ public sealed class TelnetSessionOptions
 
     /// <summary>Read buffer size in bytes.</summary>
     public int ReceiveBufferSize { get; init; } = 8192;
+
+    /// <summary>
+    /// What this client calls itself over TTYPE/MTTS, most specific first, or null to leave
+    /// TelnetNegotiationCore's own list in place.
+    /// <para>
+    /// The MTTS convention is that a server may ask for the terminal type repeatedly and gets a
+    /// different answer each time: the client's <em>name</em> first, then a terminal type, then
+    /// <c>MTTS &lt;bitvector&gt;</c>. The library's default answers <c>TNC</c> to the first — its own
+    /// name, not ours — so every server this client has ever connected to has logged the wrong
+    /// program. <see cref="SharpMUTermTerminalTypes"/> is the honest answer for the client; a tool that
+    /// is not the client (a crawler) states what it is instead.
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<string>? TerminalTypes { get; init; } = SharpMUTermTerminalTypes;
+
+    /// <summary>
+    /// What the interactive client announces: its own name, the terminal class it renders as, and the
+    /// MTTS bit vector the library already claimed on its behalf (ANSI, UTF-8, 256 colours, true
+    /// colour, MNES, MSLP, SSL — all of which this client does support).
+    /// </summary>
+    public static IReadOnlyList<string> SharpMUTermTerminalTypes { get; } =
+        ["SHARPMUTERM", "XTERM", "MTTS 3853"];
+
+    /// <summary>
+    /// Telnet options to request outright on connect, by sending <c>IAC DO &lt;option&gt;</c>, rather
+    /// than waiting for the server to offer them.
+    /// <para>
+    /// <b>This exists because waiting does not work.</b> The MSSP specification says the server "should
+    /// send IAC WILL MSSP" when a client connects, and TelnetNegotiationCore is built on that reading:
+    /// its whole opening negotiation is <c>IAC WILL NAWS</c> and nothing else, so MSSP is only ever
+    /// reached if the server volunteers it. A great many servers that fully support MSSP do not
+    /// volunteer anything — they answer <c>IAC DO MSSP</c> and are otherwise silent, which is why the
+    /// protocol's own reference client (TinTin++'s <c>#session mssp</c>) asks rather than listens. A
+    /// crawler that only listens simply does not see those servers, and reports them as having no MSSP.
+    /// </para>
+    /// <para>
+    /// This is negotiation, not traffic: <c>IAC DO</c> is the client half of the option handshake and is
+    /// the only category of byte a crawler may put on the wire.
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<byte> RequestOptions { get; init; } = [];
+
+    /// <summary>The MSSP telnet option, 70.</summary>
+    public const byte MsspOption = 70;
 
     /// <summary>
     /// How long the connection may sit silent before a keepalive goes out, or null for none — a
@@ -213,6 +259,14 @@ public sealed class TelnetSession : ITelnetSession
             ? p
             : null;
 
+    // The third reflective seam, and the same shape as the two above: TerminalTypeProtocol holds the
+    // list it answers TTYPE/MTTS with in a private field, exposes it read-only, and offers no builder
+    // hook — so the only way to say who we are is to write it. The default is ["TNC", "XTERM",
+    // "MTTS 3853"], i.e. every server we have ever connected to was told it was talking to
+    // TelnetNegotiationCore. A `WithTerminalTypes(...)` on the builder is a small, obvious upstream PR.
+    private static readonly FieldInfo? TerminalTypesField =
+        typeof(TerminalTypeProtocol).GetField("_terminalTypes", BindingFlags.NonPublic | BindingFlags.Instance);
+
     private readonly ITransport _transport;
     private readonly ILogger _logger;
     private readonly TelnetSessionOptions _options;
@@ -230,6 +284,20 @@ public sealed class TelnetSession : ITelnetSession
     private volatile Encoding? _negotiated;
 
     private SessionEncoding _lastReported;
+
+    /// <summary>
+    /// Reads MSSP off the wire in parallel with the library's own negotiation of it — the only way to
+    /// see array-valued variables at all, <c>REFERRAL</c> above all. See
+    /// <see cref="MsspSubnegotiationParser"/> for what the library loses and why.
+    /// </summary>
+    private readonly MsspSubnegotiationParser _mssp = new();
+
+    /// <summary>
+    /// Whether the parser above has reported anything this session. It gates the degraded fallback: the
+    /// library's own MSSP callback is only surfaced when the bytes were unreadable, which in practice
+    /// means MCCP compression started before the payload arrived.
+    /// </summary>
+    private bool _msspSeenOnWire;
 
     private TelnetInterpreter? _interpreter;
     private CancellationTokenSource? _loopCts;
@@ -329,6 +397,7 @@ public sealed class TelnetSession : ITelnetSession
             _interpreter = await BuildInterpreterAsync().ConfigureAwait(false);
             ByteCallbackProperty.SetValue(_interpreter, new Func<byte, Encoding, ValueTask>(OnByteAsync));
             SeedInterpreterEncoding(_interpreter);
+            ApplyTerminalTypes(_interpreter);
             WireCharsetCallback(_interpreter);
         }
         catch
@@ -345,6 +414,9 @@ public sealed class TelnetSession : ITelnetSession
         _lastReported = CurrentEncoding;
         _loopCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _readLoop = Task.Run(() => ReadLoopAsync(_loopCts.Token), CancellationToken.None);
+
+        // After the read loop is running, so a server that answers instantly is heard.
+        await RequestOptionsAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private Task<TelnetInterpreter> BuildInterpreterAsync()
@@ -403,6 +475,59 @@ public sealed class TelnetSession : ITelnetSession
         InterpreterEncodingProperty.SetValue(interpreter, seed);
         _seeded = seed;
     }
+
+    /// <summary>
+    /// Sends <c>IAC DO &lt;option&gt;</c> for each of <see cref="TelnetSessionOptions.RequestOptions"/>.
+    /// <para>
+    /// Written straight to the transport rather than through <see cref="SendAsync"/>, because that
+    /// escapes <c>IAC</c> as data — which is exactly right for a command line and exactly wrong for a
+    /// negotiation. This is the same door the interpreter's own negotiation output goes through.
+    /// </para>
+    /// </summary>
+    private async ValueTask RequestOptionsAsync(CancellationToken cancellationToken)
+    {
+        foreach (var option in _options.RequestOptions)
+        {
+            _logger.LogDebug("Requesting telnet option {Option}.", option);
+            await _transport.SendAsync(new byte[] { 255, 253, option }, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Tells the terminal-type plugin what to answer with, when this session has an opinion.
+    /// <para>
+    /// Silent when the library stops holding the list where this expects it: being unable to state a
+    /// name is a cosmetic loss for the client, so it is logged rather than thrown — a session that
+    /// refuses to connect because it could not introduce itself would be a worse outcome than one that
+    /// connects under the wrong name. A crawler, which has a duty to identify itself, checks
+    /// <see cref="TerminalTypesApplied"/> instead of assuming.
+    /// </para>
+    /// </summary>
+    private void ApplyTerminalTypes(TelnetInterpreter interpreter)
+    {
+        if (_options.TerminalTypes is not { Count: > 0 } types)
+        {
+            return;
+        }
+
+        if (TerminalTypesField is null ||
+            interpreter.PluginManager?.GetPlugin<TerminalTypeProtocol>() is not { } plugin)
+        {
+            _logger.LogWarning(
+                "Terminal types are not settable on this TelnetNegotiationCore build; the server will be told "
+                + "the library's name instead of ours.");
+            return;
+        }
+
+        TerminalTypesField.SetValue(plugin, types.ToImmutableList());
+        TerminalTypesApplied = true;
+    }
+
+    /// <summary>
+    /// True once this session has successfully told the telnet layer what to answer TTYPE with. False
+    /// when no types were configured, before connecting, or if the library's shape changed under us.
+    /// </summary>
+    public bool TerminalTypesApplied { get; private set; }
 
     /// <summary>
     /// Subscribes to CHARSET's own change callback, which fires <em>inside</em> the batch that
@@ -494,10 +619,43 @@ public sealed class TelnetSession : ITelnetSession
         return ValueTask.CompletedTask;
     }
 
+    /// <summary>
+    /// The library's own MSSP callback, kept only as a fallback. It fires for every MSSP payload, but
+    /// what it carries has already lost every array (see <see cref="MsspData.FromInterpreterConfig"/>),
+    /// so it is surfaced only when the wire parser saw nothing — the compressed case. Raising both
+    /// would deliver the same server twice, once complete and once degraded.
+    /// </summary>
     private ValueTask OnMsspAsync(MSSPConfig config)
     {
-        MsspReceived?.Invoke(this, new MsspReceivedEventArgs(MsspConfigReader.ToDictionary(config)));
+        if (_msspSeenOnWire)
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        _logger.LogDebug(
+            "MSSP was not readable on the wire (compression?); falling back to the interpreter's own "
+            + "reduced view, which carries no arrays.");
+        MsspReceived?.Invoke(this, new MsspReceivedEventArgs(MsspData.FromInterpreterConfig(config)));
         return ValueTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// Runs the inbound bytes past the MSSP reader and raises anything it completed. The reader keeps
+    /// its own state, so a payload split across reads is no different from one that arrives whole.
+    /// </summary>
+    private void ScanForMssp(ReadOnlySpan<byte> bytes)
+    {
+        // The encoding can change mid-stream when CHARSET settles; the reader is told each time rather
+        // than capturing whatever was in force when the session was built.
+        _mssp.Encoding = CurrentEncoding.Encoding;
+
+        foreach (var report in _mssp.Consume(bytes))
+        {
+            _msspSeenOnWire = true;
+            _logger.LogInformation(
+                "MSSP: {Count} variables from {Name}.", report.Count, report.Name ?? "an unnamed server");
+            MsspReceived?.Invoke(this, new MsspReceivedEventArgs(report));
+        }
     }
 
     private ValueTask OnCompressionAsync(int version, bool enabled)
@@ -519,6 +677,12 @@ public sealed class TelnetSession : ITelnetSession
                 {
                     break; // clean end of stream
                 }
+
+                // Read MSSP off the raw bytes before handing them on. This has to happen here rather
+                // than through a library callback because the library flattens array-valued variables
+                // out of existence on the way to its own model; the negotiation that makes the server
+                // send this payload is still entirely the library's.
+                ScanForMssp(buffer.AsSpan(0, read));
 
                 await _interpreter!.InterpretByteArrayAsync(buffer.AsMemory(0, read)).ConfigureAwait(false);
 

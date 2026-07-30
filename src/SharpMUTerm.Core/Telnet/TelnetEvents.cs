@@ -26,10 +26,29 @@ public sealed class MsdpMessageEventArgs(string json) : EventArgs
     public string Json { get; } = json;
 }
 
-/// <summary>MSSP (Mud Server Status Protocol) key/value data reported by the server.</summary>
-public sealed class MsspReceivedEventArgs(IReadOnlyDictionary<string, string> values) : EventArgs
+/// <summary>
+/// MSSP (Mud Server Status Protocol) data reported by the server: every variable it sent, with every
+/// value of every array, in wire order. See <see cref="Mssp.MsspData"/> for why the model is a list
+/// per variable rather than a single value.
+/// </summary>
+public sealed class MsspReceivedEventArgs(Mssp.MsspData data) : EventArgs
 {
-    public IReadOnlyDictionary<string, string> Values { get; } = values;
+    /// <summary>The full report.</summary>
+    public Mssp.MsspData Data { get; } = data;
+
+    /// <summary>
+    /// The report flattened to one value per variable — the <em>last</em> value of each, which the
+    /// specification calls the default. Keyed by the canonical MSSP name (<c>MINIMUM AGE</c>, not
+    /// <c>Minimum_Age</c>), so what a caller reads is what the server sent.
+    /// <para>
+    /// This is a convenience for the many consumers that only want a scalar. Anything that cares about
+    /// <c>REFERRAL</c>, <c>PORT</c> or any other array must read <see cref="Data"/>, because a flat map
+    /// cannot express one.
+    /// </para>
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Values { get; } =
+        data.Where(pair => pair.Value.Count > 0)
+            .ToDictionary(pair => pair.Key, pair => pair.Value[^1], StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>Raised when the session disconnects, cleanly or due to an error.</summary>
