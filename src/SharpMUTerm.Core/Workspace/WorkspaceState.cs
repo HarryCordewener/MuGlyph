@@ -26,6 +26,18 @@ public sealed class LayoutNodeState
     public int ActiveIndex { get; set; }
     public bool Frozen { get; set; }
 
+    /// <summary>
+    /// The pane's creation sequence (<see cref="PaneNode.Sequence"/>), which is what its ⌥N number is
+    /// derived from. Persisted so a resumed workspace comes back numbered the way it was left rather
+    /// than renumbered by the shape of its split tree.
+    /// <para>
+    /// <see cref="PaneNode.Unsequenced"/> — the value a configuration written before this field existed
+    /// deserialises to — means "nobody has numbered this pane"; <see cref="WorkspaceLayout"/> assigns
+    /// one from tree order on load, which is the numbering such a workspace was saved under.
+    /// </para>
+    /// </summary>
+    public int Sequence { get; set; } = PaneNode.Unsequenced;
+
     // split
     public SplitDirection Direction { get; set; }
     public List<double> Sizes { get; set; } = new();
@@ -89,6 +101,7 @@ public sealed class WorkspaceState
             Tabs = new List<string>(pane.Tabs),
             ActiveIndex = pane.ActiveIndex,
             Frozen = pane.Frozen,
+            Sequence = pane.Sequence,
         },
         SplitNode split => new LayoutNodeState
         {
@@ -110,7 +123,7 @@ public sealed class WorkspaceState
 
         if (string.Equals(state.Type, "pane", StringComparison.OrdinalIgnoreCase))
         {
-            return new PaneNode(state.Id ?? "p1", state.Tabs, state.ActiveIndex, state.Frozen);
+            return new PaneNode(state.Id ?? "p1", state.Tabs, state.ActiveIndex, state.Frozen, state.Sequence);
         }
 
         // A typo or a newer serialized node type shouldn't silently degrade to a pane and lose structure.

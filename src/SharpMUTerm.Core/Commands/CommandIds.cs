@@ -37,9 +37,15 @@ public static class CommandIds
 
     /// <summary>
     /// The id that focuses the <paramref name="number"/>th pane, counting the way every surface in this
-    /// client counts panes: <see cref="SharpMUTerm.Core.Workspace.WorkspaceLayout.Panes"/> order, which is
-    /// left-to-right then top-to-bottom, which is the order the connection rail's <c>pane N</c> column
-    /// numbers them in. The chord (⌥N), the rail's label and this id are three spellings of one number.
+    /// client counts panes: <see cref="SharpMUTerm.Core.Workspaces.WorkspaceLayout.Panes"/> order, which is
+    /// <b>creation</b> order, which is the order the connection rail's <c>pane N</c> column numbers them
+    /// in. The chord (⌥N), the rail's label and this id are three spellings of one number.
+    /// <para>
+    /// It was tree order — left-to-right then top-to-bottom — and that renumbered panes that already
+    /// existed whenever one was inserted before them, so a number a user had learnt moved without being
+    /// touched. Creation order is stable while a pane is open, and closing one compacts the rest so the
+    /// range stays contiguous.
+    /// </para>
     /// </summary>
     public static string Pane(int number) => PanePrefix + number.ToString(System.Globalization.CultureInfo.InvariantCulture);
 }
