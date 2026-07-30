@@ -302,20 +302,6 @@ public sealed class TelnetSession : ITelnetSession
 
     private SessionEncoding _lastReported;
 
-    /// <summary>
-    /// Reads MSSP off the wire in parallel with the library's own negotiation of it — the only way to
-    /// see array-valued variables at all, <c>REFERRAL</c> above all. See
-    /// <see cref="MsspSubnegotiationParser"/> for what the library loses and why.
-    /// </summary>
-    private readonly MsspSubnegotiationParser _mssp = new();
-
-    /// <summary>
-    /// Whether the parser above has reported anything this session. It gates the degraded fallback: the
-    /// library's own MSSP callback is only surfaced when the bytes were unreadable, which in practice
-    /// means MCCP compression started before the payload arrived.
-    /// </summary>
-    private bool _msspSeenOnWire;
-
     private TelnetInterpreter? _interpreter;
     private CancellationTokenSource? _loopCts;
     private Task? _readLoop;
@@ -637,42 +623,17 @@ public sealed class TelnetSession : ITelnetSession
     }
 
     /// <summary>
-    /// The library's own MSSP callback, kept only as a fallback. It fires for every MSSP payload, but
-    /// what it carries has already lost every array (see <see cref="MsspData.FromInterpreterConfig"/>),
-    /// so it is surfaced only when the wire parser saw nothing — the compressed case. Raising both
-    /// would deliver the same server twice, once complete and once degraded.
+    /// The library's MSSP callback: one report per <c>IAC SB MSSP … IAC SE</c>, carrying
+    /// <c>MSSPConfig.Variables</c> — every variable the server sent, with every value of every array,
+    /// in wire order. <see cref="MsspData.From"/> turns that into the shape this application reads.
     /// </summary>
     private ValueTask OnMsspAsync(MSSPConfig config)
     {
-        if (_msspSeenOnWire)
-        {
-            return ValueTask.CompletedTask;
-        }
-
-        _logger.LogDebug(
-            "MSSP was not readable on the wire (compression?); falling back to the interpreter's own "
-            + "reduced view, which carries no arrays.");
-        MsspReceived?.Invoke(this, new MsspReceivedEventArgs(MsspData.FromInterpreterConfig(config)));
+        var report = MsspData.From(config.Variables);
+        _logger.LogInformation(
+            "MSSP: {Count} variables from {Name}.", report.Count, report.Name ?? "an unnamed server");
+        MsspReceived?.Invoke(this, new MsspReceivedEventArgs(report));
         return ValueTask.CompletedTask;
-    }
-
-    /// <summary>
-    /// Runs the inbound bytes past the MSSP reader and raises anything it completed. The reader keeps
-    /// its own state, so a payload split across reads is no different from one that arrives whole.
-    /// </summary>
-    private void ScanForMssp(ReadOnlySpan<byte> bytes)
-    {
-        // The encoding can change mid-stream when CHARSET settles; the reader is told each time rather
-        // than capturing whatever was in force when the session was built.
-        _mssp.Encoding = CurrentEncoding.Encoding;
-
-        foreach (var report in _mssp.Consume(bytes))
-        {
-            _msspSeenOnWire = true;
-            _logger.LogInformation(
-                "MSSP: {Count} variables from {Name}.", report.Count, report.Name ?? "an unnamed server");
-            MsspReceived?.Invoke(this, new MsspReceivedEventArgs(report));
-        }
     }
 
     private ValueTask OnCompressionAsync(int version, bool enabled)
@@ -694,12 +655,6 @@ public sealed class TelnetSession : ITelnetSession
                 {
                     break; // clean end of stream
                 }
-
-                // Read MSSP off the raw bytes before handing them on. This has to happen here rather
-                // than through a library callback because the library flattens array-valued variables
-                // out of existence on the way to its own model; the negotiation that makes the server
-                // send this payload is still entirely the library's.
-                ScanForMssp(buffer.AsSpan(0, read));
 
                 await _interpreter!.InterpretByteArrayAsync(buffer.AsMemory(0, read)).ConfigureAwait(false);
 

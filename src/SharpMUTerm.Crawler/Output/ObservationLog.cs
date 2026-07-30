@@ -21,7 +21,7 @@ namespace SharpMUTerm.Crawler.Output;
 /// <para>
 /// Variables are written as the protocol sends them — the canonical name against an <em>array</em> of
 /// values — so <c>REFERRAL</c> and a multi-valued <c>PORT</c> survive the round trip. Flattening to
-/// one value per key here would throw away the same thing the telnet library throws away.
+/// one value per key here would lose the arrays MSSP exists to publish.
 /// </para>
 /// </summary>
 public sealed class ObservationLog(string path) : IDisposable
@@ -56,7 +56,6 @@ public sealed class ObservationLog(string path) : IDisposable
             Outcome = result.Outcome,
             DurationMs = (long)result.Duration.TotalMilliseconds,
             Error = result.Error,
-            Source = result.Data?.Source.ToString(),
             Name = result.Data?.Name,
             Players = result.Data?.Players,
             Uptime = result.Data?.Uptime,
@@ -107,9 +106,6 @@ public sealed class ObservationLog(string path) : IDisposable
         public long DurationMs { get; init; }
 
         public string? Error { get; init; }
-
-        /// <summary>Whether the values came off the wire complete, or from the library's reduced view.</summary>
-        public string? Source { get; init; }
 
         public string? Name { get; init; }
 

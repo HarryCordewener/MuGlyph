@@ -1,36 +1,28 @@
 using System.Collections;
 using System.Globalization;
+using TelnetNegotiationCore.Models;
 
 namespace SharpMUTerm.Core.Telnet.Mssp;
 
-/// <summary>Where a set of MSSP values came from, and therefore how much of it survived.</summary>
-public enum MsspSource
-{
-    /// <summary>
-    /// Parsed from the subnegotiation bytes by <see cref="MsspSubnegotiationParser"/>: every variable
-    /// the server sent, every value of every array, in wire order.
-    /// </summary>
-    Wire,
-
-    /// <summary>
-    /// Projected from TelnetNegotiationCore's own <c>MSSPConfig</c>. Lossy — see
-    /// <see cref="MsspData.FromInterpreterConfig"/> for exactly what the library discards. Only used
-    /// when the wire bytes were unavailable, which in practice means MCCP compression was already
-    /// running when the payload arrived.
-    /// </summary>
-    Interpreter,
-}
-
 /// <summary>
-/// One server's MSSP report: every variable it sent, with every value, in the order it sent them.
+/// One server's MSSP report, in the shape this application wants it: every variable it sent, with
+/// every value, in the order it sent them, plus the domain readings a client and a crawler ask for.
 /// <para>
-/// The shape is a map from a canonical variable name (see <see cref="MsspVariables.Canonicalise"/>)
-/// to an <em>ordered list</em> of values, and that is not incidental. MSSP has two ways to attach
-/// several values to one variable — repeating the variable, and repeating <c>MSSP_VAL</c> under one
-/// variable — and the specification gives both the same meaning: "multiple values should be ordered
-/// from least to most relevant", with "the default value reported last". A model that kept one value
-/// per variable would silently pick a server's <em>least</em> preferred port, and would lose
-/// <c>REFERRAL</c> entirely, since a referral list is nothing but an array.
+/// <b>This projects; it does not parse.</b> The bytes are read by TelnetNegotiationCore, which hands
+/// back an ordered name → value-list map (<c>MSSPConfig.Variables</c>); everything here is built from
+/// that. What this type adds over the library's own collection is the part that is ours rather than
+/// the protocol's: <c>REFERRAL</c> read as <see cref="MsspHost"/>s a crawler can follow and
+/// deduplicate, <c>CRAWL DELAY</c> read as the specification's "no preference" rather than a negative
+/// interval, ports validated as ports, and an immutable snapshot a report can be written from.
+/// </para>
+/// <para>
+/// The shape is a map from a canonical variable name to an <em>ordered list</em> of values, and that
+/// is not incidental. MSSP has two ways to attach several values to one variable — repeating the
+/// variable, and repeating <c>MSSP_VAL</c> under one variable — and the specification gives both the
+/// same meaning: "multiple values should be ordered from least to most relevant", with "the default
+/// value reported last". A model that kept one value per variable would silently pick a server's
+/// <em>least</em> preferred port, and would lose <c>REFERRAL</c> entirely, since a referral list is
+/// nothing but an array.
 /// </para>
 /// <para>
 /// Nothing is discarded on the way in. Variables the specification does not define are kept beside
@@ -44,18 +36,14 @@ public sealed class MsspData : IReadOnlyDictionary<string, IReadOnlyList<string>
     private readonly Dictionary<string, IReadOnlyList<string>> _values;
     private readonly List<string> _order;
 
-    private MsspData(Dictionary<string, IReadOnlyList<string>> values, List<string> order, MsspSource source)
+    private MsspData(Dictionary<string, IReadOnlyList<string>> values, List<string> order)
     {
         _values = values;
         _order = order;
-        Source = source;
     }
 
     /// <summary>An empty report — a server that negotiated MSSP and then said nothing.</summary>
-    public static MsspData Empty { get; } = new([], [], MsspSource.Wire);
-
-    /// <summary>How faithfully this data reflects what the server sent.</summary>
-    public MsspSource Source { get; }
+    public static MsspData Empty { get; } = new([], []);
 
     /// <summary>Variable names in the order the server first mentioned them.</summary>
     public IEnumerable<string> Keys => _order;
@@ -66,18 +54,18 @@ public sealed class MsspData : IReadOnlyDictionary<string, IReadOnlyList<string>
 
     /// <summary>Every value of <paramref name="variable"/>, in wire order; empty when it was not sent.</summary>
     public IReadOnlyList<string> this[string variable] =>
-        _values.TryGetValue(MsspVariables.Canonicalise(variable), out var values) ? values : [];
+        _values.TryGetValue(MSSPVariables.Canonicalize(variable), out var values) ? values : [];
 
     /// <summary>The names in this report the specification defines, in wire order.</summary>
-    public IReadOnlyList<string> OfficialNames => _order.Where(MsspVariables.IsOfficial).ToList();
+    public IReadOnlyList<string> OfficialNames => _order.Where(MSSPVariables.IsOfficial).ToList();
 
     /// <summary>The names in this report the specification does not define, in wire order.</summary>
-    public IReadOnlyList<string> UnofficialNames => _order.Where(n => !MsspVariables.IsOfficial(n)).ToList();
+    public IReadOnlyList<string> UnofficialNames => _order.Where(n => !MSSPVariables.IsOfficial(n)).ToList();
 
-    public bool ContainsKey(string variable) => _values.ContainsKey(MsspVariables.Canonicalise(variable));
+    public bool ContainsKey(string variable) => _values.ContainsKey(MSSPVariables.Canonicalize(variable));
 
     public bool TryGetValue(string variable, out IReadOnlyList<string> values) =>
-        _values.TryGetValue(MsspVariables.Canonicalise(variable), out values!);
+        _values.TryGetValue(MSSPVariables.Canonicalize(variable), out values!);
 
     /// <summary>
     /// The <em>default</em> value of <paramref name="variable"/> — the last one sent, per the
@@ -183,6 +171,12 @@ public sealed class MsspData : IReadOnlyDictionary<string, IReadOnlyList<string>
     /// <summary>
     /// An MSSP integer, or null when unreported or unparseable. <c>-1</c> is the specification's
     /// "data not available" marker for the World counts and resolves to null, not to minus one.
+    /// <para>
+    /// This is deliberately narrower than the library's own <c>MSSPVariableCollection.Integer</c>,
+    /// which returns <c>-1</c> as-is on the grounds that a caller may want to tell "the server said it
+    /// cannot count its rooms" from "the server never mentioned rooms". Everything reading this type
+    /// wants a count it can print or compare, and the raw string is still one indexer away.
+    /// </para>
     /// </summary>
     public int? Integer(string variable) =>
         int.TryParse(Default(variable), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
@@ -196,175 +190,42 @@ public sealed class MsspData : IReadOnlyDictionary<string, IReadOnlyList<string>
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
     /// <summary>
-    /// Rebuilds a report from a flat name → values map (a persisted record read back from disk).
-    /// Names are canonicalised on the way in, so a store written by an older spelling still loads.
-    /// </summary>
-    public static MsspData FromValues(
-        IEnumerable<KeyValuePair<string, IReadOnlyList<string>>> values,
-        MsspSource source = MsspSource.Wire)
-    {
-        var builder = new Builder(source);
-        foreach (var (name, list) in values)
-        {
-            foreach (var value in list)
-            {
-                builder.Add(name, value);
-            }
-        }
-
-        return builder.Build();
-    }
-
-    /// <summary>
-    /// Projects TelnetNegotiationCore's own <c>MSSPConfig</c> into this model — the degraded path,
-    /// used only when the subnegotiation bytes were not observable.
+    /// Projects a name → values map into this model, keeping every value of every variable in the
+    /// order given. The library's own <c>MSSPConfig.Variables</c> is exactly such a map, which is the
+    /// path a live session takes; a flat dictionary read back from a file is the other.
     /// <para>
-    /// <b>What the library loses, verified against 2.6.0.</b> Its MSSP reader accumulates every
-    /// <c>MSSP_VAL</c> under one variable into a single byte buffer with no separator, so array
-    /// notation is destroyed before any model sees it: <c>PORT 80 23 4201</c> arrives as the integer
-    /// <c>80234201</c>, and <c>REFERRAL</c> — whose entire content is an array — is a concatenation
-    /// that then fails to bind to the list-typed property and is dropped to null. Boolean variables
-    /// (<c>ANSI</c>, <c>UTF-8</c>, <c>PAY TO PLAY</c> …) fail to bind from their string form and are
-    /// dropped. Variables outside the library's model — including the official <c>CHARSET</c> — are
-    /// dropped rather than collected into its <c>Extended</c> dictionary, which stays empty.
-    /// </para>
-    /// <para>
-    /// This projection therefore recovers the scalars and nothing else, and marks itself
-    /// <see cref="MsspSource.Interpreter"/> so a consumer can tell. It is a fallback, not a design:
-    /// the fix belongs upstream, and <see cref="MsspSubnegotiationParser"/> is why the primary path
-    /// does not need it.
+    /// Names are canonicalised on the way in — by the library's <see cref="MSSPVariables.Canonicalize"/>,
+    /// so there is one vocabulary in the solution rather than two — which means a source that spells
+    /// <c>MINIMUM_AGE</c> and <c>MINIMUM AGE</c> separately still yields one variable. A name that
+    /// canonicalises to nothing is dropped; a variable with no values is kept, because "the server
+    /// mentioned this and said nothing" is a different fact from "the server never mentioned it".
     /// </para>
     /// </summary>
-    public static MsspData FromInterpreterConfig(object? config)
+    public static MsspData From(IEnumerable<KeyValuePair<string, IReadOnlyList<string>>> variables)
     {
-        var builder = new Builder(MsspSource.Interpreter);
-        if (config is null)
+        ArgumentNullException.ThrowIfNull(variables);
+
+        var values = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var order = new List<string>();
+
+        foreach (var (variable, list) in variables)
         {
-            return builder.Build();
-        }
-
-        foreach (var property in config.GetType().GetProperties())
-        {
-            if (property.GetIndexParameters().Length != 0 || !property.CanRead)
-            {
-                continue;
-            }
-
-            object? value;
-            try
-            {
-                value = property.GetValue(config);
-            }
-            catch
-            {
-                continue;
-            }
-
-            if (value is null)
-            {
-                continue;
-            }
-
-            // The library tags each property with the MSSP name it came from; without that the model's
-            // C# spelling (Minimum_Age, UTF_8, XTerm_256_Colors) would leak out as if it were the
-            // protocol's, which is what this projection previously did.
-            var wireName = property.GetCustomAttributesData()
-                .FirstOrDefault(a => a.AttributeType.Name == "NameAttribute")
-                ?.ConstructorArguments is [{ Value: string named }, ..]
-                ? named
-                : null;
-
-            if (value is IDictionary extended)
-            {
-                foreach (DictionaryEntry entry in extended)
-                {
-                    if (entry.Key is string key && entry.Value is { } item)
-                    {
-                        builder.Add(key, item.ToString() ?? string.Empty);
-                    }
-                }
-
-                continue;
-            }
-
-            if (wireName is null)
-            {
-                continue;
-            }
-
-            if (value is IEnumerable items and not string)
-            {
-                foreach (var item in items)
-                {
-                    if (item is not null)
-                    {
-                        builder.Add(wireName, item.ToString() ?? string.Empty);
-                    }
-                }
-
-                continue;
-            }
-
-            builder.Add(wireName, value switch
-            {
-                bool flag => flag ? "1" : "0",
-                _ => value.ToString() ?? string.Empty,
-            });
-        }
-
-        return builder.Build();
-    }
-
-    /// <summary>Accumulates variables and values in wire order.</summary>
-    public sealed class Builder(MsspSource source = MsspSource.Wire)
-    {
-        private readonly Dictionary<string, List<string>> _values = [];
-        private readonly List<string> _order = [];
-
-        /// <summary>
-        /// Records one value of one variable. Repeating a variable appends to its list rather than
-        /// replacing it, which is what makes the two ways MSSP spells an array — repeated variables and
-        /// repeated values — end up in one place and keep their order.
-        /// </summary>
-        public Builder Add(string variable, string value)
-        {
-            List(variable)?.Add(value);
-            return this;
-        }
-
-        /// <summary>
-        /// Records that a variable was sent without recording a value for it. A variable with no
-        /// <c>MSSP_VAL</c> at all is malformed, but "the server mentioned this and said nothing" is a
-        /// different fact from "the server never mentioned it", and inventing an empty value to carry
-        /// the first would erase the difference.
-        /// </summary>
-        public Builder Declare(string variable)
-        {
-            List(variable);
-            return this;
-        }
-
-        private List<string>? List(string variable)
-        {
-            var name = MsspVariables.Canonicalise(variable);
+            var name = MSSPVariables.Canonicalize(variable);
             if (name.Length == 0)
             {
-                return null;
+                continue;
             }
 
-            if (!_values.TryGetValue(name, out var list))
+            if (!values.TryGetValue(name, out var accumulated))
             {
-                list = [];
-                _values[name] = list;
-                _order.Add(name);
+                accumulated = [];
+                values[name] = accumulated;
+                order.Add(name);
             }
 
-            return list;
+            accumulated.AddRange(list);
         }
 
-        public bool IsEmpty => _order.Count == 0;
-
-        public MsspData Build() =>
-            new(_values.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value), [.. _order], source);
+        return new MsspData(values.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value), order);
     }
 }
