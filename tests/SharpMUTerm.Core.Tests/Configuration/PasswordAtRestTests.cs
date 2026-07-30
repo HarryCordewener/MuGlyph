@@ -75,7 +75,6 @@ public class PasswordAtRestTests
             {
                 Name = i == 0 ? "Corvid" : $"Corvid{i}",
                 Password = passwords[i],
-                AutoLogin = true,
             });
         }
 
@@ -736,10 +735,15 @@ public class PasswordAtRestTests
     /// <para>
     /// The version this comes back as is no longer 2, and that is not this claim weakening. v3 changed
     /// what a world's <c>encoding</c> <em>means</em> — a preference became an override, with
-    /// <c>auto</c> as the new default — so the migrator now has a step that moves this document's
-    /// version and touches nothing else in it. The claim is therefore restated where it belongs:
-    /// every character field is exactly as stored, no secret appears, and the world that named no
-    /// encoding lands on <c>auto</c> rather than being pinned to anything.
+    /// <c>auto</c> as the new default. v4 then removed <c>autoLogin</c>, which this document carries.
+    /// Neither touches the <em>secret</em> split, which is what this test is about: no password field
+    /// moved, no secret appeared, and the character still resolves the same login line it always did.
+    /// </para>
+    /// <para>
+    /// The v4 step is asserted here rather than merely tolerated, because this document is exactly the
+    /// case that step exists for — <c>autoLogin: true</c> with no password and no connect line of its
+    /// own, which used to send <c>connect Corvid</c> and would otherwise have gone silent under a rule
+    /// that reads the fields instead of the flag.
     /// </para>
     /// </summary>
     [Test]
@@ -772,10 +776,13 @@ public class PasswordAtRestTests
         await Assert.That(config.Version).IsEqualTo(AppConfiguration.CurrentVersion);
         await Assert.That(config.Worlds[0].Encoding).IsEqualTo("auto");
         await Assert.That(character.Name).IsEqualTo("Corvid");
-        await Assert.That(character.AutoLogin).IsTrue();
         await Assert.That(character.PasswordRef).IsNull();
         await Assert.That(character.Password).IsNull();
+
+        // The line this character was sending, still sent, and now written down where F5 can show it.
+        await Assert.That(character.ConnectString).IsEqualTo("connect %CHARACTER%");
         await Assert.That(character.ResolveConnectString()).IsEqualTo("connect Corvid");
+        await Assert.That(character.Login()).IsEqualTo(LoginPlan.WithoutPassword);
 
         // No secrets file was created by merely reading, and nothing was reported about its absence.
         await Assert.That(File.Exists(temp.SecretsPath)).IsFalse();

@@ -1296,7 +1296,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
     /// <summary>
     /// Builds the session for a world as a given <paramref name="character"/> — or, with none named, as
-    /// its <em>first configured character</em> — so the character's trigger sets, auto-login, on-connect
+    /// its <em>first configured character</em> — so the character's trigger sets, login line, on-connect
     /// lines and log actually reach the runtime. A world with no characters still connects, anonymously,
     /// which is what a host typed on the command line is.
     /// <para>
@@ -1589,7 +1589,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// selecting a character fell through to the "isn't wired" arm — which, reporting through the
     /// active session, said nothing at all when there wasn't one.
     /// <para>
-    /// A character with no session yet gets one opened here, as itself (its trigger sets, auto-login and
+    /// A character with no session yet gets one opened here, as itself (its trigger sets, login line and
     /// log), and a window to print into: the main window while that is still free, otherwise a tab of
     /// its own, because two characters sharing one buffer would interleave their output.
     /// </para>

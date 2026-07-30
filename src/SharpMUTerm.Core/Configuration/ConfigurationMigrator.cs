@@ -28,7 +28,69 @@ public static class ConfigurationMigrator
             MigrateV2ToV3(root);
         }
 
+        if (version < 4)
+        {
+            MigrateV3ToV4(root);
+        }
+
         root["version"] = AppConfiguration.CurrentVersion;
+    }
+
+    /// <summary>
+    /// v3's <c>autoLogin</c> is gone: whether a character logs itself in is now derived from whether it
+    /// has anything to send (<see cref="CharacterDefinition.Login"/>, <see cref="LoginPlan"/>). The
+    /// property is removed here, and the one case that would otherwise lose behaviour is written out
+    /// explicitly.
+    /// <para>
+    /// <b><c>autoLogin: false</c> is discarded, deliberately, and that changes what some configs do.</b>
+    /// It is not a decision anyone made: a <c>bool</c> serializes on every character whether or not it was
+    /// ever touched, so the overwhelming majority of the <c>false</c>s on disk are the default nobody
+    /// chose. Honouring them would preserve exactly the trap this change removes — a saved password with
+    /// that flag at its default is a credential that silently does nothing — so a character with a stored
+    /// password now logs in. That is the fix, stated as a migration rather than left for the user to
+    /// discover.
+    /// </para>
+    /// <para>
+    /// <b><c>autoLogin: true</c> with nothing to send is preserved by writing the line it was sending.</b>
+    /// That combination — the flag on, no password, no connect line of its own — resolved to
+    /// <c>connect &lt;Name&gt;</c> through the default template's empty-value rule, and it is a real
+    /// configuration on a passwordless world. Under the new rule a character with neither a password nor a
+    /// connect line sends nothing, so the migration gives it the line: <c>connect %CHARACTER%</c>, which
+    /// resolves to the identical string. It is written rather than inferred because the alternative is
+    /// invisible state — two characters showing the same greyed default on F5, one sending and one not.
+    /// </para>
+    /// </summary>
+    private static void MigrateV3ToV4(JsonObject root)
+    {
+        if (root["worlds"] is not JsonArray worlds)
+        {
+            return;
+        }
+
+        foreach (var character in worlds.OfType<JsonObject>()
+                     .Select(w => w["characters"] as JsonArray)
+                     .Where(c => c is not null)
+                     .SelectMany(c => c!.OfType<JsonObject>()))
+        {
+            var autoLogin = character["autoLogin"]?.GetValue<bool>() ?? false;
+            character.Remove("autoLogin");
+
+            if (!autoLogin)
+            {
+                continue;
+            }
+
+            // A password (a passwordRef is the only trace of one in this document) or a connect line of
+            // its own already says "log in" under the new rule; there is nothing to write.
+            var hasPassword = character["passwordRef"] is not null;
+            var hasOwnLine = !string.IsNullOrWhiteSpace(character["connectString"]?.GetValue<string>());
+            if (hasPassword || hasOwnLine)
+            {
+                continue;
+            }
+
+            character["connectString"] = "connect " + ConnectStringTemplate.CharacterToken;
+        }
     }
 
     /// <summary>

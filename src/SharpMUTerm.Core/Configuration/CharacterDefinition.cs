@@ -67,27 +67,23 @@ public sealed class CharacterDefinition
     /// </summary>
     public string? ConnectString { get; set; }
 
-    /// <summary>Send the connect string automatically on connect.</summary>
-    /// <remarks>
-    /// This is <em>credentials once a connection exists</em> — it says nothing about whether one is ever
-    /// made. <see cref="ConnectAtStartup"/> is the other fact, and the two are independent in both
-    /// directions: auto-connecting a character whose password you type by hand is normal, and so is a
-    /// character that logs itself in whenever <em>you</em> choose to dial it.
-    /// </remarks>
-    public bool AutoLogin { get; set; }
-
     /// <summary>
     /// Connect this character when the client starts. Zero, one or several characters may be marked, on
     /// any number of worlds; each gets a session at launch, the first in configuration order taking the
     /// main window and the rest a tab apiece.
     /// <para>
-    /// <b>Not <see cref="AutoLogin"/>.</b> That one is <em>what to type once connected</em> — the
-    /// <see cref="ConnectString"/>, sent as soon as the socket is up. This one is <em>whether to open the
-    /// socket at all, unasked</em>. Either without the other is a sensible configuration, which is why
-    /// they are two booleans and not one: marking this alone connects you to the login screen and leaves
-    /// you to log in by hand, and marking <see cref="AutoLogin"/> alone — the normal case — logs you in
-    /// whenever <em>you</em> dial. F5 draws them on adjacent rows and labels them <c>at start</c> and
-    /// <c>auto-login</c> for the same reason.
+    /// <b>Not the login.</b> This says <em>whether to open the socket at all, unasked</em>; what gets
+    /// typed once one is open is <see cref="Login"/>'s question, answered from
+    /// <see cref="Password"/> and <see cref="ConnectString"/>. The two remain independent in both
+    /// directions, and that has not changed: marking this on a character with no password and no connect
+    /// line dials you to the login screen and leaves you to log in by hand, and a character that logs
+    /// itself in whenever <em>you</em> dial needs nothing marked here.
+    /// <para>
+    /// What <em>did</em> change is that the login half is no longer a second boolean beside this one. It
+    /// was <c>autoLogin</c>, and requiring it in addition to a saved password meant this exact
+    /// configuration — marked here, password saved, that flag at its default — connected and then typed
+    /// nothing, silently. See <see cref="LoginPlan"/> for the argument; the point here is only that
+    /// there is one flag on this object about connecting, not two that have to agree.
     /// </para>
     /// <para>
     /// It defaults to <c>false</c>, and there is deliberately no migration marking anybody. Until this
@@ -154,7 +150,6 @@ public sealed class CharacterDefinition
         Password = Password,
         PasswordRef = null,
         ConnectString = ConnectString,
-        AutoLogin = AutoLogin,
         ConnectAtStartup = ConnectAtStartup,
         OnConnect = OnConnect,
         OnDisconnect = OnDisconnect,
@@ -168,4 +163,40 @@ public sealed class CharacterDefinition
     /// secret is joined to the line here, at the last possible moment, and nowhere else.
     /// </summary>
     public string ResolveConnectString() => ConnectStringTemplate.Resolve(ConnectString, Name, Password);
+
+    /// <summary>
+    /// What this character will do at a login prompt, and why — the whole rule, in one place, derived
+    /// from the fields the user filled in rather than from a separate switch they also had to find.
+    /// <para>
+    /// <b>The rule: a character logs itself in when its configuration says what to send.</b> A saved
+    /// <see cref="Password"/> is one such statement; a <see cref="ConnectString"/> the user wrote is the
+    /// other. Neither is a second-order preference about the first — either one, on its own, is as
+    /// unambiguous as a configuration gets, and the way to say "leave the login to me" is to fill in
+    /// neither. See <see cref="LoginPlan"/> for what this replaced and why.
+    /// </para>
+    /// <para>
+    /// A line that resolves to nothing counts as nothing: <c>%PASSWORD%</c> alone with no password set is
+    /// an empty template, and a bare newline at a login prompt is not "no command" — it is a command some
+    /// servers answer to.
+    /// </para>
+    /// </summary>
+    public LoginPlan Login()
+    {
+        var hasPassword = !string.IsNullOrEmpty(Password);
+        var hasOwnLine = !string.IsNullOrWhiteSpace(ConnectString);
+
+        if ((!hasPassword && !hasOwnLine) || string.IsNullOrWhiteSpace(ResolveConnectString()))
+        {
+            return LoginPlan.Nothing;
+        }
+
+        if (!hasPassword)
+        {
+            return LoginPlan.WithoutPassword;
+        }
+
+        return ConnectStringTemplate.UsesPassword(ConnectString)
+            ? LoginPlan.WithPassword
+            : LoginPlan.PasswordUnused;
+    }
 }

@@ -27,7 +27,7 @@ namespace SharpMUTerm.Core.Configuration;
 /// is a secret on screen.</item>
 /// <item><b>Substitution at send time keeps the resolved line off every local surface.</b> Typed input is
 /// echoed and written to the session transcript (<c>WorldSession.SendUserInputAsync</c> →
-/// <c>Print</c>) and is offered to <c>InputHistory</c>; the auto-login line goes straight out through
+/// <c>Print</c>) and is offered to <c>InputHistory</c>; the login line goes straight out through
 /// <c>SendRawAsync</c> with no echo, no transcript write and no history entry. That is unchanged by
 /// where the password is stored.</item>
 /// </list>
@@ -151,6 +151,61 @@ public static class ConnectStringTemplate
         }
 
         return result.ToString();
+    }
+
+    /// <summary>
+    /// Whether <paramref name="template"/> has a live <see cref="PasswordToken"/> in it — one this
+    /// resolver would substitute, as opposed to an escaped <c>%%PASSWORD%%</c>, a misspelt
+    /// <c>%PASWORD%</c> or an unterminated <c>%PASSWORD</c>. Null or blank means the default template,
+    /// which does.
+    /// <para>
+    /// It exists so a stored password can be told from a <em>used</em> one. <see cref="Resolve"/> cannot
+    /// answer that: a line with no password token and a line whose password happens to be empty produce
+    /// the same output, and the difference between them is exactly the difference between a working
+    /// configuration and a credential that is never sent (<see cref="LoginPlan.PasswordUnused"/>).
+    /// </para>
+    /// <para>
+    /// The scan repeats <see cref="Resolve"/>'s three syntax rules rather than sharing its loop, because
+    /// that loop's empty-value space rule needs source positions this question does not have. The two are
+    /// held together by test instead — <c>ConnectStringTemplateTests</c> runs every template in the file
+    /// through both and requires them to agree — which is the check that would actually catch a drift.
+    /// </para>
+    /// </summary>
+    public static bool UsesPassword(string? template)
+    {
+        var source = string.IsNullOrWhiteSpace(template) ? Default : template!;
+
+        for (var i = 0; i < source.Length;)
+        {
+            if (source[i] != Delimiter)
+            {
+                i++;
+                continue;
+            }
+
+            // %% first, so an escape is never read as an opening delimiter — the same order as Resolve.
+            if (i + 1 < source.Length && source[i + 1] == Delimiter)
+            {
+                i += 2;
+                continue;
+            }
+
+            var close = source.IndexOf(Delimiter, i + 1);
+            if (close < 0)
+            {
+                return false; // unterminated: the rest is text, and text holds no tokens
+            }
+
+            if (Named(source[(i + 1)..close], PasswordToken))
+            {
+                return true;
+            }
+
+            // An unrecognised token consumes only its opening delimiter, so its own body is rescanned.
+            i++;
+        }
+
+        return false;
     }
 
     /// <summary>

@@ -69,7 +69,7 @@ public class ScreenReadOnlyTests
             KeepaliveSeconds = 30,
             Characters = new List<CharacterDefinition>
             {
-                new() { Name = "Corvid", AutoLogin = true, OnConnect = "look", TriggerSets = new List<string> { "Comms" } },
+                new() { Name = "Corvid", OnConnect = "look", TriggerSets = new List<string> { "Comms" } },
             },
         },
     };
@@ -158,10 +158,17 @@ public class ScreenReadOnlyTests
     /// line, the on-connect line, <c>at start</c> and the two log values — are the character row's own
     /// fields.
     /// <para>
-    /// <c>at start</c> is the newest and the one the rule has most to say about, because it sits next to
-    /// a readout that looks like it: <c>auto-login</c> mirrors the list row's checkbox and cannot be
-    /// typed here, while <c>at start</c> is a field of the row and can. Drawing them alike would make one
-    /// of the two a lie whichever way round it went.
+    /// <c>at start</c> is the one the rule has most to say about, because it sits directly above a
+    /// readout that looks like it: <c>login</c> is <em>derived</em> from the password and connect fields
+    /// and cannot be typed anywhere, while <c>at start</c> is a field of the row and can. Drawing them
+    /// alike would make one of the two a lie whichever way round it went.
+    /// </para>
+    /// <para>
+    /// The row that used to sit there, <c>auto-login</c>, was a readout of a checkbox on the character
+    /// row — which <c>CharacterRow</c> never drew. So it obeyed this rule ("no well, not editable here")
+    /// while pointing at a control that did not exist, and the setting behind it silently discarded saved
+    /// passwords. <c>login</c> is a readout of a <em>derivation</em>, which has no editable home to point
+    /// at and cannot acquire one.
     /// </para>
     /// <para>
     /// The <c>password</c> row moved sides. It used to be asserted here as a readout, drawn muted and
@@ -183,16 +190,61 @@ public class ScreenReadOnlyTests
             await Assert.That(InAWell(Row(lines, label))).IsTrue().Because(label + " is editable");
         }
 
-        foreach (var label in new[] { "auto-login", "session" })
+        foreach (var label in new[] { "login", "session" })
         {
             await Assert.That(InAWell(Row(lines, label))).IsFalse().Because(label + " is a readout");
             await Assert.That(Row(lines, label)).Contains(ScreenPalette.Muted).Because(label);
         }
 
-        // The row's one checkbox is auto-login, and it is drawn in the list rather than in this form —
-        // so `at start` may not grow one here either. A second box on the form would promise Space a
-        // second meaning on a row that has none.
+        // No checkbox anywhere on this form — and now no checkbox on the character's list row either
+        // (CharacterRow draws a marker and a name). Everything settable about a character is one of the
+        // seven welled rows above, which is the property that replaced "the row's one checkbox is
+        // auto-login": that sentence was true of the model and false of the screen.
         await Assert.That(lines.Any(HasCheckbox)).IsFalse();
+    }
+
+    /// <summary>
+    /// The <c>login</c> row in each of its four states — the row that replaced <c>auto-login</c>, and the
+    /// only place on this screen a user can find out that a saved password is not going to be sent.
+    /// <para>
+    /// Three of the four are ordinary readouts in <see cref="ScreenPalette.Muted"/>. The fourth is not:
+    /// a saved password with no <c>%PASSWORD%</c> in the connect line is a configuration that cannot do
+    /// what it looks like it does, so it takes the <see cref="ScreenPalette.Warn"/> ink and the <c>▲</c>
+    /// the certificate row uses — the screen's existing spelling for "this is wrong, not merely off".
+    /// </para>
+    /// </summary>
+    [Test]
+    public async Task Worlds_TheLoginRowReportsWhatEachConfigurationWillActuallySend()
+    {
+        static string LoginRow(CharacterDefinition character) =>
+            Row(WorldsScreenRenderer.FormColumn(character, ScreenPalette.Accent), "login");
+
+        // Nothing configured: the deliberate "I log in by hand" state.
+        var bare = new CharacterDefinition { Name = "Corvid" };
+        await Assert.That(Visible(LoginRow(bare)).Trim())
+            .IsEqualTo($"login       {WorldsScreenRenderer.LoginNothing}");
+        await Assert.That(LoginRow(bare)).Contains(ScreenPalette.Muted);
+
+        // A saved password, and the default template to put it in — the ordinary case, and the one the
+        // maintainer's configuration was in while sending nothing at all.
+        var withPassword = new CharacterDefinition { Name = "Corvid", Password = "hunter2" };
+        await Assert.That(Visible(LoginRow(withPassword)).Trim())
+            .IsEqualTo($"login       {WorldsScreenRenderer.LoginWithPassword}");
+
+        // A connect line and no password: a passwordless world, configurable and reported as such.
+        var withoutPassword = new CharacterDefinition { Name = "Corvid", ConnectString = "connect %CHARACTER%" };
+        await Assert.That(Visible(LoginRow(withoutPassword)).Trim())
+            .IsEqualTo($"login       {WorldsScreenRenderer.LoginWithoutPassword}");
+
+        // And the one that cannot work: the password is saved, the line has nowhere to put it.
+        var unused = new CharacterDefinition
+        {
+            Name = "Corvid", Password = "hunter2", ConnectString = "connect %CHARACTER%",
+        };
+        await Assert.That(Visible(LoginRow(unused)).Trim())
+            .IsEqualTo($"login       ▲ {WorldsScreenRenderer.LoginPasswordUnused}");
+        await Assert.That(LoginRow(unused)).Contains(ScreenPalette.Warn);
+        await Assert.That(LoginRow(unused)).DoesNotContain(ScreenPalette.Muted);
     }
 
     /// <summary>
@@ -202,16 +254,17 @@ public class ScreenReadOnlyTests
     /// that only sends a login line says that is what it does.
     /// </summary>
     [Test]
-    public async Task Worlds_AtStartAndAutoLoginReadAsTwoDifferentThings()
+    public async Task Worlds_AtStartAndLoginReadAsTwoDifferentThings()
     {
         var worlds = Worlds();
         worlds[0].Characters[0].ConnectAtStartup = true;
+        worlds[0].Characters[0].Password = "hunter2";
         var lines = WorldsScreenRenderer.FormColumn(worlds[0].Characters[0], ScreenPalette.Accent);
 
         await Assert.That(Visible(Row(lines, "at start")).Trim())
             .IsEqualTo($"at start    {WorldsScreenRenderer.StartupOn}");
-        await Assert.That(Visible(Row(lines, "auto-login")).Trim())
-            .IsEqualTo("auto-login  yes — sends the connect line");
+        await Assert.That(Visible(Row(lines, "login")).Trim())
+            .IsEqualTo($"login       {WorldsScreenRenderer.LoginWithPassword}");
 
         // Neither label may contain the other's word: "auto-start" beside "auto-login" is the confusion
         // the naming exists to avoid, and it is the one a later edit is most likely to reintroduce.
@@ -234,21 +287,37 @@ public class ScreenReadOnlyTests
     /// one that just grew, and the row under it grew a clause at the same time.
     /// </summary>
     [Test]
-    public async Task Worlds_TheCharacterFormStillFitsIts48CellPanelWithTheStartupRow()
+    public async Task Worlds_TheCharacterFormStillFitsIts48CellPanelInEveryLoginState()
     {
         const int panel = 48 - 1; // ScreenChrome.Indent spends one of them (WorldsScreenView)
 
+        // Both states of `at start` crossed with all four answers `login` can give — the widest being
+        // the warning, which spends two extra cells on `▲ ` that the others do not. A row that wraps
+        // costs the form a line the view never measured, and this is a form that just grew a row.
+        (string? Password, string? Connect)[] logins =
+        {
+            (null, null),                              // LoginPlan.Nothing
+            ("hunter2", null),                         // LoginPlan.WithPassword
+            (null, "connect %CHARACTER%"),             // LoginPlan.WithoutPassword
+            ("hunter2", "connect %CHARACTER%"),        // LoginPlan.PasswordUnused — the widest
+        };
+
         foreach (var marked in new[] { true, false })
         {
-            var worlds = Worlds();
-            worlds[0].Characters[0].ConnectAtStartup = marked;
-            worlds[0].Characters[0].AutoLogin = marked;
-
-            foreach (var line in WorldsScreenRenderer.FormColumn(worlds[0].Characters[0], ScreenPalette.Accent))
+            foreach (var (password, connect) in logins)
             {
-                await Assert.That(MarkupText.VisibleLength(line))
-                    .IsLessThanOrEqualTo(panel)
-                    .Because($"marked={marked}: {line}");
+                var worlds = Worlds();
+                var character = worlds[0].Characters[0];
+                character.ConnectAtStartup = marked;
+                character.Password = password;
+                character.ConnectString = connect;
+
+                foreach (var line in WorldsScreenRenderer.FormColumn(character, ScreenPalette.Accent))
+                {
+                    await Assert.That(MarkupText.VisibleLength(line))
+                        .IsLessThanOrEqualTo(panel)
+                        .Because($"marked={marked} login={character.Login()}: {line}");
+                }
             }
         }
     }

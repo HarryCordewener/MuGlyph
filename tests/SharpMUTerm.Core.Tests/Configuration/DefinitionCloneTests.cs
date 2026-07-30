@@ -17,7 +17,6 @@ public class DefinitionCloneTests
         Name = "Kaz",
         Password = "hunter2",
         ConnectString = "connect Kaz hunter2",
-        AutoLogin = true,
         ConnectAtStartup = true,
         OnConnect = "look",
         OnDisconnect = "quit",
@@ -33,7 +32,13 @@ public class DefinitionCloneTests
         await Assert.That(copy.Name).IsEqualTo("Kaz");
         await Assert.That(copy.Password).IsEqualTo("hunter2");
         await Assert.That(copy.ConnectString).IsEqualTo("connect Kaz hunter2");
-        await Assert.That(copy.AutoLogin).IsTrue();
+
+        // What the copy will *do* at a login prompt, not merely which fields came across. This replaced
+        // an `AutoLogin` assertion, and it is the stronger claim: the flag is gone, and a duplicate that
+        // carried both fields but somehow logged in differently is the failure worth catching. Kaz's line
+        // has the password baked in and so has no %PASSWORD% token — the state F5 draws a warning for.
+        await Assert.That(copy.Login()).IsEqualTo(LoginPlan.PasswordUnused);
+        await Assert.That(copy.Login()).IsEqualTo(Character().Login());
 
         // Carried, like the password and unlike PasswordRef: a duplicate draws the mark on its own F5
         // row, so a copy that will dial at launch says so — while one that silently would not is the
@@ -60,14 +65,14 @@ public class DefinitionCloneTests
         copy.TriggerSets.Remove("Comms");
         copy.Logging.Format = LogFormat.None;
         copy.Logging.Directory = "/logs/copy";
-        copy.AutoLogin = false;
+        copy.ConnectString = null;
         copy.ConnectAtStartup = false;
 
         await Assert.That(original.Name).IsEqualTo("Kaz");
         await Assert.That(original.TriggerSets).IsEquivalentTo(new[] { "Comms", "Combat" });
         await Assert.That(original.Logging.Format).IsEqualTo(LogFormat.Html);
         await Assert.That(original.Logging.Directory).IsEqualTo("/logs/kaz");
-        await Assert.That(original.AutoLogin).IsTrue();
+        await Assert.That(original.ConnectString).IsEqualTo("connect Kaz hunter2");
         await Assert.That(original.ConnectAtStartup).IsTrue();
 
         // And in the other direction — an aliasing bug is only half-visible from one side.

@@ -6,7 +6,7 @@ namespace SharpMUTerm.Core.Configuration;
 /// </summary>
 /// <param name="World">The world to dial.</param>
 /// <param name="Character">
-/// The character whose trigger sets, auto-login line, on-connect lines and log the session runs, or
+/// The character whose trigger sets, login line, on-connect lines and log the session runs, or
 /// null for an anonymous session.
 /// </param>
 public readonly record struct StartupConnection(WorldDefinition World, CharacterDefinition? Character);

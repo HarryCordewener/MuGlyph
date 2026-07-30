@@ -47,7 +47,7 @@ public sealed class WorldSession : IAsyncDisposable
     /// Creates a session for a world and (optionally) the character being connected as. Automation
     /// is composed from the union of <paramref name="triggerSets"/> — resolve them for a character
     /// via <see cref="AppConfiguration.ResolveTriggerSets"/>. A null character yields an anonymous
-    /// session (e.g. an ad-hoc command-line connection) with no auto-login.
+    /// session (e.g. an ad-hoc command-line connection) that logs itself in to nothing.
     /// <para>
     /// <paramref name="triggerSets"/> is not a permanent choice: <see cref="ReloadAutomation"/> re-points
     /// a live session at whatever the configuration says now, which is what makes assigning a set or
@@ -398,15 +398,28 @@ public sealed class WorldSession : IAsyncDisposable
     }
 
     /// <summary>
-    /// Sends the character's auto-login line (when <see cref="CharacterDefinition.AutoLogin"/> is
-    /// set) followed by its semicolon-separated <see cref="CharacterDefinition.OnConnect"/> commands.
-    /// A no-op for anonymous sessions.
+    /// Sends the character's login line — when <see cref="CharacterDefinition.Login"/> says there is one
+    /// — followed by its semicolon-separated <see cref="CharacterDefinition.OnConnect"/> commands. A
+    /// no-op for anonymous sessions.
     /// <para>
-    /// This is deliberately <see cref="SendRawAsync"/> and not <see cref="SendUserInputAsync"/>: raw
-    /// goes straight to telnet with no local echo and no transcript write, so the one line in this app
-    /// that carries a password never reaches the output pane or the session log. Typing the same line by
-    /// hand <em>is</em> echoed and logged — which is the whole reason the password is a field and the
-    /// login line a template (see <see cref="ConnectStringTemplate"/>).
+    /// <b>The on-connect commands are not gated on the login.</b> They never were, and they must not
+    /// become so: they are the things you would type after logging in, and someone who types their own
+    /// connect line still wants <c>+who</c> afterwards. They run for a character whose
+    /// <see cref="LoginPlan"/> is <see cref="LoginPlan.Nothing"/> exactly as they do for one that logged
+    /// itself in.
+    /// </para>
+    /// <para>
+    /// The login line is deliberately <see cref="SendRawAsync"/> and not
+    /// <see cref="SendUserInputAsync"/>: raw goes straight to telnet with no local echo and no transcript
+    /// write, so the one line in this app that carries a password never reaches the output pane or the
+    /// session log. Typing the same line by hand <em>is</em> echoed and logged — which is the whole reason
+    /// the password is a field and the login line a template (see <see cref="ConnectStringTemplate"/>).
+    /// </para>
+    /// <para>
+    /// It does say that it happened, though (<see cref="LoginSent"/>), naming the character and never the
+    /// line. A login that goes out in complete silence is indistinguishable from one that was never sent
+    /// — which is the position a user is in when the configuration is inert, and the position this whole
+    /// change exists to get them out of. The inert case gets a line of its own for the same reason.
     /// </para>
     /// </summary>
     private async Task SendLoginAsync(CancellationToken cancellationToken)
@@ -417,16 +430,16 @@ public sealed class WorldSession : IAsyncDisposable
             return;
         }
 
-        if (character.AutoLogin)
+        var plan = character.Login();
+        if (plan is not LoginPlan.Nothing)
         {
-            // A template can legitimately resolve to nothing — `%PASSWORD%` alone, with no password set
-            // — and a bare newline at a login prompt is not "no command", it is a command some servers
-            // answer to. Send nothing rather than something meaningless.
-            var login = character.ResolveConnectString();
-            if (!string.IsNullOrWhiteSpace(login))
-            {
-                await SendRawAsync(login, cancellationToken).ConfigureAwait(false);
-            }
+            await SendRawAsync(character.ResolveConnectString(), cancellationToken).ConfigureAwait(false);
+            PrintSystem(LoginSent(character.Name));
+        }
+
+        if (plan is LoginPlan.PasswordUnused)
+        {
+            PrintSystem(PasswordUnusedWarning(character.Name));
         }
 
         foreach (var command in SplitCommands(character.OnConnect))
@@ -434,6 +447,22 @@ public sealed class WorldSession : IAsyncDisposable
             await SendRawAsync(command, cancellationToken).ConfigureAwait(false);
         }
     }
+
+    /// <summary>
+    /// What the session prints when it has logged itself in. It names the character and not the line,
+    /// because the line is the one string in this client worth keeping out of the transcript — and
+    /// <see cref="PrintSystem"/> writes to the transcript.
+    /// </summary>
+    internal static string LoginSent(string character) => $"*** Sent the login line for {character}.";
+
+    /// <summary>
+    /// What the session prints when a saved password has nowhere to go
+    /// (<see cref="LoginPlan.PasswordUnused"/>). It is a warning at the moment it matters, beside the
+    /// login it was not part of; F5 says the same thing while you are editing the character.
+    /// </summary>
+    internal static string PasswordUnusedWarning(string character) =>
+        $"*** {character}'s saved password was not sent — its connect line has no " +
+        $"{ConnectStringTemplate.PasswordToken}.";
 
     /// <summary>
     /// Realises the active trigger sets' <see cref="TimerDefinition"/>s on the session's

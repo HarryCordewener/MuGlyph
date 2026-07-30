@@ -366,7 +366,7 @@ internal readonly record struct ScreenField(
     /// <para>
     /// It is not <see cref="Optional"/>, whose null shows as an empty well: a login line the user has
     /// never touched still <em>has</em> a value, and an empty box would say the opposite of the truth
-    /// about what auto-login is about to send. Opening the field on the effective line is also what
+    /// about what this character is about to send. Opening the field on the effective line is also what
     /// makes it editable in practice — the syntax is discoverable by looking at the thing that already
     /// works rather than by being told about it.
     /// </para>
