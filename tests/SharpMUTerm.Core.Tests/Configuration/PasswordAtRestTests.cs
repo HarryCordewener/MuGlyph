@@ -726,12 +726,20 @@ public class PasswordAtRestTests
     /// Nothing was migrated, and nothing needed to be. An existing v2 document has no <c>passwordRef</c>,
     /// which deserializes to null and means "no stored password" — the state the user was already in, since
     /// <see cref="CharacterDefinition.Password"/> was never serialized and so nothing exists on disk to
-    /// convert. <see cref="AppConfiguration.CurrentVersion"/> does not move: it exists for renames and
-    /// restructures, not for an additive optional field.
+    /// convert. The secrets split contributed no migration step of its own: versions exist for renames
+    /// and restructures, not for an additive optional field.
     /// <para>
     /// Asserted against a raw stored document rather than a round-trip, the way the connect-string default's
     /// own no-migration test is, because the thing being pinned is what happens to bytes somebody already
     /// has.
+    /// </para>
+    /// <para>
+    /// The version this comes back as is no longer 2, and that is not this claim weakening. v3 changed
+    /// what a world's <c>encoding</c> <em>means</em> — a preference became an override, with
+    /// <c>auto</c> as the new default — so the migrator now has a step that moves this document's
+    /// version and touches nothing else in it. The claim is therefore restated where it belongs:
+    /// every character field is exactly as stored, no secret appears, and the world that named no
+    /// encoding lands on <c>auto</c> rather than being pinned to anything.
     /// </para>
     /// </summary>
     [Test]
@@ -758,10 +766,13 @@ public class PasswordAtRestTests
         var config = ConfigurationStore.Load(temp.ConfigPath, notices.Add);
         var character = config.Worlds[0].Characters[0];
 
-        // The stored document said version 2 and comes back as version 2: the migrator did not need to move
-        // it, which is the claim. A bumped CurrentVersion would fail here rather than pass silently.
-        await Assert.That(config.Version).IsEqualTo(2);
+        // Brought to the current version by the v3 encoding rename and by nothing else: no character
+        // field moved, and the world that named no encoding reads `auto` — the new default — rather
+        // than being pinned to whatever the old default happened to be.
         await Assert.That(config.Version).IsEqualTo(AppConfiguration.CurrentVersion);
+        await Assert.That(config.Worlds[0].Encoding).IsEqualTo("auto");
+        await Assert.That(character.Name).IsEqualTo("Corvid");
+        await Assert.That(character.AutoLogin).IsTrue();
         await Assert.That(character.PasswordRef).IsNull();
         await Assert.That(character.Password).IsNull();
         await Assert.That(character.ResolveConnectString()).IsEqualTo("connect Corvid");

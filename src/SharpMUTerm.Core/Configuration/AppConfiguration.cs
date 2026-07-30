@@ -8,7 +8,7 @@ namespace SharpMUTerm.Core.Configuration;
 public sealed class AppConfiguration
 {
     /// <summary>The current on-disk schema version. Older configs are upgraded by <see cref="ConfigurationMigrator"/>.</summary>
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     /// <summary>Schema version, for future migrations.</summary>
     public int Version { get; set; } = CurrentVersion;
@@ -44,7 +44,12 @@ public sealed class AppConfiguration
     /// </summary>
     public string? GraphicsOverride { get; set; }
 
-    /// <summary>Default charset preference order (IANA names), most-preferred first.</summary>
+    /// <summary>
+    /// The CHARSET preference order (IANA names) every world states, most-preferred first. A world on
+    /// <c>auto</c> negotiates with exactly this and decodes with whatever the server picks from it; a
+    /// world that names an encoding puts that at the head and overrides the result. When a server
+    /// never negotiates CHARSET at all — most MU* servers — the head of this list is what is assumed.
+    /// </summary>
     public List<string> CharsetOrder { get; set; } = new() { "utf-8", "iso-8859-1" };
 
     /// <summary>How inbound text is drawn — the F7 "Text &amp; ANSI" screen's settings.</summary>

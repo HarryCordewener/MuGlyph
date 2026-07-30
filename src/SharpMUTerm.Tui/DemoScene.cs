@@ -1,5 +1,6 @@
 using SharpMUTerm.Core.Automation;
 using SharpMUTerm.Core.Configuration;
+using SharpMUTerm.Core.Telnet;
 using SharpMUTerm.Core.Text;
 using SharpMUTerm.Core.Workspaces;
 
@@ -34,7 +35,10 @@ internal static class DemoScene
             Host = "aetherfall.mux",
             Port = 4201,
             UseTls = true,
-            Encoding = "UTF-8",
+
+            // Left on `auto` — the default, and the case the F5 screen and the status row both exist to
+            // show. Grapevine below pins one, so a single frame shows both a follower and an override.
+            Encoding = TelnetSessionOptions.AutoEncodingName,
             KeepaliveSeconds = 30,
             Accent = SharpMUTermApp.AccentPalette[0],
             Characters =

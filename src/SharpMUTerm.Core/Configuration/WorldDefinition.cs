@@ -65,8 +65,18 @@ public sealed class WorldDefinition
     /// <summary>Echo typed commands locally into the output window.</summary>
     public bool LocalEcho { get; set; } = true;
 
-    /// <summary>The wire text encoding for this world (e.g. <c>UTF-8</c>, <c>ISO-8859-1</c>).</summary>
-    public string Encoding { get; set; } = "UTF-8";
+    /// <summary>
+    /// This world's text encoding: <c>auto</c> (the default) to follow CHARSET negotiation, or a named
+    /// encoding (e.g. <c>ISO-8859-1</c>) to <em>override</em> it.
+    /// <para>
+    /// An override is used for decoding whatever the server proposes, and is still offered at the head
+    /// of the negotiation order so a cooperative server agrees rather than diverging. Under
+    /// <c>auto</c> the session states the app-wide
+    /// <see cref="AppConfiguration.CharsetOrder"/> and uses whatever the server settles on — or, when
+    /// the server never implements RFC 2066, the head of that order.
+    /// </para>
+    /// </summary>
+    public string Encoding { get; set; } = SharpMUTerm.Core.Telnet.TelnetSessionOptions.AutoEncodingName;
 
     /// <summary>Seconds between keepalive probes (NOP/telnet), or 0 to disable.</summary>
     public int KeepaliveSeconds { get; set; }

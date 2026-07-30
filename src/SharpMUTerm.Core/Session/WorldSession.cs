@@ -30,6 +30,14 @@ public sealed class WorldSession : IAsyncDisposable
     private ILogSink? _log;
     private readonly TextSettings? _text;
     private readonly InputSettings? _input;
+
+    /// <summary>
+    /// The app-wide CHARSET preference order (<see cref="AppConfiguration.CharsetOrder"/>), held by
+    /// reference like <see cref="_text"/> and <see cref="_input"/>. Null means the built-in default
+    /// order. This is what a world on <c>auto</c> states as its preference — before it was threaded
+    /// through here the app-wide setting existed in the config and was read by nothing at all.
+    /// </summary>
+    private readonly IReadOnlyList<string>? _charsetOrder;
     private TimerDefinition[] _timers = Array.Empty<TimerDefinition>();
     private readonly List<IDisposable> _timerHandles = new();
     private ITelnetSession? _telnet;
@@ -63,7 +71,8 @@ public sealed class WorldSession : IAsyncDisposable
         int scrollbackCapacity = ScrollbackBuffer.DefaultCapacity,
         TextSettings? text = null,
         InputSettings? input = null,
-        ScrollbackSpillOptions? spill = null)
+        ScrollbackSpillOptions? spill = null,
+        IReadOnlyList<string>? charsetOrder = null)
     {
         World = world ?? throw new ArgumentNullException(nameof(world));
         Character = character;
@@ -71,6 +80,7 @@ public sealed class WorldSession : IAsyncDisposable
         _log = log;
         _text = text;
         _input = input;
+        _charsetOrder = charsetOrder;
         _parser = CreateParser(world.ContentFormat);
         _emoji = world.Emoji.Enabled
             ? new EmojiSubstitutor(world.Emoji.Emoticons, world.Emoji.Shortcodes)
@@ -197,10 +207,22 @@ public sealed class WorldSession : IAsyncDisposable
 
     public event EventHandler<SpawnLineEventArgs>? SpawnLine;
 
+    /// <summary>Raised when the encoding in force changes — see <see cref="CurrentEncoding"/>.</summary>
+    public event EventHandler<SessionEncodingEventArgs>? EncodingChanged;
+
     /// <summary>Raised for each trigger-requested script callback (consumed by the scripting layer).</summary>
     public event EventHandler<TriggerScriptInvocation>? TriggerScriptRequested;
 
     public bool IsConnected => _telnet?.IsConnected == true;
+
+    /// <summary>
+    /// The encoding this session's text is actually going over the wire in, and why — negotiated by
+    /// CHARSET, pinned by the world, or assumed because nothing negotiated. Null when there is no
+    /// telnet session to ask, which is the only honest answer before a connect: <see cref="World"/>'s
+    /// <see cref="WorldDefinition.Encoding"/> is a <em>preference</em>, and reporting it as though it
+    /// were in force is what this property exists to stop.
+    /// </summary>
+    public SessionEncoding? CurrentEncoding => _telnet?.CurrentEncoding;
 
     /// <summary>Whether this session is writing its output to a log right now.</summary>
     public bool IsLogging => _log is not null;
@@ -258,6 +280,7 @@ public sealed class WorldSession : IAsyncDisposable
         telnet.GmcpReceived += (_, e) => GmcpReceived?.Invoke(this, e);
         telnet.MsdpReceived += (_, e) => MsdpReceived?.Invoke(this, e);
         telnet.MsspReceived += (_, e) => MsspReceived?.Invoke(this, e);
+        telnet.EncodingChanged += OnEncodingChanged;
         telnet.Disconnected += OnDisconnected;
 
         try
@@ -524,6 +547,26 @@ public sealed class WorldSession : IAsyncDisposable
         LinePrinted?.Invoke(this, line);
     }
 
+    /// <summary>
+    /// A charset change gets one line in the client message log and nothing else.
+    /// <para>
+    /// Not <c>PrintSystem</c>: that writes into the character's transcript, which someone keeps, and a
+    /// protocol detail is not part of what was said in the room. And not a status-row notice either —
+    /// a notice displaces the row for something the user cannot act on, and the overwhelmingly common
+    /// case is a successful negotiation at connect time, which is not news. The log is where you look
+    /// when the text is wrong, and the status row already says what is in force.
+    /// </para>
+    /// </summary>
+    private void OnEncodingChanged(object? sender, SessionEncodingEventArgs e)
+    {
+        Logger.LogInformation(
+            "{World}: text encoding is now {Encoding} ({Source}).",
+            World.Name,
+            e.Encoding.Name,
+            e.Encoding.Source);
+        EncodingChanged?.Invoke(this, e);
+    }
+
     private void OnDisconnected(object? sender, SessionDisconnectedEventArgs e)
     {
         StopTimers();
@@ -546,10 +589,14 @@ public sealed class WorldSession : IAsyncDisposable
     }
 
     /// <summary>
-    /// The real transport + telnet stack for this world, with the world's own
-    /// <see cref="WorldDefinition.Encoding"/> at the head of the CHARSET preference order — otherwise
-    /// a world set to Latin-1 would still negotiate UTF-8 and the F5 field would be decoration.
-    /// Instance-level (not static) for exactly that reason: the factory has to see the world.
+    /// The real transport + telnet stack for this world.
+    /// <para>
+    /// The world's <see cref="WorldDefinition.Encoding"/> is an <em>override</em> when it names one:
+    /// stated at the head of the CHARSET preference order so a cooperative server agrees to it, and
+    /// used for decoding whatever the server says. <c>auto</c> — the default — states the app-wide
+    /// order instead and uses whatever negotiation settles on. Instance-level (not static) because the
+    /// factory has to see the world to do either.
+    /// </para>
     /// <para>
     /// The session's <see cref="Logger"/> goes in with it. It used to be left out, so every diagnostic
     /// TelnetNegotiationCore produces — negotiation traces, option state, keepalive and MCCP/GMCP/MSDP
@@ -557,15 +604,21 @@ public sealed class WorldSession : IAsyncDisposable
     /// misbehaves, and it now reaches the client's diagnostics pipeline.
     /// </para>
     /// </summary>
-    private ITelnetSession DefaultSessionFactory(ConnectionOptions options) =>
-        new TelnetSession(
+    private ITelnetSession DefaultSessionFactory(ConnectionOptions options)
+    {
+        var (order, encodingOverride) =
+            TelnetSessionOptions.ResolveWorldEncoding(World.Encoding, _charsetOrder);
+
+        return new TelnetSession(
             new TcpTransport(options),
             Logger,
             options: new TelnetSessionOptions
             {
-                CharsetOrder = TelnetSessionOptions.PreferEncoding(World.Encoding),
+                CharsetOrder = order,
+                EncodingOverride = encodingOverride,
                 KeepaliveInterval = TelnetSessionOptions.ResolveKeepalive(World.KeepaliveSeconds),
             });
+    }
 
     public async ValueTask DisposeAsync()
     {

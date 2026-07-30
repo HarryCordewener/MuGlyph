@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.Extensions.Logging;
 using SharpMUTerm.Core.Commands;
 using SharpMUTerm.Core.Automation;
@@ -88,6 +89,16 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// dropping never reached the rail's dots and never reached the header's count either.
     /// </summary>
     private readonly HashSet<string> _demoConnectedKeys = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The encoding the <em>demo scene</em> declares its connection settled on. It exists for the same
+    /// reason <see cref="_demoConnectedKeys"/> does: the status row's encoding cell now reports what a
+    /// live session is decoding with, and the demo opens no sockets, so there is no session to ask —
+    /// but the demo <em>does</em> build the connected row (see <see cref="LoadDemoScene"/>), so without
+    /// this the cell would silently vanish from every snapshot. Held in the type the live path produces,
+    /// and <c>StatusEncodingTests</c> pins that what it declares is a state the live writer can reach.
+    /// </summary>
+    private SessionEncoding? _demoEncoding;
 
     /// <summary>
     /// The output window each open session prints into. This is the session ↔ pane link NAWS resolves
@@ -999,6 +1010,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         }
 
         _statusIdentity = ("Corvid", "aetherfall.mux", 4201, "connected");
+
+        // The ordinary case, and so the one the snapshots should show: Aetherfall is on `auto` and its
+        // server agreed to UTF-8, which the row draws unqualified. A world that pinned an encoding
+        // would read "utf-8 forced" and a server that never negotiated "utf-8 assumed".
+        _demoEncoding = new SessionEncoding(Encoding.UTF8, EncodingSource.Negotiated);
         _statusBar.SetContent(new List<string> { StatusBarMarkup("Corvid", "connected") });
         _header.SetContent(new List<string> { HeaderMarkup() });
         _input.SetAndNotify("say hello there");
@@ -1128,7 +1144,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 _config.Text,
                 _config.Input,
                 TelnetFactory,
-                _config.ScrollbackSpill)
+                _config.ScrollbackSpill,
+                _config.CharsetOrder)
             : _sessions.Open(
                 world,
                 character,
@@ -1138,7 +1155,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 _config.Text,
                 _config.Input,
                 TelnetFactory,
-                _config.ScrollbackSpill);
+                _config.ScrollbackSpill,
+                _config.CharsetOrder);
     }
 
     /// <summary>
@@ -1267,6 +1285,11 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             }
         });
         session.SpawnLine += (_, e) => OnUi(() => OnSpawnLine(session, e.Target, e.Line));
+
+        // The status row's encoding cell is live, so it has to be repainted when the thing it reports
+        // changes. WorldSession has already put the change in the client message log by the time this
+        // runs (see WorldSession.OnEncodingChanged) — this is only the repaint.
+        session.EncodingChanged += (_, _) => OnUi(UpdateStatus);
         RefreshTabTitles();
         UpdateStatus();
     }
@@ -6902,6 +6925,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         };
     }
 
+    /// <summary>
+    /// The encoding the active session is decoding with. The demo scene has no session and declares one
+    /// instead (<see cref="_demoEncoding"/>); a live client with nothing connected never reaches this
+    /// row at all, because <see cref="UpdateStatus"/> sends it to <see cref="NotConnectedMarkup"/>.
+    /// </summary>
+    private SessionEncoding? EffectiveEncoding() => _active?.CurrentEncoding ?? _demoEncoding;
+
     private string StatusBarMarkup(string character, string state)
     {
         var accent = ActiveWorld() is { } world ? AccentHex(world.Accent) : "#00f5b7";
@@ -6931,8 +6961,17 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // permanent cell said the same thing for the whole session — and the rail had already reached
         // that conclusion for the same reason (RailModel omits the address deliberately, which
         // RailModelTests pins). F5 is where a world's address is read and edited.
-        var encoding = ActiveWorld() is { } enc ? enc.World.Encoding : "UTF-8";
-        right.Add($"[dim]{Escape(encoding)}[/]");
+        // The encoding actually in force on the active session — not the world's configured one, which
+        // is a *preference* and was drawn here as though it were fact. It differs from the configuration
+        // in both directions: a world left on `auto` shows whatever CHARSET settled on, and a server
+        // that never negotiates shows what we assumed instead. The qualifier is the point of the cell:
+        // "utf-8" means the server agreed, "utf-8 assumed" means nobody said, "iso-8859-1 forced" means
+        // you did. With nothing connected there is no fact to report, and the cell is not drawn — the
+        // same rule that took the address and the invented latency meter off this row.
+        if (EffectiveEncoding() is { } encoding)
+        {
+            right.Add($"[dim]{Escape(encoding.Label)}[/]");
+        }
 
         // The character count lives at the bottom now (the input gutter is gone); while recalling
         // history it becomes the "back to draft" hint instead. Both read the armed bar, so a count that
