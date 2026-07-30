@@ -27,6 +27,16 @@ fallbacks) for inline images/maps.
   TelnetNegotiationCore; **MCCP, MSDP, MXP, and Pueblo are our own app layer.**
 - **Config:** fresh JSON schema of our own (worlds hold characters; automation lives in shared
   named trigger sets), versioned with automatic migration between schema revisions.
+- **The command line is ours** (`InputBarControl` + `InputBuffer` + `InputLayout`), and stays ours.
+  The framework has two text controls and neither is the answer. `PromptControl` genuinely cannot
+  do it — single-line by construction (its setter turns `\n` into a space), one row tall, scrolls
+  sideways, and unfocuses on ⏎ with no way to switch that off. `MultilineEditControl` is a capable
+  *editor* (wrap, undo, find/replace, mouse, paste, a pluggable gutter) and is worth knowing about,
+  but a command line is not an editor: ⏎ has to send rather than insert, the bar grows to its
+  content between a floor and a ceiling, it carries a prompt the text indents past, and two of them
+  share one caret with per-window drafts and history recall behind it. Expanding ours is the call.
+  Offering it upstream once it is genuinely finished and problem-free is a someday, not a plan —
+  do not treat it as pending work.
 - **License:** MIT.
 
 ## Repository state
