@@ -160,7 +160,7 @@ The test, applied to everything currently on the row and everything proposed for
 | Accent dot | on switch | yes (which world you are looking at) | rail, header | **keep** — it is the colour key the rest of the chrome uses |
 | Character name | on switch | yes | header, rail, prompt | **keep**, but see §6 — it must name the *focused* pane's character |
 | Connection state | yes | yes | rail dot | **keep** — the rail says *that* it is connected, this says *what state* (connecting / faulted) |
-| Scrollback indicator | yes | yes | **nowhere** — the panes carry no scrollbar | **keep**; the most important thing the row says |
+| Scrollback indicator | yes | yes | **nowhere** — the panes carry no scrollbar | **keep**; the most important thing the row says. It is also the row's only tie to [`2026-07-30-scrollback-design.md`](2026-07-30-scrollback-design.md), which is designing what it counts; if the count's meaning changes there, the cell's wording follows. |
 | Encoding | yes (on negotiation) | yes | nowhere | **keep** — and its qualifier is the point (`utf-8` vs `utf-8 assumed` vs `iso-8859-1 forced`) |
 | Character count | every keystroke | yes | nowhere | **keep** |
 | `⌃P palette` | never | yes | nowhere | **keep** — a discoverability anchor is the one immutable thing worth a cell, because it is how everything else is found |
