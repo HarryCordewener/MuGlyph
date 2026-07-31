@@ -102,32 +102,17 @@ public class TabExpansionTests
     }
 
     /// <summary>
-<<<<<<< HEAD
-    /// The default is four, and the ceiling is stated rather than implied — both asserted through what
-    /// they <em>do</em> rather than by comparing a constant to its own literal, which is a claim the
-    /// compiler already settles and which TUnit's analyzer refuses (TUnitAssertions0005).
-=======
     /// The default is four, and the ceiling is sixteen — both read through the property rather than
     /// off the constants. Comparing a <c>const</c> to a literal is a comparison the compiler folds
     /// away (TUnitAssertions0005): it pins nothing, and it warned. Going through
     /// <see cref="TextSettings"/> pins the two facts that can actually drift — that the property's
     /// default is the constant, and what the two constants are worth.
->>>>>>> origin/main
     /// </summary>
     [Test]
     public async Task TheDefaultIsFourAndTheCeilingIsSixteen()
     {
         await Assert.That(new TextSettings().TabWidth).IsEqualTo(TextSettings.DefaultTabWidth);
-<<<<<<< HEAD
-        await Assert.That(StyledText.ExpandTabs(Line("a\tb"), new TextSettings().TabWidth).Text)
-            .IsEqualTo("a    b")
-            .Because("four is the width a fresh settings object paints a tab at");
-        await Assert.That(StyledText.ExpandTabs(Line("a\tb"), TextSettings.MaxTabWidth).Text.Length)
-            .IsEqualTo(18)
-            .Because("sixteen is the widest a tab may be set to, and it is a real width rather than a cap on paper");
-=======
         await Assert.That(new TextSettings().TabWidth).IsEqualTo(4);
         await Assert.That(new TextSettings { TabWidth = TextSettings.MaxTabWidth }.TabWidth).IsEqualTo(16);
->>>>>>> origin/main
     }
 }
