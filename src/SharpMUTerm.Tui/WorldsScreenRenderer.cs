@@ -237,7 +237,12 @@ internal static class WorldsScreenRenderer
     {
         var title = $"[bold {Value}] Worlds & Characters[/]";
         var hints = ScreenChrome.Hints(
-            ScreenChrome.ListHints, fkey, model?.HasEditableRow ?? false, focus, model?.HasRemovableRow ?? false);
+            ScreenChrome.ListHints,
+            fkey,
+            model?.HasEditableRow ?? false,
+            focus,
+            model?.HasRemovableRow ?? false,
+            model?.HasDetailRow ?? false);
         return SpreadLR(" " + title, hints, width);
     }
 
@@ -363,12 +368,20 @@ internal static class WorldsScreenRenderer
     /// the first, the way every other pane's cursor starts on its first row, so a caller that only wants
     /// the navigable shape still gets the pane's real buttons.
     /// </param>
+    /// <param name="info">
+    /// Opens the read-only MSSP report for the world at the given index, or null when this projection has
+    /// nowhere to open one — which is every caller but the live app: the renderer is pure and a screen is
+    /// not something a markup block can put on the screen by itself. Null means the WORLDS pane grows no
+    /// <c>i</c> row, so the header hint (derived from <see cref="ScreenModel.HasDetailRow"/>) does not
+    /// advertise a key that would do nothing.
+    /// </param>
     internal static ScreenModel Model(
         IReadOnlyList<WorldDefinition> worlds,
         IReadOnlyList<TriggerSet> triggerSets,
         int selectedWorld,
         int selectedCharacter,
-        int selectedSet = 0)
+        int selectedSet = 0,
+        Action<int>? info = null)
     {
         ArgumentNullException.ThrowIfNull(worlds);
         ArgumentNullException.ThrowIfNull(triggerSets);
@@ -381,7 +394,7 @@ internal static class WorldsScreenRenderer
             ScreenField.Integer("port", () => w.Port, v => w.Port = v, 1, 65535),
             ScreenField.Choice("encoding", () => w.Encoding, v => w.Encoding = v, Encodings),
             ScreenField.Integer("keepalive", () => w.KeepaliveSeconds, v => w.KeepaliveSeconds = v, 0, 86400)))
-            .Concat(WorldButtons(worlds, selectedWorld))
+            .Concat(WorldButtons(worlds, selectedWorld, info))
             .ToArray();
 
         var world = selectedWorld >= 0 && selectedWorld < worlds.Count ? worlds[selectedWorld] : null;
@@ -638,7 +651,16 @@ internal static class WorldsScreenRenderer
     /// delete; a brand-new world is a blank template, because a world's whole identity is its host and
     /// a "helpfully" prefilled one would be a guess the user then has to notice and undo.
     /// </summary>
-    private static List<ScreenRow> WorldButtons(IReadOnlyList<WorldDefinition> worlds, int selectedWorld)
+    /// <summary>
+    /// The WORLDS pane's buttons, in the order they are drawn and — decisively — in the order
+    /// <see cref="ScreenModel.Sizes"/> needs them: the cursor stop first, then the two targeted key
+    /// hints. <c>[+ world]</c> has no target and so needs somewhere to be pressed from; <c>i</c> and
+    /// <c>Del</c> both act on the selected row and must not steal the cursor from it, so they trail and
+    /// are trimmed out of the pane's stop count. Put either of them above <c>[+ world]</c> and the
+    /// cursor gains a hole.
+    /// </summary>
+    private static List<ScreenRow> WorldButtons(
+        IReadOnlyList<WorldDefinition> worlds, int selectedWorld, Action<int>? info = null)
     {
         var rows = new List<ScreenRow>();
         // Arrays report IsReadOnly through IList<T>, and a renderer handed one (the unit tests, any
@@ -652,6 +674,14 @@ internal static class WorldsScreenRenderer
         if (selectedWorld >= 0 && selectedWorld < list.Count)
         {
             var world = list[selectedWorld];
+            if (info is not null)
+            {
+                // The index is captured, not the world: the report is opened against whatever the WORLDS
+                // list holds at that position when the key is pressed, which is the row the cursor is on.
+                var at = selectedWorld;
+                rows.Add(ScreenRow.Of(ScreenButton.Detail(world.Name, () => info(at))));
+            }
+
             rows.Add(ScreenRow.Of(ScreenButton.Remove(
                 list, selectedWorld, target: world.Name, describe: () => DescribeWorld(world))));
         }
@@ -726,7 +756,11 @@ internal static class WorldsScreenRenderer
     /// was never drawn, which is precisely the failure <see cref="ScreenChrome.Window"/> exists to stop.
     /// </param>
     internal static List<string> WorldsColumn(
-        IReadOnlyList<WorldDefinition> worlds, int selectedWorld, ScreenFocus? focus = null, int height = 0)
+        IReadOnlyList<WorldDefinition> worlds,
+        int selectedWorld,
+        ScreenFocus? focus = null,
+        int height = 0,
+        bool info = false)
     {
         var cursor = focus ?? ScreenFocus.None;
         selectedWorld = Selected(worlds.Count, selectedWorld);
@@ -756,8 +790,16 @@ internal static class WorldsScreenRenderer
         }
 
         left.Add(string.Empty);
+        // The drawn rows come from the same WorldButtons the model navigates by, so the row saying what
+        // `i` acts on and the button the key runs cannot name different worlds. The action itself is not
+        // needed to draw it — only whether there is one — so the column takes a bool rather than the
+        // delegate, which keeps the renderer pure.
         left.AddRange(ScreenChrome.Buttons(
-            WorldButtons(worlds, selectedWorld), cursor, WorldsPane, worlds.Count, LeftColumnWidth));
+            WorldButtons(worlds, selectedWorld, info ? _ => { } : null),
+            cursor,
+            WorldsPane,
+            worlds.Count,
+            LeftColumnWidth));
 
         // Compacted, then windowed — the same two steps the detail column takes, and it must be both:
         // dropping the blank separators buys back a row per world, and the window is what guarantees the

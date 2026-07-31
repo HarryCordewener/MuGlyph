@@ -35,6 +35,21 @@ internal sealed class SettingsOverlay
     private ScreenBinding? _binding;
 
     /// <summary>
+    /// What Esc goes back to. A read-only report opened from a screen (F5's INFO) pushes the screen it
+    /// came from here and replaces the content of the <em>same</em> window; Esc pops it and the screen
+    /// is rebuilt from its own untouched <see cref="SettingsSession"/>, so the cursor is on the world it
+    /// was on. It is a stack rather than a single slot only because a stack cannot be got wrong by a
+    /// later report that opens a report.
+    /// <para>
+    /// <b>Content-swapping, not window-stacking</b>, and that is the same call
+    /// <see cref="EditReviewOverlay"/> made for the same reason: two modal windows with two
+    /// <c>PreviewKeyPressed</c> handlers cannot be driven headlessly, so a second window here would put
+    /// this screen outside every snapshot and every test in the suite.
+    /// </para>
+    /// </summary>
+    private readonly Stack<ScreenBinding> _behind = new();
+
+    /// <summary>
     /// The overlay no longer takes a save action. Persistence moved to the point of change: each screen's
     /// <see cref="ScreenEdits"/> writes the configuration out as it accepts one, so there is no moment on
     /// the way out at which the host would have anything left to save. See <see cref="ScreenEdits"/>.
@@ -83,6 +98,26 @@ internal sealed class SettingsOverlay
 
     /// <summary>Renders a screen into a headless frame (used by snapshots).</summary>
     public void OpenForSnapshot(ConsoleKey key, ScreenBinding binding) => Open(key, binding);
+
+    /// <summary>
+    /// Puts a read-only report over the screen that asked for it, keeping that screen alive behind it so
+    /// Esc comes back to the row it was on. Does nothing when no screen is open — a report about a
+    /// selection that is not on the screen has nothing to be about.
+    /// </summary>
+    public void OpenDetail(ScreenBinding binding)
+    {
+        if (_window is null || _binding is not { } current)
+        {
+            return;
+        }
+
+        _behind.Push(current);
+        _binding = binding;
+        Refresh();
+    }
+
+    /// <summary>Whether a report is open over a screen — which is what makes Esc mean <em>back</em>.</summary>
+    internal bool IsShowingDetail => _behind.Count > 0;
 
     /// <summary>
     /// Feeds one key to the open screen through the very handler <c>PreviewKeyPressed</c> raises, so a
@@ -188,6 +223,14 @@ internal sealed class SettingsOverlay
     {
         switch (action)
         {
+            case ScreenAction.Close when _behind.Count > 0:
+                // Esc out of a report goes back to the screen it was opened from, not out of the
+                // settings altogether. The screen behind is its own live session, so it comes back with
+                // its cursor, its open selection and its edit log intact — the report never touched them.
+                _binding = _behind.Pop();
+                Refresh();
+                return true;
+
             case ScreenAction.Close:
                 CloseAndReview();
                 return true;
@@ -251,7 +294,10 @@ internal sealed class SettingsOverlay
     /// </summary>
     private void CloseAndReview()
     {
-        var edits = _binding?.Session.Edits;
+        // The edits to review are the *screen's*, which is at the bottom of the stack when a report is
+        // over it: a report has an empty edit log of its own, so reading the top would silently drop a
+        // deletion made just before someone pressed i.
+        var edits = (_behind.Count > 0 ? _behind.Last() : _binding)?.Session.Edits;
         Close();
 
         if (edits is { HasDeletions: true })
@@ -276,5 +322,6 @@ internal sealed class SettingsOverlay
         _system.ConsoleDriver.Paste -= OnPaste;
         _window = null;
         _binding = null;
+        _behind.Clear();
     }
 }

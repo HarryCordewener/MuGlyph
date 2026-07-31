@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using SharpMUTerm.Core.Configuration;
+using SharpMUTerm.Core.Telnet.Mssp;
 using SharpMUTerm.Core.Text;
 using SharpMUTerm.Graphics;
 using SharpConsoleUI.Drivers;
@@ -106,13 +107,28 @@ internal static class Program
             Logger = diagnostics.For("SharpMUTerm.RestoreLog"),
         };
 
+        // What every server has said about itself, beside the configuration and deliberately not in it:
+        // config.json is what the user asked for and is hand-edited, and a write per connect has no
+        // business landing there. Resolved here for the same reason logRoot and the restore log are —
+        // only this code knows it is the live client. Anything else gets a memory-only cache and so
+        // provably writes nothing.
+        var mssp = new MsspCache(MsspCache.PathFor(ConfigurationStore.DefaultPath))
+        {
+            Logger = diagnostics.For("SharpMUTerm.Mssp"),
+        };
+        if (mssp.Problem is { } msspProblem)
+        {
+            loadLogger.LogWarning("{Notice}", msspProblem);
+        }
+
         var liveApp = new SharpMUTermApp(
             config,
             capabilities,
             diagnostics: diagnostics,
             save: saved => ConfigurationStore.Save(ConfigurationStore.DefaultPath, saved),
             logRoot: logRoot,
-            restore: restore);
+            restore: restore,
+            mssp: mssp);
         var exitCode = liveApp.Run(startup); // blocks on the SharpConsoleUI main loop until exit
 
         // Persist the workspace so the next launch resumes where this one left off.
@@ -254,6 +270,12 @@ internal static class Program
         // password go" should be answerable without reading the source. Config is safe to share; this is not.
         usage.WriteLine($"Secrets: {SecretsStore.PathFor(ConfigurationStore.DefaultPath)}"
             + " — character passwords, plain text, owner-only. Not the file to paste.");
+
+        // Named for the same reason: it is a file this client creates in the user's own directory, and
+        // "what is this and can I delete it" should be answerable from the help page. It can: it is a
+        // cache of what servers published, and deleting it costs only the next connection's report.
+        usage.WriteLine($"Servers: {MsspCache.PathFor(ConfigurationStore.DefaultPath)}"
+            + " — each server's last MSSP report (F5 ▸ i). A cache; safe to delete.");
         // "why does it connect to *that*?" is the question this setting answers, so the answer belongs
         // on the page a user reaches for when they ask it. Both halves are stated: what connects with no
         // host, and that a host overrides it.

@@ -103,6 +103,26 @@ fallbacks) for inline images/maps.
   Restored content is closed off by one `RestoreBarRenderer` row and the lines themselves are left
   alone. Restoring 3,000 lines costs ~18 ms before the first frame. `restore:` is the third member of
   the `save:`/`logRoot:` family — **null by default, so no test and no snapshot owns one**.
+- **Every server's MSSP report is kept, and the INFO screen reads it** (`MsspCache`, Core; `mssp.json`
+  beside `config.json`, keyed by `host:port`; F5 ▸ `i`). Fourth of the `save:`/`logRoot:`/`restore:`
+  family with **one deliberate difference**: the constructor parameter is null by default like the
+  others, but the *field* never is — a `MsspCache` with no path is memory-only **by construction**, so
+  the "a snapshot writes nothing" guarantee is a property of the object rather than a null check at
+  each use site, and the screen needs no "is there a cache" branch. Three decisions worth not
+  relitigating. **Keyed by endpoint, not world**: MSSP describes a *server*, a world name is a
+  user-editable label two entries may share, and a rename must not lose a report. **A second report
+  replaces the first**: MSSP is not a delta protocol — a server sends its whole table once per
+  connection — so a merge would keep variables it has stopped publishing and would leave a report that
+  is a snapshot of no moment that existed. **Two timestamps**, because there are *three* states and two
+  would only separate two: `ConnectedAt` is written on the `Connected` transition and `ObservedAt` only
+  when a report arrives, so "never dialled", "dialled and publishes nothing" and "here is the report,
+  as of…" are three different screens. Report capture is bounded at the door
+  (`MaxVariables`/`MaxValuesPerVariable`/`MaxValueLength`), not only at the renderer — a value only the
+  screen trimmed would still be full size on disk and in memory on every later launch.
+- **`IAC DO MSSP` is sent on connect** (`TelnetSessionOptions.RequestOptions`, set by `WorldSession`'s
+  session factory). The library opens with `IAC WILL NAWS` and nothing else, so a server that supports
+  MSSP but waits to be asked is never asked — and the INFO screen would then report it as publishing
+  none, which is a claim about the server made out of our own silence.
 - **A launch connects nothing unless it is told to** (`StartupConnections.Resolve`, Core). A host on the
   command line wins outright; otherwise it is every character with `ConnectAtStartup` (F5's `at start`),
   in configuration order; otherwise none, and the client says which of the two empty states it is in.
@@ -163,7 +183,11 @@ python3 tools/ansi_frame_to_image.py frame.ansi frame.html   # or .svg
   `messages`, `quit`, `connections` (**two connections on one world** — the one view where the header's
   fraction, the rail's dots and the quit prompt's count are all visible together and all have to agree;
   every other view has at most one character connected per world, which is what hid a header dividing
-  connections by *worlds* and a quit prompt reducing them to distinct world names), `deletions`, `web`,
+  connections by *worlds* and a quit prompt reducing them to distinct world names), `deletions`,
+  `mssp`/`mssp-none`/`mssp-never` (the **three** states of the F5 ▸ `i` server-information report —
+  a report, a server that answered and publishes none, and a world nothing has dialled; all three
+  reached by driving the real `i` into a real F5, and all three needed because the two empty ones are
+  the pair it is easy to conflate), `web`,
   `rail-long`, `scrollback`, `scrollback-up`, `freeze-scrollback`, `prefix-panel` (the ⌃B which-key
   panel — the state `prefix` becomes a few hundred milliseconds later, if no key has arrived),
   `focus`/`focus-moved` (a split *and* a second command line — the one geometry showing a focused pane

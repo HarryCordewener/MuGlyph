@@ -232,6 +232,9 @@ internal sealed class SettingsSession
             case ConsoleKey.Delete:
                 return Remove(model);
 
+            case ConsoleKey.I when key.Modifiers == 0:
+                return Detail(model);
+
             case ConsoleKey.Spacebar:
                 return Toggle(model);
 
@@ -271,6 +274,40 @@ internal sealed class SettingsSession
         }
 
         return ScreenAction.Redraw;
+    }
+
+    /// <summary>
+    /// <c>i</c> on one of a pane's list rows opens that pane's read-only report on the selected row —
+    /// F5's INFO. It is the <see cref="Remove"/> shape with two deliberate differences.
+    /// <para>
+    /// <b>It does not go through <see cref="Edits"/>.</b> Every other button press is an edit and is
+    /// persisted the moment it is accepted; this one changes nothing, and routing it through the edit
+    /// log would write <c>config.json</c> and re-periodise every running timer each time somebody looked
+    /// at a world. Opening a screen is navigation.
+    /// </para>
+    /// <para>
+    /// <b>It returns <see cref="ScreenAction.Consumed"/>, not <see cref="ScreenAction.Redraw"/>.</b> The
+    /// report has already replaced what is on screen by the time this returns; a redraw here would
+    /// rebuild the screen we have just navigated away from, over the one we navigated to.
+    /// </para>
+    /// <para>
+    /// A plain letter is only safe as a command because it is scoped by <see cref="ScreenModel.DetailIn"/>
+    /// to a pane that offers one — and because <see cref="Interpret"/> has already handed the whole
+    /// keyboard to an open field edit several branches above this. Both halves are load-bearing: without
+    /// the first, <c>i</c> would be swallowed in the CHARACTERS pane where nothing answers it; without
+    /// the second it could not be typed into a world's name.
+    /// </para>
+    /// </summary>
+    private ScreenAction Detail(ScreenModel model)
+    {
+        if (!model.IsListRow(Selection.Pane, Selection.Index)
+            || model.DetailIn(Selection.Pane) is not { } button)
+        {
+            return ScreenAction.None;
+        }
+
+        button.Run();
+        return ScreenAction.Consumed;
     }
 
     private ScreenAction Toggle(ScreenModel model)

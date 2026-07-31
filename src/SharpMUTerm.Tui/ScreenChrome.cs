@@ -26,7 +26,12 @@ internal static class ScreenChrome
     /// </para>
     /// </summary>
     internal static string Hints(
-        string verbs, string fkey, bool editable = false, ScreenFocus? focus = null, bool removable = false)
+        string verbs,
+        string fkey,
+        bool editable = false,
+        ScreenFocus? focus = null,
+        bool removable = false,
+        bool detailed = false)
     {
         if (focus?.Edit is { } edit)
         {
@@ -46,7 +51,14 @@ internal static class ScreenChrome
                 + $"[{ScreenPalette.Label}] close [/]";
         }
 
-        var all = (editable ? verbs + EditHint : verbs) + (removable ? DeleteHint : string.Empty);
+        // Order is a budget, not taste: a header narrower than its hints loses the *tail* of this string
+        // (see the 80-column frames), so whatever is appended last is what a narrow terminal does not
+        // get. `i info` goes after `Del remove` because Delete is the destructive key and must be the
+        // one that survives — and because the INFO key's drawn row (`i  info on Aetherfall`) is on the
+        // screen either way, while a key that removes a world has only this line and its own row.
+        var all = (editable ? verbs + EditHint : verbs)
+            + (removable ? DeleteHint : string.Empty)
+            + (detailed ? DetailHint : string.Empty);
         return $"[{ScreenPalette.Label}]{all} · [/][{ScreenPalette.Accent}]{fkey}[/][{ScreenPalette.Label}]/[/]"
             + $"[{ScreenPalette.Accent}]Esc[/][{ScreenPalette.Label}] close [/]";
     }
@@ -80,6 +92,15 @@ internal static class ScreenChrome
     /// on, which is the row the eye is on, and this is where the screen says so.
     /// </summary>
     internal const string DeleteHint = " · Del remove";
+
+    /// <summary>
+    /// What a screen adds to its hints when — and only when — a pane offers a read-only report on the
+    /// selected row. It matters more than <see cref="DeleteHint"/> that this is derived rather than
+    /// written: <c>i</c> is an ordinary letter, so a screen that answered it without saying so would be
+    /// a hidden feature, and one that said so without answering it would look broken on the one pane
+    /// where the key does nothing.
+    /// </summary>
+    internal const string DetailHint = " · i info";
 
     /// <summary>The hints that replace a screen's own while a field edit is open.</summary>
     internal const string EditingHints = "⏎ commit · Esc revert";
@@ -697,9 +718,12 @@ internal static class ScreenChrome
                 continue;
             }
 
-            lines.Add(button.Kind == ScreenButtonKind.Remove
-                ? RemovalRow(button)
-                : Cursor(AddRow(button), cursor.IsOn(pane, firstIndex + i), width));
+            lines.Add(button.Kind switch
+            {
+                ScreenButtonKind.Remove => KeyHintRow(button, RemovesWord),
+                ScreenButtonKind.Detail => KeyHintRow(button, InfoWords),
+                _ => Cursor(AddRow(button), cursor.IsOn(pane, firstIndex + i), width),
+            });
         }
 
         return lines;
@@ -715,16 +739,20 @@ internal static class ScreenChrome
     }
 
     /// <summary>
-    /// What Delete would take, as a row. Never drawn with a cursor bar, because the cursor cannot get
-    /// there — that is the whole fix for "only the last world can be deleted".
+    /// What a targeted key would act on, as a row: the key, the verb, the victim or subject. Never drawn
+    /// with a cursor bar, because the cursor cannot get there — that is the whole fix for "only the last
+    /// world can be deleted", and the reason the INFO key is drawn this way too rather than as a chip.
     /// </summary>
-    private static string RemovalRow(ScreenButton button) =>
+    private static string KeyHintRow(ScreenButton button, string verb) =>
         $"[{ScreenPalette.Accent}]{MarkupText.Escape(button.Label)}[/]"
-        + $"  [{ScreenPalette.Label}]{RemovesWord}[/] "
+        + $"  [{ScreenPalette.Label}]{verb}[/] "
         + $"[{ScreenPalette.Value}]{MarkupText.Escape(button.Target ?? string.Empty)}[/]";
 
     /// <summary>The verb on a removal row, between the key and what it would take.</summary>
     internal const string RemovesWord = "removes";
+
+    /// <summary>The verb on a report row, between the key and what it would report on.</summary>
+    internal const string InfoWords = "info on";
 
     /// <summary>
     /// Where the cursor is within one of a screen's lists — <c>trigger 1/4</c>, <c>world 2/2</c>. Every
