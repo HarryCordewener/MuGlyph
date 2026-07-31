@@ -129,6 +129,30 @@ public class MsspScreenTests
         await Assert.That(app.RenderWholeFrame()).Contains("Worlds & Characters");
     }
 
+    [Test]
+    public async Task ADeletionMadeBeforeOpeningAReportIsStillReviewedOnTheWayOut()
+    {
+        // Closing from *over* a report has to review the screen's deletions, not the report's. A report
+        // carries an edit log of its own and it is always empty, so reading the top of the stack would
+        // silently drop a world someone had just taken out — the one class of edit this project asks
+        // about precisely because it cannot be retyped.
+        Console.SetIn(TextReader.Null);
+        var app = new SharpMUTermApp(DemoScene.Build(), Headless, new HeadlessConsoleDriver(Width, Height));
+        app.RenderSnapshot("worlds");
+
+        app.Settings.SimulateKey(Key(ConsoleKey.Delete));
+        app.Settings.SimulateKey(new ConsoleKeyInfo('i', ConsoleKey.I, false, false, false));
+        await Assert.That(app.Settings.IsShowingDetail).IsTrue();
+
+        // F5 is a global shortcut, not one of the screen's own keys, so it is pressed the way the
+        // framework would deliver it — through the app rather than into the overlay.
+        app.SimulateKey(new ConsoleKeyInfo('\0', ConsoleKey.F5, false, false, false));
+
+        await Assert.That(app.Settings.IsOpen).IsFalse();
+        await Assert.That(app.Settings.Review.IsOpen).IsTrue();
+        await Assert.That(string.Join("\n", app.Settings.Review.Lines)).Contains("Aetherfall");
+    }
+
     // ---- The key's shape and scope ----
 
     /// <summary>
