@@ -115,12 +115,12 @@ public class WindowJumpTests
             var rects = scene.App.PaneOutputRects();
             var landed = scene.App.FocusedPaneId;
             await Assert.That(landed).IsEqualTo(scene.App.PaneIdOf(scene.Ann[n - 1]));
-            await Assert.That(CellsPaintedIn(frame, rects[landed], focused))
+            await Assert.That(FrameGrid.CellsPaintedIn(frame, rects[landed], focused))
                 .IsGreaterThan(0)
                 .Because($"⌥{n} must paint the pane holding window {n} as the focused one");
             foreach (var other in scene.App.PaneIds.Where(id => id != landed))
             {
-                await Assert.That(CellsPaintedIn(frame, rects[other], focused)).IsEqualTo(0);
+                await Assert.That(FrameGrid.CellsPaintedIn(frame, rects[other], focused)).IsEqualTo(0);
             }
         }
     }
@@ -463,13 +463,7 @@ public class WindowJumpTests
     [Test]
     public async Task ASingleWindowWorkspaceNamesNoChordOnAnyRow()
     {
-        Console.SetIn(TextReader.Null);
-        var config = DemoScene.Build();
-        config.LastSession!.Windows.RemoveAll(w => w.Kind == WindowKind.Spawn);
-        config.LastSession.Root.Tabs.RemoveAll(t => t.StartsWith("spawn:", StringComparison.Ordinal));
-
-        var app = new SharpMUTermApp(config, Headless, new HeadlessConsoleDriver(120, 34));
-        app.RenderSnapshot();
+        var app = SingleWindowApp();
 
         await Assert.That(app.NumberedWindowIds.Count).IsEqualTo(1);
         await Assert.That(app.RailLines.Any(l => Regex.IsMatch(l, @"⌥\d")))
@@ -513,13 +507,7 @@ public class WindowJumpTests
     [Test]
     public async Task OnOneWindowTheRefusalPointsAtTheCharacterCycle()
     {
-        Console.SetIn(TextReader.Null);
-        var config = DemoScene.Build();
-        config.LastSession!.Windows.RemoveAll(w => w.Kind == WindowKind.Spawn);
-        config.LastSession.Root.Tabs.RemoveAll(t => t.StartsWith("spawn:", StringComparison.Ordinal));
-
-        var app = new SharpMUTermApp(config, Headless, new HeadlessConsoleDriver(120, 34));
-        app.RenderSnapshot();
+        var app = SingleWindowApp();
 
         app.SimulateKey(Alt(2));
 
@@ -661,7 +649,7 @@ public class WindowJumpTests
         await Assert.That(rects.ContainsKey(first)).IsFalse();
 
         var (focused, _) = app.PaneBandColors;
-        await Assert.That(CellsPaintedIn(frame, rects[second], focused)).IsGreaterThan(0);
+        await Assert.That(FrameGrid.CellsPaintedIn(frame, rects[second], focused)).IsGreaterThan(0);
     }
 
     // --- honesty ------------------------------------------------------------------------------------
@@ -726,6 +714,18 @@ public class WindowJumpTests
         return new SharpMUTermApp(DemoScene.Build(), Headless, new HeadlessConsoleDriver(width, height));
     }
 
+    /// <summary>
+    /// The demo with its capture window removed, rendered once — one window in one pane, which is both
+    /// "the chord column has nothing to say" and "every digit past the first is out of range".
+    /// </summary>
+    private static SharpMUTermApp SingleWindowApp()
+    {
+        Console.SetIn(TextReader.Null);
+        var app = new SharpMUTermApp(DemoConfigs.SingleWindow(), Headless, new HeadlessConsoleDriver(120, 34));
+        app.RenderSnapshot();
+        return app;
+    }
+
     /// <summary>The chord as the terminal delivers it: <c>ESC</c> + the digit, decoded as that digit with Alt.</summary>
     private static ConsoleKeyInfo Alt(int digit) =>
         new((char)('0' + digit), ConsoleKey.D0 + digit, false, true, false);
@@ -760,7 +760,7 @@ public class WindowJumpTests
     /// </summary>
     private static string? WindowRowChord(SharpMUTermApp app, string label)
     {
-        foreach (var line in app.RailLines.Select(Visible))
+        foreach (var line in app.RailLines.Select(FrameGrid.Visible))
         {
             if (!Regex.IsMatch(line, $@"▪ {Regex.Escape(label)}(?![^\s])"))
             {
@@ -772,7 +772,7 @@ public class WindowJumpTests
         }
 
         throw new InvalidOperationException(
-            $"no rail window row for {label}: {string.Join(" / ", app.RailLines.Select(Visible))}");
+            $"no rail window row for {label}: {string.Join(" / ", app.RailLines.Select(FrameGrid.Visible))}");
     }
 
     /// <summary>
@@ -786,7 +786,7 @@ public class WindowJumpTests
     /// </summary>
     private static string? CharacterWearing(SharpMUTermApp app, string chord)
     {
-        foreach (var line in app.RailLines.Select(Visible))
+        foreach (var line in app.RailLines.Select(FrameGrid.Visible))
         {
             if (line.Contains('▪', StringComparison.Ordinal) || !line.Contains(chord, StringComparison.Ordinal))
             {
@@ -803,93 +803,14 @@ public class WindowJumpTests
 
     /// <summary>Every character row currently carrying a chord, so "and nobody else" is checkable.</summary>
     private static List<string> CharactersWearingAChord(SharpMUTermApp app) =>
-        app.RailLines.Select(Visible)
+        app.RailLines.Select(FrameGrid.Visible)
             .Where(l => !l.Contains('▪', StringComparison.Ordinal) && Regex.IsMatch(l, @"⌥[JK]"))
             .ToList();
 
     /// <summary>The character half of a <c>world.character</c> key.</summary>
     private static string NameOf(string sessionKey) => sessionKey[(sessionKey.IndexOf('.') + 1)..];
 
-    /// <summary>A rail row's cells, with its style and link markup removed.</summary>
-    private static string Visible(string markup) =>
-        Regex.Replace(markup, @"\[(?:/|[^\]\[]*)\]", string.Empty).Replace("[[", "[").Replace("]]", "]");
 
-    /// <summary>The truecolor background escape a colour is written as.</summary>
-    private static string Sgr(SharpConsoleUI.Color color) => $"48;2;{color.R};{color.G};{color.B}";
-
-    /// <summary>
-    /// Walks a frame into a <c>{(row, column): background}</c> grid, the way a terminal walks it. Note
-    /// <c>48</c> and not <c>38</c> — reading foreground here and concluding about planes is the classic
-    /// mistake. Same walker as <see cref="FocusIndicationTests"/>, deliberately: this suite's claim is
-    /// about the same painted planes.
-    /// </summary>
-    private static Dictionary<(int Row, int Column), string?> Backgrounds(string ansi)
-    {
-        var cells = new Dictionary<(int, int), string?>();
-        var current = (string?)null;
-        var (row, column) = (0, 0);
-
-        foreach (Match token in Regex.Matches(ansi, @"\x1b\[([0-9;]*)([A-Za-z])|([^\x1b\r\n])|(\n)"))
-        {
-            if (token.Groups[4].Success)
-            {
-                row++;
-                column = 0;
-                continue;
-            }
-
-            if (token.Groups[3].Success)
-            {
-                cells[(row, column)] = current;
-                column++;
-                continue;
-            }
-
-            var parameters = token.Groups[1].Value;
-            switch (token.Groups[2].Value)
-            {
-                case "H":
-                    var at = parameters.Split(';');
-                    row = at[0].Length > 0 ? int.Parse(at[0]) - 1 : 0;
-                    column = at.Length > 1 && at[1].Length > 0 ? int.Parse(at[1]) - 1 : 0;
-                    break;
-                case "m":
-                    if (parameters.Length == 0 || parameters == "0" || parameters.Contains("49"))
-                    {
-                        current = null;
-                    }
-
-                    if (parameters.Contains("48;2;"))
-                    {
-                        current = parameters[parameters.IndexOf("48;2;", StringComparison.Ordinal)..];
-                    }
-
-                    break;
-            }
-        }
-
-        return cells;
-    }
-
-    /// <summary>How many cells inside a rectangle are painted in a given background.</summary>
-    private static int CellsPaintedIn(string ansi, PaneRect rect, SharpConsoleUI.Color colour)
-    {
-        var wanted = Sgr(colour);
-        var cells = Backgrounds(ansi);
-        var count = 0;
-        for (var y = rect.Y; y < rect.Y + rect.Height; y++)
-        {
-            for (var x = rect.X; x < rect.X + rect.Width; x++)
-            {
-                if (cells.GetValueOrDefault((y, x))?.StartsWith(wanted, StringComparison.Ordinal) == true)
-                {
-                    count++;
-                }
-            }
-        }
-
-        return count;
-    }
 
     /// <summary>Three panes, one connected character each, plus one capture window behind a tab.</summary>
     /// <param name="Ann">

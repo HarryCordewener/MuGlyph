@@ -49,7 +49,7 @@ public class RailChordColumnTests
         var app = Demo();
         app.RenderSnapshot();
 
-        var rows = app.RailLines.Select(Visible).Where(l => l.Contains('▪', StringComparison.Ordinal)).ToList();
+        var rows = app.RailLines.Select(FrameGrid.Visible).Where(l => l.Contains('▪', StringComparison.Ordinal)).ToList();
         await Assert.That(rows).IsNotEmpty();
 
         foreach (var row in rows)
@@ -74,13 +74,53 @@ public class RailChordColumnTests
         var app = Demo();
         app.RenderSnapshot();
 
-        var rows = app.RailLines.Select(Visible).Where(l => l.Contains('▪', StringComparison.Ordinal)).ToList();
+        var rows = app.RailLines.Select(FrameGrid.Visible).Where(l => l.Contains('▪', StringComparison.Ordinal)).ToList();
         await Assert.That(rows.Any(r => r.Contains(Glyphs.Draft, StringComparison.Ordinal)))
             .IsTrue()
             .Because("the demo leaves a draft in the main window");
         await Assert.That(rows.Any(r => Regex.IsMatch(r, @"\d\s*$")))
             .IsTrue()
             .Because("the demo's Chat window has unread lines");
+    }
+
+    /// <summary>
+    /// <b>Where <c>--help</c> quotes the sidebar, the quote is the sidebar's own cells.</b> The page names
+    /// chords in ASCII everywhere else on purpose — it is printed before the TUI starts, into whatever is
+    /// on the other end of stdout — but a sentence that says "the sidebar marks …" is making a claim about
+    /// the screen, and it said <c>'Alt+J'</c> while the screen said <c>⌥J</c>. A reader searching the
+    /// sidebar for the quoted text found nothing.
+    /// </summary>
+    [Test]
+    public async Task WhereHelpQuotesTheSidebarItQuotesWhatTheSidebarDraws()
+    {
+        var help = Program.UsageText;
+
+        // Every single-quoted chord on the page uses the sidebar's own sigil rather than the page's
+        // ASCII prose spelling. The claim is about the *spelling*, not about which digits happen to
+        // exist: '⌥2', '⌥3' is a series naming the form, and a rail with two windows only has two.
+        // Anchored on something that can only start a chord, because the page has ordinary apostrophes in
+        // it ("F5's 'login' row") and a looser pattern pairs them across sentences.
+        var quoted = Regex.Matches(help, @"'((?:⌥|⌃|Alt\+|Ctrl\+)[^']{0,12})'")
+            .Select(m => m.Groups[1].Value)
+            .ToList();
+        await Assert.That(quoted).IsNotEmpty().Because("the page does quote the sidebar");
+
+        foreach (var chord in quoted)
+        {
+            await Assert.That(chord.StartsWith('⌥') || chord.StartsWith('⌃'))
+                .IsTrue()
+                .Because($"--help quotes {chord} as something the sidebar prints, and the sidebar "
+                    + "spells its chords with ⌥ and ⌃");
+        }
+
+        // And the spelling is checked against a real rail rather than only against itself: the one the
+        // demo genuinely draws has to be among them.
+        var app = Demo();
+        app.RenderSnapshot();
+        var rail = app.RailLines.Select(FrameGrid.Visible).ToList();
+        await Assert.That(quoted.Any(c => rail.Any(l => l.Contains(c, StringComparison.Ordinal))))
+            .IsTrue()
+            .Because("at least one quoted chord must be one this rail actually prints");
     }
 
     // --- the invariant ------------------------------------------------------------------------------
@@ -203,10 +243,10 @@ public class RailChordColumnTests
 
         // The demo has one character's windows and no second character open: window rows carry chords,
         // character rows cannot.
-        await Assert.That(app.RailLines.Any(l => Regex.IsMatch(Visible(l), @"⌥\d"))).IsTrue();
-        await Assert.That(app.RailLines.Any(l => Regex.IsMatch(Visible(l), @"⌥[JK]"))).IsFalse();
+        await Assert.That(app.RailLines.Any(l => Regex.IsMatch(FrameGrid.Visible(l), @"⌥\d"))).IsTrue();
+        await Assert.That(app.RailLines.Any(l => Regex.IsMatch(FrameGrid.Visible(l), @"⌥[JK]"))).IsFalse();
 
-        foreach (var row in app.RailLines.Select(Visible))
+        foreach (var row in app.RailLines.Select(FrameGrid.Visible))
         {
             if (row.Contains('▪', StringComparison.Ordinal) || !Regex.IsMatch(row, @"[●○]"))
             {
@@ -229,9 +269,6 @@ public class RailChordColumnTests
         return new SharpMUTermApp(DemoScene.Build(), Headless, new HeadlessConsoleDriver(width, height));
     }
 
-    /// <summary>A rail row's cells, with its style and link markup removed.</summary>
-    private static string Visible(string markup) =>
-        Regex.Replace(markup, @"\[(?:/|[^\]\[]*)\]", string.Empty).Replace("[[", "[").Replace("]]", "]");
 
     /// <summary>Three character rows under one world, each with the chord it is given.</summary>
     private static IReadOnlyList<RailRow> Rail(params (string Name, string? Chord)[] characters) =>

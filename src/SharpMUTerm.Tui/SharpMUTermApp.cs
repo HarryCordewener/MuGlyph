@@ -997,18 +997,30 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // between opening a character and its socket coming up.
         if (string.Equals(view, "characters", StringComparison.OrdinalIgnoreCase))
         {
-            foreach (var world in _config.Worlds.Take(2))
+            // Every view here runs against whatever configuration is loaded, and `--demo-config` is the
+            // caller's choice rather than this method's — so a snapshot of a machine with no worlds, or
+            // with a first world nobody has put a character in, reaches this code. The keys are gathered
+            // through the same guard that opens them and the frame is posed from that list, so there is
+            // no second, unguarded way to name the first character. (`quit` above takes the same care:
+            // `ElementAtOrDefault(1) is { Characters.Count: > 0 }`.)
+            var opened = _config.Worlds
+                .Where(w => w.Characters.Count > 0)
+                .Take(2)
+                .Select(w => $"{w.Name}.{w.Characters[0].Name}")
+                .ToList();
+
+            foreach (var key in opened)
             {
-                if (world.Characters.FirstOrDefault() is not null)
-                {
-                    SwitchToCharacter($"{world.Name}.{world.Characters[0].Name}");
-                }
+                SwitchToCharacter(key);
             }
 
-            // Back to the first, so the frame shows a character with the marker on it and both of its
-            // neighbours' chords rather than the arbitrary place the loop finished.
-            SwitchToCharacter($"{_config.Worlds[0].Name}.{_config.Worlds[0].Characters[0].Name}");
-            RebuildPaneArea();
+            // Back to the first, so the frame shows a character with the marker on it and its neighbour's
+            // chord rather than the arbitrary place the loop finished.
+            if (opened.Count > 0)
+            {
+                SwitchToCharacter(opened[0]);
+                RebuildPaneArea();
+            }
         }
 
         // The deletion review, reached the only way a user can reach it: open F5, take the selected world

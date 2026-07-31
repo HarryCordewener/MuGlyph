@@ -43,13 +43,21 @@ public static class CommandIds
     public const string PanePrefix = "layout:pane-";
 
     /// <summary>
-    /// How many panes have a keyboard chord of their own: ⌃B 1–⌃B 9. Nine to match
-    /// <see cref="WindowJumpDigits"/>, and on the <em>prefix</em> rather than on Alt because ⌥N now
-    /// names a window and one chord cannot mean two things. ⌃B is where every other pane command already
-    /// lives (split, zoom, close, cycle, move), so the ordinal one joining them costs a reader nothing
-    /// new to learn. Panes past the ninth are reachable by ⌃O, the arrows, the rail and the ⌃P entry.
+    /// How many panes have a keyboard chord of their own: ⌃B 1–⌃B 9. On the <em>prefix</em> rather than
+    /// on Alt because ⌥N now names a window and one chord cannot mean two things. ⌃B is where every other
+    /// pane command already lives (split, zoom, close, cycle, move), so the ordinal one joining them costs
+    /// a reader nothing new to learn. Panes past the ninth are reachable by ⌃O, the arrows, the rail and
+    /// the ⌃P entry.
+    /// <para>
+    /// <b>Derived from <see cref="WindowJumpDigits"/> rather than written down again.</b> The two are the
+    /// same fact — one row of digits, which is what a keyboard has — and the reason they agree is the
+    /// keyboard rather than a coincidence anybody chose. This said "Nine to match
+    /// <c>WindowJumpDigits</c>" beside an independent literal <c>9</c>, which is a documented invariant
+    /// nothing enforced: editing either would have left the comment claiming an agreement that had
+    /// stopped being true.
+    /// </para>
     /// </summary>
-    public const int PaneJumpDigits = 9;
+    public const int PaneJumpDigits = WindowJumpDigits;
 
     /// <summary>
     /// The id that focuses the <paramref name="number"/>th pane, counting the way every surface in this

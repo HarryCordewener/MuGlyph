@@ -79,12 +79,12 @@ public class PaneJumpTests
             await Assert.That(three.App.ActiveWindowId()).IsEqualTo(three.Windows[n - 1]);
 
             // And the paint: this pane's rectangle carries the focused plane and no other one does.
-            await Assert.That(CellsPaintedIn(frame, rects[landed], focused))
+            await Assert.That(FrameGrid.CellsPaintedIn(frame, rects[landed], focused))
                 .IsGreaterThan(0)
                 .Because($"⌃B {n} must paint pane {n} as the focused one");
             foreach (var other in three.App.PaneIds.Where(id => id != landed))
             {
-                await Assert.That(CellsPaintedIn(frame, rects[other], focused)).IsEqualTo(0);
+                await Assert.That(FrameGrid.CellsPaintedIn(frame, rects[other], focused)).IsEqualTo(0);
             }
 
             // And the overlay, which is where a user reads the pane's number, targets the same pane with
@@ -304,28 +304,49 @@ public class PaneJumpTests
         await Assert.That(rects.ContainsKey(first)).IsFalse();
 
         var (focused, _) = app.PaneBandColors;
-        await Assert.That(CellsPaintedIn(frame, rects[second], focused)).IsGreaterThan(0);
+        await Assert.That(FrameGrid.CellsPaintedIn(frame, rects[second], focused)).IsGreaterThan(0);
     }
 
     /// <summary>
-    /// ⌃O is the other ordinal pane mover and counts the same order, so the two cannot come to mean
-    /// different things — three presses of ⌃O from pane 1 land where ⌃B 4 does. It also still carries a
-    /// zoom; it used to cycle the selection out from under one and leave it invisible.
+    /// <b>⌃O is the other ordinal pane mover and counts the same order</b>, so the two cannot come to mean
+    /// different things: <em>n</em> presses of ⌃O from pane 1 land where ⌃B <em>n+1</em> does, for every
+    /// <em>n</em> the fixture has — and the last one wraps back to pane 1, which is the step where a
+    /// cycle and a numbering are most easily written to disagree.
+    /// <para>
+    /// Driven for the whole cycle rather than at one arbitrary depth. This used to press ⌃O twice and
+    /// compare against ⌃B 3 while its own sentence claimed three presses and ⌃B 4 — a fixture of three
+    /// panes has no pane 4, so the prose described a property the test did not reach and could not have.
+    /// The property was the right one; the test was the weak half.
+    /// </para>
+    /// <para>
+    /// It also still carries a zoom; it used to cycle the selection out from under one and leave it
+    /// invisible.
+    /// </para>
     /// </summary>
     [Test]
     public async Task CyclingCountsTheSameOrderAsTheChordAndCarriesTheZoomToo()
     {
         var three = await ThreePanes();
+        var panes = three.App.PaneIds.Count;
+        await Assert.That(panes).IsEqualTo(3);
 
-        Prefix(three.App, 1);
-        three.App.SimulateKey(Ctrl(ConsoleKey.O));
-        three.App.SimulateKey(Ctrl(ConsoleKey.O));
-        var viaCycle = three.App.FocusedPaneId;
+        for (var presses = 1; presses <= panes; presses++)
+        {
+            Prefix(three.App, 1);
+            for (var i = 0; i < presses; i++)
+            {
+                three.App.SimulateKey(Ctrl(ConsoleKey.O));
+            }
 
-        Prefix(three.App, 3);
-        await Assert.That(three.App.FocusedPaneId)
-            .IsEqualTo(viaCycle)
-            .Because("the two ordinal pane movers must count one sequence");
+            var viaCycle = three.App.FocusedPaneId;
+
+            // n presses from pane 1 is pane n+1, wrapping — so the last lap comes back to pane 1.
+            var expected = presses % panes + 1;
+            Prefix(three.App, expected);
+            await Assert.That(three.App.FocusedPaneId)
+                .IsEqualTo(viaCycle)
+                .Because($"{presses} press(es) of ⌃O from pane 1 must land where ⌃B {expected} does");
+        }
 
         var app = App();
         app.RenderSnapshot("split");
@@ -448,91 +469,13 @@ public class PaneJumpTests
         app.SimulateKey(Plain('m', ConsoleKey.M));
         app.SimulateKey(Plain((char)('0' + digit), ConsoleKey.D0 + digit));
 
-        var prompt = Visible(app.StatusMarkup);
+        var prompt = FrameGrid.Visible(app.StatusMarkup);
         app.SimulateKey(Plain('\r', ConsoleKey.Enter)); // commit: the window lands in the targeted pane
 
         return (app.PaneIdOf(window) ?? throw new InvalidOperationException($"{window} is in no pane"), prompt);
     }
 
-    /// <summary>Markup with its style and link tags removed.</summary>
-    private static string Visible(string markup) =>
-        Regex.Replace(markup, @"\[(?:/|[^\]\[]*)\]", string.Empty).Replace("[[", "[").Replace("]]", "]");
 
-    /// <summary>The truecolor background escape a colour is written as.</summary>
-    private static string Sgr(SharpConsoleUI.Color color) => $"48;2;{color.R};{color.G};{color.B}";
-
-    /// <summary>
-    /// Walks a frame into a <c>{(row, column): background}</c> grid, the way a terminal walks it. Note
-    /// <c>48</c> and not <c>38</c> — reading foreground here and concluding about planes is the classic
-    /// mistake.
-    /// </summary>
-    private static Dictionary<(int Row, int Column), string?> Backgrounds(string ansi)
-    {
-        var cells = new Dictionary<(int, int), string?>();
-        var current = (string?)null;
-        var (row, column) = (0, 0);
-
-        foreach (Match token in Regex.Matches(ansi, @"\x1b\[([0-9;]*)([A-Za-z])|([^\x1b\r\n])|(\n)"))
-        {
-            if (token.Groups[4].Success)
-            {
-                row++;
-                column = 0;
-                continue;
-            }
-
-            if (token.Groups[3].Success)
-            {
-                cells[(row, column)] = current;
-                column++;
-                continue;
-            }
-
-            var parameters = token.Groups[1].Value;
-            switch (token.Groups[2].Value)
-            {
-                case "H":
-                    var at = parameters.Split(';');
-                    row = at[0].Length > 0 ? int.Parse(at[0]) - 1 : 0;
-                    column = at.Length > 1 && at[1].Length > 0 ? int.Parse(at[1]) - 1 : 0;
-                    break;
-                case "m":
-                    if (parameters.Length == 0 || parameters == "0" || parameters.Contains("49"))
-                    {
-                        current = null;
-                    }
-
-                    if (parameters.Contains("48;2;"))
-                    {
-                        current = parameters[parameters.IndexOf("48;2;", StringComparison.Ordinal)..];
-                    }
-
-                    break;
-            }
-        }
-
-        return cells;
-    }
-
-    /// <summary>How many cells inside a rectangle are painted in a given background.</summary>
-    private static int CellsPaintedIn(string ansi, PaneRect rect, SharpConsoleUI.Color colour)
-    {
-        var wanted = Sgr(colour);
-        var cells = Backgrounds(ansi);
-        var count = 0;
-        for (var y = rect.Y; y < rect.Y + rect.Height; y++)
-        {
-            for (var x = rect.X; x < rect.X + rect.Width; x++)
-            {
-                if (cells.GetValueOrDefault((y, x))?.StartsWith(wanted, StringComparison.Ordinal) == true)
-                {
-                    count++;
-                }
-            }
-        }
-
-        return count;
-    }
 
     /// <summary>Three panes side by side, one connected character each, in a known order.</summary>
     private sealed record Three(

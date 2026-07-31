@@ -145,10 +145,7 @@ public class RailWindowRowTests
     private static SharpMUTermApp OneWindow()
     {
         Console.SetIn(TextReader.Null);
-        var config = DemoScene.Build();
-        config.LastSession!.Windows.RemoveAll(w => w.Kind == WindowKind.Spawn);
-        config.LastSession.Root.Tabs.RemoveAll(t => t.StartsWith("spawn:", StringComparison.Ordinal));
-        return new SharpMUTermApp(config, Headless, new HeadlessConsoleDriver(Width, Height));
+        return new SharpMUTermApp(DemoConfigs.SingleWindow(), Headless, new HeadlessConsoleDriver(Width, Height));
     }
 
     private static bool MainRow(string row) =>
