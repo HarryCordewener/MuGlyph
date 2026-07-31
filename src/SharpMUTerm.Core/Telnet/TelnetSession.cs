@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Reflection;
 using System.Text;
 using Microsoft.Extensions.Logging;
@@ -278,14 +277,6 @@ public sealed class TelnetSession : ITelnetSession
             ? p
             : null;
 
-    // The third reflective seam, and the same shape as the two above: TerminalTypeProtocol holds the
-    // list it answers TTYPE/MTTS with in a private field, exposes it read-only, and offers no builder
-    // hook — so the only way to say who we are is to write it. The default is ["TNC", "XTERM",
-    // "MTTS 3853"], i.e. every server we have ever connected to was told it was talking to
-    // TelnetNegotiationCore. A `WithTerminalTypes(...)` on the builder is a small, obvious upstream PR.
-    private static readonly FieldInfo? TerminalTypesField =
-        typeof(TerminalTypeProtocol).GetField("_terminalTypes", BindingFlags.NonPublic | BindingFlags.Instance);
-
     private readonly ITransport _transport;
     private readonly ILogger _logger;
     private readonly TelnetSessionOptions _options;
@@ -501,11 +492,11 @@ public sealed class TelnetSession : ITelnetSession
     /// <summary>
     /// Tells the terminal-type plugin what to answer with, when this session has an opinion.
     /// <para>
-    /// Silent when the library stops holding the list where this expects it: being unable to state a
-    /// name is a cosmetic loss for the client, so it is logged rather than thrown — a session that
-    /// refuses to connect because it could not introduce itself would be a worse outcome than one that
-    /// connects under the wrong name. A crawler, which has a duty to identify itself, checks
-    /// <see cref="TerminalTypesApplied"/> instead of assuming.
+    /// Silent when the plugin is not registered (shouldn't happen with <see cref="AddDefaultMUDProtocols"/>):
+    /// being unable to state a name is a cosmetic loss for the client, so it is logged rather than
+    /// thrown — a session that refuses to connect because it could not introduce itself would be a
+    /// worse outcome than one that connects under the wrong name. A crawler, which has a duty to
+    /// identify itself, checks <see cref="TerminalTypesApplied"/> instead of assuming.
     /// </para>
     /// </summary>
     private void ApplyTerminalTypes(TelnetInterpreter interpreter)
@@ -515,8 +506,7 @@ public sealed class TelnetSession : ITelnetSession
             return;
         }
 
-        if (TerminalTypesField is null ||
-            interpreter.PluginManager?.GetPlugin<TerminalTypeProtocol>() is not { } plugin)
+        if (interpreter.PluginManager?.GetPlugin<TerminalTypeProtocol>() is not { } plugin)
         {
             _logger.LogWarning(
                 "Terminal types are not settable on this TelnetNegotiationCore build; the server will be told "
@@ -524,7 +514,7 @@ public sealed class TelnetSession : ITelnetSession
             return;
         }
 
-        TerminalTypesField.SetValue(plugin, types.ToImmutableList());
+        plugin.WithTerminalTypes(types.ToArray());
         TerminalTypesApplied = true;
     }
 
@@ -721,7 +711,10 @@ public sealed class TelnetSession : ITelnetSession
     public ValueTask SetWindowSizeAsync(int width, int height)
     {
         var interpreter = _interpreter ?? throw new InvalidOperationException("Session is not connected.");
-        return interpreter.SendNAWS((short)Math.Clamp(width, 0, short.MaxValue), (short)Math.Clamp(height, 0, short.MaxValue));
+        // SendNAWS was removed in 2.8.1. The NAWS plugin now owns the send, reports the full
+        // RFC 1073 unsigned-16 range, and takes int to avoid the caller having to cast.
+        return interpreter.PluginManager?.GetPlugin<NAWSProtocol>()?.SendWindowSizeAsync(width, height)
+            ?? ValueTask.CompletedTask;
     }
 
     public async Task DisconnectAsync()
