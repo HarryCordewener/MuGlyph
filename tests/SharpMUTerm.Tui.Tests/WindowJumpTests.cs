@@ -203,7 +203,7 @@ public class WindowJumpTests
     public async Task ADigitReachesACaptureWindowSittingBehindAnotherTabInItsPane()
     {
         var scene = await BuildScene();
-        var chat = Workspace.SpawnWindowId("Chat");
+        var chat = DemoScene.ChatWindowId;
         var chatPane = scene.App.PaneIdOf(chat)!;
 
         // Stand in Chat's own pane, on the other tab, so nothing but the tab has to move.
@@ -397,11 +397,11 @@ public class WindowJumpTests
         await Assert.That(WindowRowChord(scene.App, "Web")).IsEqualTo("⌥3");
 
         scene.App.SimulateKey(Alt(2));                       // Chat
-        await Assert.That(scene.App.ActiveWindowId()).IsEqualTo(Workspace.SpawnWindowId("Chat"));
+        await Assert.That(scene.App.ActiveWindowId()).IsEqualTo(DemoScene.ChatWindowId);
         await Assert.That(scene.App.DispatchCommand("layout:close")).IsTrue();
         scene.App.RenderNextFrame();
 
-        await Assert.That(scene.App.NumberedWindowIds).DoesNotContain(Workspace.SpawnWindowId("Chat"));
+        await Assert.That(scene.App.NumberedWindowIds).DoesNotContain(DemoScene.ChatWindowId);
         await Assert.That(WindowRowChord(scene.App, "Web"))
             .IsEqualTo("⌥2")
             .Because("the windows on the screen must be numbered without a hole where the closed one was");
@@ -440,7 +440,9 @@ public class WindowJumpTests
         scene.Transports[0].Receive("<Trade> Ann offers a lamp\n");
         scene.App.RenderNextFrame();
 
-        var arrival = Workspace.SpawnWindowId("Trade");
+        // Transports[0] is Alfa.Ann's, and the line says so — the window belongs to the session whose
+        // wire it arrived on, which is the whole point of the per-session id.
+        var arrival = Workspace.SpawnWindowId("Alfa.Ann", "Trade");
         await Assert.That(scene.App.NumberedWindowIds).Contains(arrival);
 
         foreach (var (what, chord) in before)
@@ -877,7 +879,7 @@ public class WindowJumpTests
             config.Worlds.Add(definition);
         }
 
-        var chat = Workspace.SpawnWindowId("Chat");
+        var chat = DemoScene.ChatWindowId;
         var windows = new[] { "main", chat, "char:Bravo.Bob", "char:Cara.Cal" };
 
         // Ann's two, in creation order — which is the whole of ⌥N while she is active. Bob's and Cal's

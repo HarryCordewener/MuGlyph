@@ -5,6 +5,7 @@ using SharpMUTerm.Core.Commands;
 using SharpMUTerm.Core.Configuration;
 using SharpMUTerm.Core.Session;
 using SharpMUTerm.Core.Text;
+using SharpMUTerm.Core.Workspaces;
 using SharpMUTerm.Graphics;
 
 namespace SharpMUTerm.Tui.Tests;
@@ -32,7 +33,14 @@ public class RestoreLogEndToEndTests
     private const int Width = 160;
     private const int Height = 40;
     private const string MainWindow = "main";
-    private const string ChatWindow = "spawn:Chat";
+
+    /// <summary>
+    /// The one character in this fixture, and the Chat window its capture rule routes to. A spawn
+    /// window's id names its owner, so the id is asked for rather than spelt out.
+    /// </summary>
+    private const string Character = "Aetherfall.Corvid";
+
+    private static readonly string ChatWindow = Workspace.SpawnWindowId(Character, "Chat");
 
     /// <summary>The startup ceiling asserted below — see that test for the measured figure it guards.</summary>
     private const int Ceiling = 400;
@@ -385,7 +393,9 @@ public class RestoreLogEndToEndTests
     {
         using var root = new TempRoot();
         var config = Configuration();
-        var windows = new[] { MainWindow, ChatWindow, "spawn:OOC", "spawn:Tells", "spawn:Guild", "spawn:Events" };
+        var windows = new[] { MainWindow, ChatWindow }
+            .Concat(new[] { "OOC", "Tells", "Guild", "Events" }.Select(t => Workspace.SpawnWindowId(Character, t)))
+            .ToArray();
 
         using (var seed = new RestoreLog(root.Path, config.RestoreLog))
         {

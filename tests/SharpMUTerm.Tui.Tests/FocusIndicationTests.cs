@@ -66,7 +66,7 @@ public class FocusIndicationTests
     }
 
     /// <summary>The demo workspace's spawn window — the second tab, and after a split the second pane.</summary>
-    private static string ChatWindowId => Workspace.SpawnWindowId("Chat");
+    private static string ChatWindowId => DemoScene.ChatWindowId;
 
 
     // --- item 1: the input bands ------------------------------------------------------------------

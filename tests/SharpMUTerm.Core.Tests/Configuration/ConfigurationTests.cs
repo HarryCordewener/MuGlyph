@@ -278,7 +278,8 @@ public class ConfigurationTests
 
         await Assert.That(restored.LastSession).IsNotNull();
         var workspace = restored.LastSession!.Restore();
-        await Assert.That(workspace.FindWindow(Workspace.SpawnWindowId("Chat"))!.OwnerLabel).IsEqualTo("Corvid");
+        await Assert.That(workspace.FindWindow(Workspace.SpawnWindowId("Aetherfall.Corvid", "Chat"))!.OwnerLabel)
+            .IsEqualTo("Corvid");
     }
 
     [Test]

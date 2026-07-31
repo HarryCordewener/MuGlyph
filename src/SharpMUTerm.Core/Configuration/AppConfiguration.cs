@@ -8,7 +8,7 @@ namespace SharpMUTerm.Core.Configuration;
 public sealed class AppConfiguration
 {
     /// <summary>The current on-disk schema version. Older configs are upgraded by <see cref="ConfigurationMigrator"/>.</summary>
-    public const int CurrentVersion = 4;
+    public const int CurrentVersion = 5;
 
     /// <summary>Schema version, for future migrations.</summary>
     public int Version { get; set; } = CurrentVersion;

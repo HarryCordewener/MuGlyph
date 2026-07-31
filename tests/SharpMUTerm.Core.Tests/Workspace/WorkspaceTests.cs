@@ -25,7 +25,7 @@ public class WorkspaceTests
         var chat = w.RouteSpawn("Chat");
 
         await Assert.That(chat.Kind).IsEqualTo(WindowKind.Spawn);
-        await Assert.That(chat.Id).IsEqualTo(Workspace.SpawnWindowId("Chat"));
+        await Assert.That(chat.Id).IsEqualTo(Workspace.SpawnWindowId(null, "Chat"));
         await Assert.That(w.IsVisible(chat.Id)).IsFalse(); // main stays the active tab
         await Assert.That(chat.Unread).IsEqualTo(1);
 
@@ -93,7 +93,7 @@ public class WorkspaceTests
     {
         var w = new Workspace();
         w.RouteSpawn("Chat");
-        var chatId = Workspace.SpawnWindowId("Chat");
+        var chatId = Workspace.SpawnWindowId(null, "Chat");
 
         var closed = w.CloseWindow(chatId);
 

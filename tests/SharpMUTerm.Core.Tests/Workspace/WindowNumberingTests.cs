@@ -37,7 +37,7 @@ public class WindowNumberingTests
         ws.RouteSpawn("Chat", "W.C");
         ws.OpenWindow("web", "Web");
 
-        await Assert.That(Order(ws)).IsEqualTo("main,spawn:Chat,web");
+        await Assert.That(Order(ws)).IsEqualTo($"main,{Spawn("Chat")},web");
     }
 
     /// <summary>
@@ -53,7 +53,7 @@ public class WindowNumberingTests
         ws.RouteSpawn("Trade", "W.C");
         var before = Order(ws);
 
-        ws.Layout.SplitWithWindow("spawn:Trade", ws.Layout.FocusedPaneId, Edge.Left);
+        ws.Layout.SplitWithWindow(Spawn("Trade"), ws.Layout.FocusedPaneId, Edge.Left);
 
         await Assert.That(Order(ws)).IsEqualTo(before);
     }
@@ -69,7 +69,7 @@ public class WindowNumberingTests
         ws.RouteSpawn("Chat", "W.C");
         var before = Order(ws);
 
-        ws.ActivateWindow("spawn:Chat");
+        ws.ActivateWindow(Spawn("Chat"));
         await Assert.That(ws.Layout.ReorderActiveTab(-1)).IsTrue();
 
         await Assert.That(Order(ws)).IsEqualTo(before);
@@ -88,9 +88,9 @@ public class WindowNumberingTests
         ws.RouteSpawn("Chat", "W.C");
         ws.RouteSpawn("Trade", "W.C");
 
-        ws.CloseWindow("spawn:Chat");
+        ws.CloseWindow(Spawn("Chat"));
 
-        await Assert.That(Order(ws)).IsEqualTo("main,spawn:Trade");
+        await Assert.That(Order(ws)).IsEqualTo($"main,{Spawn("Trade")}");
         await Assert.That(ws.WindowsFor(Owner)[1].Sequence)
             .IsGreaterThan(2)
             .Because("the sequence keeps its hole; only the position closes up");
@@ -113,10 +113,10 @@ public class WindowNumberingTests
         ws.RouteSpawn("Trade", "W.C");
         ws.RouteSpawn("Newbie", "W.C");
 
-        ws.CloseWindow("spawn:Chat");   // frees the second slot
+        ws.CloseWindow(Spawn("Chat"));   // frees the second slot
         ws.RouteSpawn("Guild", "W.C");  // which the registry hands straight back out
 
-        await Assert.That(Order(ws)).IsEqualTo("main,spawn:Trade,spawn:Newbie,spawn:Guild")
+        await Assert.That(Order(ws)).IsEqualTo($"main,{Spawn("Trade")},{Spawn("Newbie")},{Spawn("Guild")}")
             .Because("the newcomer is ⌥4, and Trade and Newbie are still ⌥2 and ⌥3");
     }
 
@@ -133,10 +133,10 @@ public class WindowNumberingTests
         ws.RouteSpawn("Chat", "W.C");
         ws.RouteSpawn("Trade", "W.C");
 
-        ws.Layout.RemoveWindow("spawn:Chat"); // out of the tree, still in the registry
+        ws.Layout.RemoveWindow(Spawn("Chat")); // out of the tree, still in the registry
 
-        await Assert.That(ws.Windows.Select(w => w.Id)).Contains("spawn:Chat");
-        await Assert.That(Order(ws)).IsEqualTo("main,spawn:Trade");
+        await Assert.That(ws.Windows.Select(w => w.Id)).Contains(Spawn("Chat"));
+        await Assert.That(Order(ws)).IsEqualTo($"main,{Spawn("Trade")}");
     }
 
     // --- across a restart ---------------------------------------------------------------------------
@@ -151,7 +151,7 @@ public class WindowNumberingTests
         var ws = new Workspace(mainWindowId: "main", mainTitle: "Main", sessionKey: "W.C");
         ws.RouteSpawn("Chat", "W.C");
         ws.RouteSpawn("Trade", "W.C");
-        ws.CloseWindow("spawn:Chat");
+        ws.CloseWindow(Spawn("Chat"));
         ws.RouteSpawn("Newbie", "W.C");
         var before = Order(ws);
 
@@ -233,6 +233,9 @@ public class WindowNumberingTests
     /// </summary>
     /// <summary>The character every window in these fixtures belongs to.</summary>
     private const string Owner = "W.C";
+
+    /// <summary>The window id <see cref="Workspace.RouteSpawn"/> produces for <see cref="Owner"/>.</summary>
+    private static string Spawn(string target) => Workspace.SpawnWindowId(Owner, target);
 
     private static string Order(Workspace workspace) =>
         string.Join(",", workspace.WindowsFor(Owner).Select(w => w.Id));

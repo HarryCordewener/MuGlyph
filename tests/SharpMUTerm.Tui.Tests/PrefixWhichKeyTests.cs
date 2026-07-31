@@ -59,7 +59,7 @@ public class PrefixWhichKeyTests
     private static SharpMUTermApp ChatForward()
     {
         var app = App();
-        app.SimulateWindowChange(Workspace.SpawnWindowId("Chat"));
+        app.SimulateWindowChange(DemoScene.ChatWindowId);
         return app;
     }
 

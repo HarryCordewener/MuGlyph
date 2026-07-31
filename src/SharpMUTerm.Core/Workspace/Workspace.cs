@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace SharpMUTerm.Core.Workspaces;
 
 /// <summary>
@@ -154,14 +156,23 @@ public sealed class Workspace
     }
 
     /// <summary>
-    /// Routes trigger-spawned output to a spawn window named <paramref name="target"/>, creating and
-    /// placing the window on first use, and counts the line as unread unless the window is currently
-    /// visible. Returns the destination window.
+    /// Routes trigger-spawned output to <paramref name="sessionKey"/>'s spawn window named
+    /// <paramref name="target"/>, creating and placing the window on first use, and counts the line as
+    /// unread unless the window is currently visible. Returns the destination window.
+    /// <para>
+    /// <b>The destination is per session, not per workspace.</b> Two connected characters running the
+    /// same capture rule each get a window of their own; the id carries the owner, so the second
+    /// session to match cannot land in the first's window. It used to: the id was the target alone, so
+    /// whoever matched first created the window <em>with their own session key on it</em> and everybody
+    /// else's lines were appended to somebody else's pane. That was not merely a mixed-up channel — the
+    /// rail draws window rows for the active character only, so the second character's own channel was
+    /// filed under the first and was invisible from the character it belonged to.
+    /// </para>
     /// </summary>
     public WorkspaceWindow RouteSpawn(string target, string? sessionKey = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(target);
-        var id = SpawnWindowId(target);
+        var id = SpawnWindowId(sessionKey, target);
         if (!_windows.TryGetValue(id, out var window))
         {
             window = Register(new WorkspaceWindow(id, target, WindowKind.Spawn, sessionKey));
@@ -172,8 +183,93 @@ public sealed class Workspace
         return window;
     }
 
-    /// <summary>The window id a spawn <paramref name="target"/> routes to.</summary>
-    public static string SpawnWindowId(string target) => $"spawn:{target}";
+    /// <summary>Every spawn window id starts with this.</summary>
+    public const string SpawnPrefix = "spawn:";
+
+    /// <summary>
+    /// The owner field of a spawn window that belongs to nobody. A single <c>-</c>, which is not a
+    /// decimal length and so can never be mistaken for one — that is the whole reason it is not the
+    /// empty string.
+    /// </summary>
+    private const string Unowned = "-";
+
+    /// <summary>
+    /// The window id the spawn <paramref name="target"/> of the session <paramref name="sessionKey"/>
+    /// routes to. Unique per <c>(owner, target)</c> and stable for ever, so a reconnect or a restart
+    /// comes back to the pane it left.
+    /// <para>
+    /// <b>Why the length prefix.</b> A session key and a target are both user-controlled strings that may
+    /// hold any character, colons included — a world or character can be called <c>a:b</c> and a
+    /// trigger's <c>SpawnTarget</c> is free text. Joining them with a separator is therefore <em>not</em>
+    /// injective: <c>(a, b:c)</c> and <c>(a:b, c)</c> would produce one id and collapse two characters'
+    /// panes into one, which is this defect again in a rarer shape. Writing the owner's length in front
+    /// of it makes the encoding total and reversible: the digits up to the first colon give the length,
+    /// exactly that many characters are the owner, one more colon is consumed, and everything left is
+    /// the target — so distinct pairs cannot produce equal ids, whatever is in them.
+    /// </para>
+    /// <para>
+    /// It is legible on purpose rather than hashed. This id is a dictionary key, a value in
+    /// <c>config.json</c>, and the stem of a <c>RestoreLog</c> file name; a digest would be unambiguous
+    /// too and would make every one of those unreadable to whoever has to look at them, for no property
+    /// a reversible encoding does not already have. (The file name's own collision handling is
+    /// unchanged and unaffected: <c>RestoreLog</c> stores the full id in each file's header and refuses
+    /// a file whose header names a different window, so a CRC-32 clash on the stem costs one window's
+    /// log rather than mixing two.)
+    /// </para>
+    /// </summary>
+    /// <param name="sessionKey">The owning <c>world.character</c> session, or null for a window nobody owns.</param>
+    /// <param name="target">The capture target, which is also the window's title.</param>
+    public static string SpawnWindowId(string? sessionKey, string target)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(target);
+        return sessionKey is null
+            ? $"{SpawnPrefix}{Unowned}:{target}"
+            : $"{SpawnPrefix}{sessionKey.Length}:{sessionKey}:{target}";
+    }
+
+    /// <summary>
+    /// Reads a spawn window id back into the pair that made it. False when <paramref name="id"/> is not
+    /// one this build writes — including a spawn id from before the owner was in it, which is what
+    /// <c>ConfigurationMigrator</c>'s v4→v5 step upgrades.
+    /// </summary>
+    public static bool TryReadSpawnWindowId(string id, out string? sessionKey, out string target)
+    {
+        sessionKey = null;
+        target = string.Empty;
+        if (id is null || !id.StartsWith(SpawnPrefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var rest = id.AsSpan(SpawnPrefix.Length);
+        if (rest.StartsWith(Unowned + ":", StringComparison.Ordinal))
+        {
+            target = rest[(Unowned.Length + 1)..].ToString();
+            return target.Length > 0;
+        }
+
+        // NumberStyles.None: bare digits only, so a sign or surrounding space is not silently accepted
+        // into a field whose whole job is to say how many characters to take.
+        var separator = rest.IndexOf(':');
+        if (separator <= 0
+            || !int.TryParse(rest[..separator], NumberStyles.None, CultureInfo.InvariantCulture, out var length))
+        {
+            return false;
+        }
+
+        // The owner's exact length, then the colon that closes it: anything shorter is not this
+        // encoding. Written as `<=` rather than `< length + 1` so a declared length of int.MaxValue
+        // cannot overflow the comparison into passing and then index off the end.
+        var owner = rest[(separator + 1)..];
+        if (owner.Length <= length || owner[length] != ':')
+        {
+            return false;
+        }
+
+        sessionKey = owner[..length].ToString();
+        target = owner[(length + 1)..].ToString();
+        return target.Length > 0;
+    }
 
     /// <summary>
     /// Records a line arriving in a window: increments its unread badge unless the window is
