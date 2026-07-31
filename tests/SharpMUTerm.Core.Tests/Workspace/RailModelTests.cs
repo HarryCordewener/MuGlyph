@@ -14,8 +14,8 @@ public class RailModelTests
         {
             new RailCharacter("Corvid", "Aetherfall.Corvid", Connected: true, Active: true, Unread: 3, new[]
             {
-                new RailWindow("main", "w:main", "p1", 0, false, false),
-                new RailWindow("#public", "w:public", "p2", 3, true, false),
+                new RailWindow("main", "w:main", "⌥1", 0, false, false),
+                new RailWindow("#public", "w:public", "⌥2", 3, true, false),
             }),
             new RailCharacter("Rookery", "Aetherfall.Rookery", Connected: false, Active: false, Unread: 0, Array.Empty<RailWindow>()),
         });
@@ -38,8 +38,8 @@ public class RailModelTests
     {
         var world = new RailWorld("Aetherfall", "h", 1, Accent, new[]
         {
-            new RailCharacter("Corvid", "k1", true, Active: true, 0, new[] { new RailWindow("main", "w:main", "p1", 0, false, false) }),
-            new RailCharacter("Rookery", "k2", false, Active: false, 0, new[] { new RailWindow("hidden", "w:hidden", "p9", 0, false, false) }),
+            new RailCharacter("Corvid", "k1", true, Active: true, 0, new[] { new RailWindow("main", "w:main", "⌥1", 0, false, false) }),
+            new RailCharacter("Rookery", "k2", false, Active: false, 0, new[] { new RailWindow("hidden", "w:hidden", "⌥9", 0, false, false) }),
         });
 
         var rows = RailModel.Build(new[] { world });
@@ -50,17 +50,17 @@ public class RailModelTests
     }
 
     [Test]
-    public async Task Window_CarriesUnsentUnreadAndPane()
+    public async Task Window_CarriesUnsentUnreadAndItsChord()
     {
         var world = new RailWorld("W", "h", 1, Accent, new[]
         {
-            new RailCharacter("C", "k", true, true, 3, new[] { new RailWindow("#public", "w:public", "p2", 3, HasUnsent: true, Closed: false) }),
+            new RailCharacter("C", "k", true, true, 3, new[] { new RailWindow("#public", "w:public", "⌥2", 3, HasUnsent: true, Closed: false) }),
         });
 
         var win = RailModel.Build(new[] { world }).Single(r => r.Kind == RailRowKind.Window);
         await Assert.That(win.Unsent).IsTrue();
         await Assert.That(win.Unread).IsEqualTo(3);
-        await Assert.That(win.Pane).IsEqualTo("p2");
+        await Assert.That(win.Chord).IsEqualTo("⌥2");
     }
 
     [Test]
@@ -213,8 +213,8 @@ public class RailModelTests
     {
         new RailCharacter("Corvid", "Aetherfall.Corvid", Connected: true, Active: true, Unread: 3, new[]
         {
-            new RailWindow("main", "main", "p1", 0, false, false),
-            new RailWindow("#public", "spawn:#public", "p2", 3, true, false),
+            new RailWindow("main", "main", "⌥1", 0, false, false),
+            new RailWindow("#public", "spawn:#public", "⌥2", 3, true, false),
         }),
         new RailCharacter("Rookery", "Aetherfall.Rookery", Connected: false, Active: false, Unread: 0,
             Array.Empty<RailWindow>()),

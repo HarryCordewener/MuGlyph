@@ -60,8 +60,16 @@ public class MacroKeyCaptureTests
     [Arguments("F12", nameof(MacroKeyDelivery.Fires))]
     [Arguments("Shift+F3", nameof(MacroKeyDelivery.Fires))]
     [Arguments("Ctrl+K", nameof(MacroKeyDelivery.Fires))]
-    [Arguments("Alt+K", nameof(MacroKeyDelivery.Fires))]
-    // ⌥0 is the one Alt+digit no surface claims: ⌥1–⌥9 go to numbered panes, and the tenth digit is
+    // ⌥K is the *previous character* chord, and ⌥J its partner — the pair the sidebar prints. ⌥Y stands
+    // in for "an Alt+letter this app has not spent", which is what this row used to be checking.
+    [Arguments("Alt+Y", nameof(MacroKeyDelivery.Fires))]
+    [Arguments("Alt+K", nameof(MacroKeyDelivery.Taken))]
+    [Arguments("Alt+J", nameof(MacroKeyDelivery.Taken))]
+    [Arguments("Alt+D", nameof(MacroKeyDelivery.Taken))]
+    // ⌃D was the disconnect chord and is now free — disconnect moved to ⌥D so that it and ⌥R read as one
+    // pair. Releasing it hands a clean Ctrl chord back to whoever wants to bind a macro there.
+    [Arguments("Ctrl+D", nameof(MacroKeyDelivery.Fires))]
+    // ⌥0 is the one Alt+digit no surface claims: ⌥1–⌥9 go to numbered windows, and the tenth digit is
     // deliberately left for a binding (the framework's own Alt+digit window selector ignores 0 too).
     [Arguments("Alt+0", nameof(MacroKeyDelivery.Fires))]
     [Arguments("Ctrl+Up", nameof(MacroKeyDelivery.Fires))]

@@ -106,7 +106,7 @@ internal static class PrefixPanel
     /// brackets reads as a direction and the arrows are what a reader reaches for — so they work too
     /// (<c>SharpMUTermApp.PrefixKey</c>) and the strip says so rather than leaving it to be discovered.
     /// </summary>
-    internal const string StripKeys = "| - z o x b m i < > ← →";
+    internal const string StripKeys = "| - z o 1–9 x b m i < > ← →";
 
     /// <summary>
     /// How the way out is named, everywhere it is named. The prefix used to have none: Esc worked only by
@@ -148,6 +148,12 @@ internal static class PrefixPanel
             new PrefixEntry("-", "split this pane top and bottom", needsTab),
             new PrefixEntry("z", facts.Zoomed ? "unzoom this pane" : "zoom this pane full-window", needsPane),
             new PrefixEntry("o", "go to the next pane", needsPane),
+
+            // The ordinal pane mover, beside the cycle it counts with. It moved here from ⌥1–⌥9 when that
+            // was given to *windows*: a pane and a window are different destinations and one key cannot
+            // name both. Blocked on the same fact as zoom and cycle — with one pane there is nowhere to
+            // go — and listed as the range rather than nine rows, which is how the reorder pair is listed.
+            new PrefixEntry("1–9", "go to that numbered pane", needsPane),
             new PrefixEntry("x", "close this tab", facts.ActiveWindowIsMain ? MainWindowStays : null),
             new PrefixEntry("b", facts.RailCollapsed ? "show the connection rail" : "hide the connection rail", null),
             new PrefixEntry("m", "move this window to another pane", null),

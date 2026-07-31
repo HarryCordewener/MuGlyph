@@ -101,12 +101,18 @@ public class TabExpansionTests
             .Throws<ArgumentOutOfRangeException>();
     }
 
-    /// <summary>The default is four, and the ceiling is stated rather than implied.</summary>
+    /// <summary>
+    /// The default is four, and the ceiling is sixteen — both read through the property rather than
+    /// off the constants. Comparing a <c>const</c> to a literal is a comparison the compiler folds
+    /// away (TUnitAssertions0005): it pins nothing, and it warned. Going through
+    /// <see cref="TextSettings"/> pins the two facts that can actually drift — that the property's
+    /// default is the constant, and what the two constants are worth.
+    /// </summary>
     [Test]
-    public async Task TheDefaultIsFour()
+    public async Task TheDefaultIsFourAndTheCeilingIsSixteen()
     {
+        await Assert.That(new TextSettings().TabWidth).IsEqualTo(TextSettings.DefaultTabWidth);
         await Assert.That(new TextSettings().TabWidth).IsEqualTo(4);
-        await Assert.That(TextSettings.DefaultTabWidth).IsEqualTo(4);
-        await Assert.That(TextSettings.MaxTabWidth).IsEqualTo(16);
+        await Assert.That(new TextSettings { TabWidth = TextSettings.MaxTabWidth }.TabWidth).IsEqualTo(16);
     }
 }

@@ -68,88 +68,6 @@ public class FocusIndicationTests
     /// <summary>The demo workspace's spawn window — the second tab, and after a split the second pane.</summary>
     private static string ChatWindowId => DemoScene.ChatWindowId;
 
-    /// <summary>The truecolor background escape a colour is written as, e.g. <c>48;2;51;57;76</c>.</summary>
-    private static string Sgr(SharpConsoleUI.Color color) => $"48;2;{color.R};{color.G};{color.B}";
-
-    /// <summary>
-    /// Walks a frame into a <c>{(row, column): background}</c> grid, the way a terminal walks it: the last
-    /// <c>48;2;r;g;b</c> seen is the background of every cell written until the next one. Note <c>48</c>
-    /// and not <c>38</c> — reading foreground here and concluding about bands is the classic mistake.
-    /// </summary>
-    private static Dictionary<(int Row, int Column), string?> Backgrounds(string ansi)
-    {
-        var cells = new Dictionary<(int, int), string?>();
-        var current = (string?)null;
-        var (row, column) = (0, 0);
-
-        foreach (Match token in Regex.Matches(ansi, @"\x1b\[([0-9;]*)([A-Za-z])|([^\x1b\r\n])|(\n)"))
-        {
-            if (token.Groups[4].Success)
-            {
-                row++;
-                column = 0;
-                continue;
-            }
-
-            if (token.Groups[3].Success)
-            {
-                cells[(row, column)] = current;
-                column++;
-                continue;
-            }
-
-            var parameters = token.Groups[1].Value;
-            switch (token.Groups[2].Value)
-            {
-                case "H":
-                    var at = parameters.Split(';');
-                    row = at[0].Length > 0 ? int.Parse(at[0]) - 1 : 0;
-                    column = at.Length > 1 && at[1].Length > 0 ? int.Parse(at[1]) - 1 : 0;
-                    break;
-                case "m":
-                    if (parameters.Length == 0 || parameters == "0" || parameters.Contains("49"))
-                    {
-                        current = null;
-                    }
-
-                    if (parameters.Contains("48;2;"))
-                    {
-                        current = parameters[parameters.IndexOf("48;2;", StringComparison.Ordinal)..];
-                    }
-
-                    break;
-            }
-        }
-
-        return cells;
-    }
-
-    /// <summary>How many cells of a frame are painted in a given background.</summary>
-    private static int CellsPainted(string ansi, SharpConsoleUI.Color colour)
-    {
-        var wanted = Sgr(colour);
-        return Backgrounds(ansi).Values.Count(bg => bg?.StartsWith(wanted, StringComparison.Ordinal) == true);
-    }
-
-    /// <summary>How many cells inside a rectangle are painted in a given background.</summary>
-    private static int CellsPaintedIn(string ansi, PaneRect rect, SharpConsoleUI.Color colour)
-    {
-        var wanted = Sgr(colour);
-        var cells = Backgrounds(ansi);
-        var count = 0;
-        for (var y = rect.Y; y < rect.Y + rect.Height; y++)
-        {
-            for (var x = rect.X; x < rect.X + rect.Width; x++)
-            {
-                if (cells.GetValueOrDefault((y, x))?.StartsWith(wanted, StringComparison.Ordinal) == true)
-                {
-                    count++;
-                }
-            }
-        }
-
-        return count;
-    }
 
     // --- item 1: the input bands ------------------------------------------------------------------
 
@@ -166,9 +84,9 @@ public class FocusIndicationTests
         var ansi = app.RenderSnapshot("draft2"); // two bars, the second armed
         var (armed, idle) = app.InputBandColors;
 
-        await Assert.That(Sgr(armed)).IsNotEqualTo(Sgr(idle));
-        await Assert.That(CellsPainted(ansi, armed)).IsGreaterThanOrEqualTo(width);
-        await Assert.That(CellsPainted(ansi, idle)).IsGreaterThanOrEqualTo(width);
+        await Assert.That(FrameGrid.Sgr(armed)).IsNotEqualTo(FrameGrid.Sgr(idle));
+        await Assert.That(FrameGrid.CellsPainted(ansi, armed)).IsGreaterThanOrEqualTo(width);
+        await Assert.That(FrameGrid.CellsPainted(ansi, idle)).IsGreaterThanOrEqualTo(width);
     }
 
     /// <summary>
@@ -184,8 +102,8 @@ public class FocusIndicationTests
         var (armed, idle) = app.InputBandColors;
 
         // Both are genuinely on the frame — a distance between two colours nothing painted is arithmetic.
-        await Assert.That(CellsPainted(ansi, armed)).IsGreaterThan(0);
-        await Assert.That(CellsPainted(ansi, idle)).IsGreaterThan(0);
+        await Assert.That(FrameGrid.CellsPainted(ansi, armed)).IsGreaterThan(0);
+        await Assert.That(FrameGrid.CellsPainted(ansi, idle)).IsGreaterThan(0);
 
         var reported = Luma(0x33, 0x39, 0x4c) - Luma(0x26, 0x2b, 0x3a);
         var now = Luma(armed.R, armed.G, armed.B) - Luma(idle.R, idle.G, idle.B);
@@ -214,8 +132,8 @@ public class FocusIndicationTests
 
         // The armed tone still covers as many cells as before — it moved bar, it did not disappear.
         var (armed, idle) = app.InputBandColors;
-        await Assert.That(CellsPainted(after, armed)).IsEqualTo(CellsPainted(before, armed));
-        await Assert.That(CellsPainted(after, idle)).IsEqualTo(CellsPainted(before, idle));
+        await Assert.That(FrameGrid.CellsPainted(after, armed)).IsEqualTo(FrameGrid.CellsPainted(before, armed));
+        await Assert.That(FrameGrid.CellsPainted(after, idle)).IsEqualTo(FrameGrid.CellsPainted(before, idle));
 
         // And the frames differ, which is the whole claim: arming a bar changes what is on the screen.
         await Assert.That(after).IsNotEqualTo(before);
@@ -275,17 +193,17 @@ public class FocusIndicationTests
         var ansi = app.RenderSnapshot("split");
 
         var (focused, unfocused) = app.PaneBandColors;
-        await Assert.That(Sgr(focused)).IsNotEqualTo(Sgr(unfocused));
+        await Assert.That(FrameGrid.Sgr(focused)).IsNotEqualTo(FrameGrid.Sgr(unfocused));
 
         var rects = app.PaneOutputRects();
         var focusedId = app.FocusedPaneId;
         var otherId = app.PaneIds.Single(id => id != focusedId);
 
         // Each plane dominates its own pane's output rectangle, and is not what the other is painted in.
-        await Assert.That(CellsPaintedIn(ansi, rects[focusedId], focused)).IsGreaterThan(0);
-        await Assert.That(CellsPaintedIn(ansi, rects[otherId], unfocused)).IsGreaterThan(0);
-        await Assert.That(CellsPaintedIn(ansi, rects[otherId], focused)).IsEqualTo(0);
-        await Assert.That(CellsPaintedIn(ansi, rects[focusedId], unfocused)).IsEqualTo(0);
+        await Assert.That(FrameGrid.CellsPaintedIn(ansi, rects[focusedId], focused)).IsGreaterThan(0);
+        await Assert.That(FrameGrid.CellsPaintedIn(ansi, rects[otherId], unfocused)).IsGreaterThan(0);
+        await Assert.That(FrameGrid.CellsPaintedIn(ansi, rects[otherId], focused)).IsEqualTo(0);
+        await Assert.That(FrameGrid.CellsPaintedIn(ansi, rects[focusedId], unfocused)).IsEqualTo(0);
     }
 
     /// <summary>
@@ -304,15 +222,15 @@ public class FocusIndicationTests
         var rects = app.PaneOutputRects();
 
         var before = app.RenderWholeFrame();
-        await Assert.That(CellsPaintedIn(before, rects[first], focused)).IsGreaterThan(0);
-        await Assert.That(CellsPaintedIn(before, rects[second], focused)).IsEqualTo(0);
+        await Assert.That(FrameGrid.CellsPaintedIn(before, rects[first], focused)).IsGreaterThan(0);
+        await Assert.That(FrameGrid.CellsPaintedIn(before, rects[second], focused)).IsEqualTo(0);
 
         app.SimulateKey(Ctrl(ConsoleKey.RightArrow));
         var after = app.RenderWholeFrame();
 
         await Assert.That(app.FocusedPaneId).IsEqualTo(second);
-        await Assert.That(CellsPaintedIn(after, rects[second], focused)).IsGreaterThan(0);
-        await Assert.That(CellsPaintedIn(after, rects[first], focused)).IsEqualTo(0);
+        await Assert.That(FrameGrid.CellsPaintedIn(after, rects[second], focused)).IsGreaterThan(0);
+        await Assert.That(FrameGrid.CellsPaintedIn(after, rects[first], focused)).IsEqualTo(0);
     }
 
     /// <summary>
@@ -776,8 +694,8 @@ public class FocusIndicationTests
         app.DispatchCommand("layout:cycle");
         var cycled = app.RenderWholeFrame();
         await Assert.That(app.FocusedPaneId).IsNotEqualTo(first);
-        await Assert.That(CellsPaintedIn(cycled, rects[app.FocusedPaneId], focused)).IsGreaterThan(0);
-        await Assert.That(CellsPaintedIn(cycled, rects[first], focused)).IsEqualTo(0);
+        await Assert.That(FrameGrid.CellsPaintedIn(cycled, rects[app.FocusedPaneId], focused)).IsGreaterThan(0);
+        await Assert.That(FrameGrid.CellsPaintedIn(cycled, rects[first], focused)).IsEqualTo(0);
     }
 
     // --- item 2: word movement moved rather than vanished ------------------------------------------

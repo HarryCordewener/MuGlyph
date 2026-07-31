@@ -269,7 +269,6 @@ internal static class DemoScene
                     Kind = WindowKind.Spawn,
                     SessionKey = ActiveSessionKey,
                     OwnerLabel = "Corvid",
-                    CapturePattern = @"^\[Chat\]",
                 },
             },
             Root = new LayoutNodeState

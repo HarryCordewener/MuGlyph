@@ -22,24 +22,48 @@ public static class CommandIds
     /// <summary>The id that activates the window named by <paramref name="windowId"/>.</summary>
     public static string Window(string windowId) => WindowPrefix + windowId;
 
+    /// <summary>
+    /// How many windows have a keyboard chord of their own: ⌥1–⌥9, counting
+    /// <see cref="SharpMUTerm.Core.Workspaces.Workspace.WindowsFor"/>. Nine because nine is what the
+    /// digit row spells with one modifier, what the terminal's Alt encoding covers (<c>ESC</c> + a
+    /// printable digit), and what the framework's own Alt+1–9 window selector claims — leaving one of
+    /// those digits unclaimed would hand it back to that selector, so all nine are claimed whether or
+    /// not there is a window behind them. Windows past the ninth are still reachable by ⌃N, the tab
+    /// strip, the rail and the ⌃P surface; they simply have no chord, and no surface claims otherwise.
+    /// <para>
+    /// The chord counts <em>windows</em> because that is what was asked for: "switch not just
+    /// characters, but captures, etc." — a capture window only ever shared a pane's number when it
+    /// happened to be that pane's active tab, so under a pane-numbered chord most of them were
+    /// unreachable.
+    /// </para>
+    /// </summary>
+    public const int WindowJumpDigits = 9;
+
     /// <summary>Prefix of a "go to this numbered pane" id; the remainder is the pane's 1-based number.</summary>
     public const string PanePrefix = "layout:pane-";
 
     /// <summary>
-    /// How many panes have a keyboard chord of their own: ⌥1–⌥9. Nine rather than the five that were
-    /// asked for because nine is what the digit row spells with one modifier, what the terminal's Alt
-    /// encoding covers (<c>ESC</c> + a printable digit), and what the framework's own Alt+1–9 window
-    /// selector claims — leaving one of those digits unclaimed would hand it back to that selector.
-    /// Panes past the ninth are still reachable by ⌃O, the arrows and the rail; they simply have no
-    /// chord, and no surface claims otherwise.
+    /// How many panes have a keyboard chord of their own: ⌃B 1–⌃B 9. On the <em>prefix</em> rather than
+    /// on Alt because ⌥N now names a window and one chord cannot mean two things. ⌃B is where every other
+    /// pane command already lives (split, zoom, close, cycle, move), so the ordinal one joining them costs
+    /// a reader nothing new to learn. Panes past the ninth are reachable by ⌃O, the arrows, the rail and
+    /// the ⌃P entry.
+    /// <para>
+    /// <b>Derived from <see cref="WindowJumpDigits"/> rather than written down again.</b> The two are the
+    /// same fact — one row of digits, which is what a keyboard has — and the reason they agree is the
+    /// keyboard rather than a coincidence anybody chose. This said "Nine to match
+    /// <c>WindowJumpDigits</c>" beside an independent literal <c>9</c>, which is a documented invariant
+    /// nothing enforced: editing either would have left the comment claiming an agreement that had
+    /// stopped being true.
+    /// </para>
     /// </summary>
-    public const int PaneJumpDigits = 9;
+    public const int PaneJumpDigits = WindowJumpDigits;
 
     /// <summary>
     /// The id that focuses the <paramref name="number"/>th pane, counting the way every surface in this
     /// client counts panes: <see cref="SharpMUTerm.Core.Workspaces.WorkspaceLayout.Panes"/> order, which is
-    /// <b>creation</b> order, which is the order the connection rail's <c>pane N</c> column numbers them
-    /// in. The chord (⌥N), the rail's label and this id are three spellings of one number.
+    /// <b>creation</b> order. The chord (⌃B N), the move and drag overlays' <c>pane N</c> label and this
+    /// id are three spellings of one number.
     /// <para>
     /// It was tree order — left-to-right then top-to-bottom — and that renumbered panes that already
     /// existed whenever one was inserted before them, so a number a user had learnt moved without being
