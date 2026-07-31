@@ -70,7 +70,7 @@ public class MsspCacheTests
         cache.RecordReport("MUD.Example.ORG.", 4201, Report(("NAME", ["One"])), Noon);
         cache.RecordReport("mud.example.org", 4201, Report(("NAME", ["Two"])), Noon);
 
-        await Assert.That(cache.All).HasCount().EqualTo(1);
+        await Assert.That(cache.All).Count().IsEqualTo(1);
         await Assert.That(cache.Find("MUD.EXAMPLE.ORG", 4201)!.Report!.Name).IsEqualTo("Two");
     }
 
@@ -215,7 +215,7 @@ public class MsspCacheTests
             cache.RecordConnection($"host{i}.example.org", 4000, Noon.AddMinutes(i));
         }
 
-        await Assert.That(cache.All).HasCount().EqualTo(MsspCache.MaxEndpoints);
+        await Assert.That(cache.All).Count().IsEqualTo(MsspCache.MaxEndpoints);
         await Assert.That(cache.Find("host0.example.org", 4000)).IsNull();
         await Assert.That(cache.Find($"host{MsspCache.MaxEndpoints + 9}.example.org", 4000)).IsNotNull();
     }

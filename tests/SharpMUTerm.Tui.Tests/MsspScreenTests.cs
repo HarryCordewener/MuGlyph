@@ -419,7 +419,7 @@ public class MsspScreenTests
         var nasty = MsspScreenRenderer.Body(
             World(), Observed(Report(("NAME", ["a\nb\rc[31md\te"]))), Noon, Width);
 
-        await Assert.That(nasty).HasCount().EqualTo(clean.Count);
+        await Assert.That(nasty).Count().IsEqualTo(clean.Count);
         foreach (var row in nasty)
         {
             await Assert.That(row.Any(char.IsControl)).IsFalse();
@@ -476,8 +476,8 @@ public class MsspScreenTests
         var down = Plain(MsspScreenRenderer.Render(
             World(), observation, Noon, new ScreenFocus(0, 60), 20, Width));
 
-        await Assert.That(top).HasCount().EqualTo(20);
-        await Assert.That(down).HasCount().EqualTo(20);
+        await Assert.That(top).Count().IsEqualTo(20);
+        await Assert.That(down).Count().IsEqualTo(20);
         await Assert.That(string.Join("\n", top)).IsNotEqualTo(string.Join("\n", down));
 
         // The edges say what they are hiding rather than silently ending.

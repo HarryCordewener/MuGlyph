@@ -247,6 +247,10 @@ internal static class MsspScreenRenderer
         }
 
         var report = observation.Report!;
+
+        // Built once. MsspData.UnofficialNames allocates and filters on every read, and the mark column
+        // asks per row — a hundred-variable report would have walked it a hundred times.
+        var unofficial = new HashSet<string>(report.UnofficialNames, StringComparer.Ordinal);
         rows.Add(string.Empty);
         rows.Add(Row("captured", Since(observation.ObservedAt!.Value, now), cells));
         rows.Add(string.Empty);
@@ -256,7 +260,7 @@ internal static class MsspScreenRenderer
         foreach (var (label, variable) in Headline)
         {
             drawn.Add(variable);
-            AddVariable(rows, label, report[variable], variable, report, now, cells);
+            AddVariable(rows, label, report[variable], variable, report, unofficial, now, cells);
         }
 
         var remaining = report.Keys.Where(name => !drawn.Contains(name)).ToList();
@@ -270,7 +274,7 @@ internal static class MsspScreenRenderer
 
         foreach (var name in remaining)
         {
-            AddVariable(rows, name, report[name], name, report, now, cells);
+            AddVariable(rows, name, report[name], name, report, unofficial, now, cells);
         }
 
         rows.Add(string.Empty);
@@ -312,12 +316,11 @@ internal static class MsspScreenRenderer
         IReadOnlyList<string> values,
         string variable,
         MsspData report,
+        IReadOnlySet<string> unofficial,
         DateTimeOffset now,
         int cells)
     {
-        var mark = report.ContainsKey(variable) && report.UnofficialNames.Contains(variable)
-            ? UnofficialMark
-            : " ";
+        var mark = unofficial.Contains(variable) ? UnofficialMark : " ";
 
         if (values.Count == 0)
         {
