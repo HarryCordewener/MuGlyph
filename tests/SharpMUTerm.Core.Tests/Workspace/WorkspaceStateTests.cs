@@ -12,7 +12,6 @@ public class WorkspaceStateTests
         var ws = new Workspace(mainWindowId: "main", mainTitle: "main", sessionKey: "Aetherfall.Corvid");
         var chat = ws.RouteSpawn("Chat", "Aetherfall.Corvid");
         chat.OwnerLabel = "Corvid";
-        chat.CapturePattern = @"^\[Chat\]";
         ws.ActivateWindow("main");
         ws.Layout.SplitFocused(SplitDirection.Row); // moves Chat into a new pane
         return ws;
@@ -30,7 +29,6 @@ public class WorkspaceStateTests
         var chat = restored.FindWindow(Workspace.SpawnWindowId("Chat"))!;
         await Assert.That(chat.Kind).IsEqualTo(WindowKind.Spawn);
         await Assert.That(chat.OwnerLabel).IsEqualTo("Corvid");
-        await Assert.That(chat.CapturePattern).IsEqualTo(@"^\[Chat\]");
         await Assert.That(chat.SessionKey).IsEqualTo("Aetherfall.Corvid");
 
         // The split tree survives: two panes, main and Chat separated.

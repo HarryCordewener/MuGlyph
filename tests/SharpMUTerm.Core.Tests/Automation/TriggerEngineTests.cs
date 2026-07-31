@@ -77,7 +77,7 @@ public class TriggerEngineTests
         var engine = new TriggerEngine();
         engine.Add(new Trigger { Pattern = "chat", Actions = new TriggerActions { SpawnTarget = "Chat" } });
         var result = engine.Process(Line("[chat] hi"));
-        await Assert.That(result.SpawnTargets.Select(s => s.Target)).Contains("Chat");
+        await Assert.That(result.SpawnTargets).Contains("Chat");
     }
 
     /// <summary>
@@ -101,27 +101,7 @@ public class TriggerEngineTests
 
         var result = engine.Process(Line(line));
 
-        await Assert.That(result.SpawnTargets.Select(s => s.Target)).Contains(expected);
-    }
-
-    /// <summary>
-    /// The rule's pattern rides with the route, because the destination no longer identifies the rule:
-    /// <c>Channel $1</c> resolves to a different name every time, so a consumer looking the rule up by
-    /// comparing it to the window's name would find nothing for any dynamic pane.
-    /// </summary>
-    [Test]
-    public async Task SpawnRoute_CarriesThePatternOfTheRuleThatRoutedIt()
-    {
-        var engine = new TriggerEngine();
-        engine.Add(new Trigger
-        {
-            Pattern = "^<(.+?)>",
-            Actions = new TriggerActions { SpawnTarget = "Channel $1" },
-        });
-
-        var result = engine.Process(Line("<Public> Ann waves"));
-
-        await Assert.That(result.SpawnTargets.Single().Pattern).IsEqualTo("^<(.+?)>");
+        await Assert.That(result.SpawnTargets).Contains(expected);
     }
 
     /// <summary>
@@ -171,7 +151,7 @@ public class TriggerEngineTests
 
         var result = engine.Process(Line("<Public> Ann waves"));
 
-        await Assert.That(result.SpawnTargets.Single().Target).IsEqualTo("Chat");
+        await Assert.That(result.SpawnTargets.Single()).IsEqualTo("Chat");
     }
 
     [Test]

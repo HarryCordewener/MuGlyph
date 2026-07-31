@@ -703,7 +703,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             DispatchCommand("term:timestamps-on");
         }
 
-        // Activate the Chat spawn window so its dim "⇱ capture …" header renders under the tab strip.
+        // Bring the Chat spawn window to the front, so one frame shows a *routed* window as the active tab
+        // with the character's own window sitting behind it in the same strip. It used to exist for the dim
+        // "⇱ capture …" header a spawn pane drew over its output; that header is gone (the user asked for
+        // it to go) and the view is not, because two other suites drive it — a spawn tab being closable
+        // (PaneTabCloseTests) and the timestamp gutter reaching a window whose history is markup and
+        // nothing else (TimestampGutterTests) are both claims about a spawn window in front.
         if (string.Equals(view, "spawn", StringComparison.OrdinalIgnoreCase))
         {
             _workspace.ActivateWindow(Workspace.SpawnWindowId("Chat"));
@@ -1712,7 +1717,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 UpdateStatus();
             }
         });
-        session.SpawnLine += (_, e) => OnUi(() => OnSpawnLine(session, e.Target, e.Pattern, e.Line));
+        session.SpawnLine += (_, e) => OnUi(() => OnSpawnLine(session, e.Target, e.Line));
 
         // The status row's encoding cell is live, so it has to be repainted when the thing it reports
         // changes. WorldSession has already put the change in the client message log by the time this
@@ -2144,15 +2149,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// which world a link clicked in a spawn window sends to by it.
     /// </para>
     /// </summary>
-    private void OnSpawnLine(WorldSession session, string target, string pattern, StyledLine line)
+    private void OnSpawnLine(WorldSession session, string target, StyledLine line)
     {
         var existed = _workspace.FindWindow(Workspace.SpawnWindowId(target)) is not null;
         var window = _workspace.RouteSpawn(target, session.SessionKey);
-
-        // Label the pane with the rule that feeds it. The pattern comes with the line rather than being
-        // looked up from the target: a route of "Channel $1" resolves to a different name every time, so
-        // finding the rule by comparing its SpawnTarget to this window's name would find nothing.
-        window.CapturePattern ??= pattern;
 
         // Its owner's own name, which for a session with no character is its world's. It used to fall back on
         // the *main window's* title, which is a different session's name as soon as more than one is open.
@@ -6036,9 +6036,17 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     }
 
     /// <summary>
-    /// Chooses a tab's content: a frozen <em>active</em> window gets the pinned/live split; a spawn
-    /// window with a capture pattern gets a dim <c>⇱ capture …</c> header over its output; everything
-    /// else shows the plain live control.
+    /// Chooses a tab's content: a frozen <em>active</em> window gets the pinned/live split, the web view
+    /// gets the picture, and everything else shows the plain live control.
+    /// <para>
+    /// A spawn window used to get a fourth arm — a dim <c>⇱ capture ^\[Chat\]</c> row between the tab
+    /// strip and the output, naming the trigger pattern that routes lines in. It was asked to go
+    /// ("do not show the capture line for capture panels") and it took a whole column of plumbing with
+    /// it: the pattern had ridden from <c>TriggerEngine</c> through <c>SpawnLineEventArgs</c> onto
+    /// <c>WorkspaceWindow</c> and into the saved workspace for this one row, and nothing else ever read
+    /// it. Every spawn window now renders exactly like every other output window, which is one fewer row
+    /// of pane taken from the output and one fewer shape a pane can be in.
+    /// </para>
     /// </summary>
     private IWindowControl BuildTabContent(PaneNode pane, string windowId, WorkspaceWindow window)
     {
@@ -6047,32 +6055,12 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             return BuildFrozenContent(windowId, window.Title);
         }
 
-        if (window.Kind == WindowKind.Spawn && !string.IsNullOrEmpty(window.CapturePattern))
-        {
-            return BuildSpawnContent(windowId, window);
-        }
-
         if (windowId == WebWindowId)
         {
             return BuildWebContent(window.Title);
         }
 
         return OutputViewFor(windowId, window.Title);
-    }
-
-    /// <summary>Wraps a spawn window's output under a dim capture line naming its trigger pattern.</summary>
-    private IWindowControl BuildSpawnContent(string windowId, WorkspaceWindow window)
-    {
-        var header = new MarkupControl(new List<string> { CaptureLineRenderer.Line(window.CapturePattern!) });
-        var output = OutputViewFor(windowId, window.Title);
-
-        var grid = Controls.Grid()
-            .WithAlignment(HorizontalAlignment.Stretch)
-            .WithVerticalAlignment(VerticalAlignment.Fill);
-        grid.Rows(GridLength.Cells(1), GridLength.Star(1)).Columns(GridLength.Star(1));
-        grid.Place(header, 0, 0, 1, 1);
-        grid.Place(output, 1, 0, 1, 1);
-        return grid.Build();
     }
 
     /// <summary>

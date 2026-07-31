@@ -342,7 +342,7 @@ public sealed class WorldSession : IAsyncDisposable
 
         foreach (var target in result.SpawnTargets)
         {
-            SpawnLine?.Invoke(this, new SpawnLineEventArgs(target.Target, target.Pattern, result.Line));
+            SpawnLine?.Invoke(this, new SpawnLineEventArgs(target, result.Line));
         }
 
         foreach (var response in result.Responses)

@@ -8,7 +8,6 @@ public sealed class WorkspaceWindowState
     public WindowKind Kind { get; set; } = WindowKind.Main;
     public string? SessionKey { get; set; }
     public string? OwnerLabel { get; set; }
-    public string? CapturePattern { get; set; }
 }
 
 /// <summary>
@@ -70,7 +69,6 @@ public sealed class WorkspaceState
                 Kind = w.Kind,
                 SessionKey = w.SessionKey,
                 OwnerLabel = w.OwnerLabel,
-                CapturePattern = w.CapturePattern,
             }).ToList(),
             Root = CaptureNode(workspace.Layout.Root),
             FocusedPaneId = workspace.Layout.FocusedPaneId,
@@ -85,7 +83,6 @@ public sealed class WorkspaceState
             new WorkspaceWindow(w.Id, w.Title, w.Kind, w.SessionKey)
             {
                 OwnerLabel = w.OwnerLabel,
-                CapturePattern = w.CapturePattern,
             });
 
         var layout = new WorkspaceLayout(BuildNode(Root), FocusedPaneId, ZoomedPaneId);

@@ -61,12 +61,6 @@ public sealed class WorkspaceWindow
     public bool HasUnsentInput { get; internal set; }
 
     /// <summary>
-    /// For a <see cref="WindowKind.Spawn"/> window, the trigger pattern that routes lines here — shown
-    /// as a dim <c>⇱ capture …</c> line under the tab strip. Null for windows with no capture rule.
-    /// </summary>
-    public string? CapturePattern { get; set; }
-
-    /// <summary>
     /// The display name of the character this window belongs to (typically its main window's title),
     /// used to prefix a child window's tab as <c>Owner: Name</c> so a spawn window scattered into another
     /// pane stays visibly tied to its character. Null for a character's own main window.
