@@ -398,7 +398,7 @@ Three rules that shape a parser and a screen:
 **Who consumes MSSP: crawlers, overwhelmingly.** The spec's own framing is "a transparant protocol
 **for MUD crawlers**".²¹ Live and crawling as of today: MudVerse²², MUD MSSP Stats (Iberia)²³,
 MudStats.com²⁴ (which the spec page still mislabels "defunct"), Grapevine²⁵. Grapevine's behaviour is
-worth knowing for the sibling crawler: it announces TTYPE `Grapevine`, waits 10 s for `IAC WILL MSSP`,
+worth knowing anyway: it announces TTYPE `Grapevine`, waits 10 s for `IAC WILL MSSP`,
 falls back to a plaintext `mssp-request\n`, gives up at 20 s, and **stops the instant MSSP arrives** —
 it never logs in.²⁵ Note also that `CRAWL DELAY` exists and **no live crawler was found that honours
 it**.
@@ -945,11 +945,18 @@ per world, recorded in the client message log.
 to save it) or only report. Offering is better if the action is unambiguous; it is one more thing that
 can fire at a bad moment. Settled by trying it.
 
-### 8.3 Parsing — and the boundary with the crawler
+### 8.3 Parsing
 
-A separate effort is building an **MSSP crawler**: a standalone tool that connects to servers, reads
-MSSP and follows `REFERRAL` to find more. It needs exactly the model this screen needs. Two
-implementations would drift, and the one that drifts will be the one nobody is looking at.
+> **Superseded, 2026-07-30.** An MSSP **crawler** — a standalone tool that connected to servers, read
+> MSSP and followed `REFERRAL` to find more — was built and then deleted: the maintainer's call was
+> *"drop the crawler aspect; focus on the MSSP info and build that in"*. The screen is the only
+> consumer now, so the "two implementations would drift" argument below no longer applies, and the
+> three crawler-specific gotchas at the end of this section are kept as **prior art rather than
+> requirements**. What was implemented also differs from the sketch below in one substantive way: the
+> library's MSSP reader was fixed upstream (TelnetNegotiationCore 2.6.5 / 2.7.0), so the
+> "we parse MSSP ourselves" conclusion was overtaken — `MsspData` in
+> `SharpMUTerm.Core/Telnet/Mssp/` is a *projection* of `MSSPConfig.Variables` with no parsing in it.
+> `MsspConfigReader` was deleted as this section proposed.
 
 **The parsing and the model live in `SharpMUTerm.Core/Protocols/Mssp/`, and both consume it.**
 Concretely:
@@ -999,8 +1006,8 @@ variable, and never populates its own `Extended` bag (§1.1). Since `MSSPProtoco
 above is what Core exposes and what both the screen and the crawler consume. `MsspConfigReader` — which
 also flattens dictionaries and lists into comma-joined strings — is deleted with it.
 
-**Three things the crawler needs that the screen does not**, recorded here because they belong with the
-shared model rather than being rediscovered:
+**Three things a crawler would need that the screen does not.** Recorded as prior art — nothing in the
+repository consumes them now, and the first is the one that also bears on the *client*:
 
 - **PennMUSH will not talk to a raw socket.** It probes with `IAC DO LINEMODE` and only sends its
   telnet-option block — including `IAC WILL MSSP` — once the client has proved it understands telnet,
@@ -1200,8 +1207,11 @@ answer when nothing is connected, which is exactly when someone is asking. `/gmc
   security payoff.
 - The `mssp.json` cache.
 - The INFO button and the read-only report screen (§8.4).
-- Coordinate with the crawler: it consumes `MsspReport` and does not parse MSSP itself; the three Penn
-  gotchas in §8.3 belong to it.
+
+**Stage 3 shipped**, ahead of stages 1 and 2 and without the TLS notice: `MsspData` (a projection of
+the library's own reader, not our parse), `MsspCache` writing `mssp.json` beside `config.json` keyed by
+`host:port`, and the F5 ▸ `i` INFO screen with the three empty states of §8.4. The TLS-upgrade notice
+(§8.2) remains unbuilt and is still the smallest piece with a security payoff.
 
 **Stage 4 — MSDP.**
 
@@ -1236,5 +1246,5 @@ promise. `docs/PLAN.md:46`'s `GmcpRouter` should be renamed to `SessionData` in 
 | Whether MSSP should also be shown at connect, in the output pane | Nobody has asked for it, and it is the server's stream. Deliberately not designed here. |
 | Whether the TLS-upgrade notice offers an action or only reports (§8.2) | Trying it. Offering is better if the action is unambiguous; it is one more thing that can fire at a bad moment. |
 | Whether to copy Mudlet's KaVir-snippet auto-detection for the TTYPE version number (§7) | A server that does this, to test against. Until then, send the bare uppercase name and treat a 16-colour downgrade as a reportable bug rather than something to pre-empt. |
-| Whether an MSSP report should be keyed by `host:port` or by resolved IP | Two worlds pointed at one host share a report either way; a host that moves does not. `host:port` is proposed because it is what the user typed and what the config holds. Revisit if anyone runs several games behind one hostname on one port, which is not a thing. |
-| Whether we honour `CRAWL DELAY` in the sibling crawler | Not our call, but recorded: no live crawler honours it, and honouring it costs nothing and would make ours the polite one (§8.3). |
+| ~~Whether an MSSP report should be keyed by `host:port` or by resolved IP~~ | **Settled: `host:port`.** It is what the user typed and what the config holds; a resolved IP moves under a report that has not changed. |
+| ~~Whether we honour `CRAWL DELAY` in the sibling crawler~~ | **Moot.** There is no crawler; see §8.3. |

@@ -37,7 +37,7 @@ jobs:
       # (the classic `dotnet test`/VSTest path is not used by MTP on .NET 10).
       #
       # Every suite carries `if: ${{ !cancelled() }}` so one failure does not hide the rest. Without it
-      # the job stops at the first red step, and a Core failure means Graphics through Crawler simply do
+      # the job stops at the first red step, and a Core failure means Graphics through Tui simply do
       # not run — which is how a Windows file-sharing defect in Core kept two Tui failures invisible for
       # days: nobody knew they were there until Core went green. A cancelled run still stops.
       - name: Test — Core
@@ -63,14 +63,6 @@ jobs:
         if: ${{ !cancelled() }}
         shell: bash
         run: dotnet run -c Release --no-build --project tests/SharpMUTerm.Tui.Tests/SharpMUTerm.Tui.Tests.csproj
-
-      # The Crawler suite was not listed here at all — on either platform, not merely on Windows. Its 102
-      # tests have never run in CI, which is why a FileShare omission in ObservationLog survived the
-      # sweep that fixed the same pattern in the spill, the restore log and both transcript sinks.
-      - name: Test — Crawler
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: dotnet run -c Release --no-build --project tests/SharpMUTerm.Crawler.Tests/SharpMUTerm.Crawler.Tests.csproj
 
       # End-to-end guard: the headless snapshot must render the workspace (rail, worlds, command
       # surface) and exit — catches both UI-render regressions and any return of the stdin-block hang.

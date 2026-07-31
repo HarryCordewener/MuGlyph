@@ -1,7 +1,7 @@
 using System.Text;
 using SharpMUTerm.Core.Telnet.Mssp;
 
-namespace SharpMUTerm.Crawler.Tests.Support;
+namespace SharpMUTerm.Core.Tests.Telnet;
 
 /// <summary>
 /// Builds MSSP subnegotiations byte by byte, exactly as the specification spells them, so a test
@@ -46,9 +46,9 @@ internal static class MsspWire
 
     /// <summary>
     /// The same entries as an <see cref="MsspData"/>, without a socket. For the tests whose subject is
-    /// what the crawler <em>does</em> with a report — scheduling, referral following, persistence —
-    /// rather than how the report was read. Reading it is the telnet layer's job and is pinned, once,
-    /// by <c>MsspParsingTests</c> driving a real session.
+    /// what something <em>does</em> with a report — caching it, rendering it — rather than how it was
+    /// read. Reading it is the telnet layer's job and is pinned, once, by <c>MsspParsingTests</c>
+    /// driving a real session.
     /// </summary>
     public static MsspData Report(params (string Variable, string[] Values)[] entries) =>
         MsspData.From(entries.Select(entry =>

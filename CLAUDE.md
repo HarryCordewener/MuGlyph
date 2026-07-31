@@ -131,8 +131,8 @@ fallbacks) for inline images/maps.
   ```bash
   dotnet run -c Release --project tests/SharpMUTerm.Core.Tests </dev/null
   ```
-  There are six: Core, Graphics, Scripting, Web, Tui, Crawler. Primary signal is
-  `dotnet build SharpMUTerm.slnx` plus all six green and warning-free.
+  There are five: Core, Graphics, Scripting, Web, Tui. Primary signal is
+  `dotnet build SharpMUTerm.slnx` plus all five green and warning-free.
 - **Building against the local SharpConsoleUI clone surfaces 2 NuGet advisory warnings** for
   AngleSharp. They are the framework's, not ours; a build against the package has none.
 
@@ -550,7 +550,7 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
 
 ## Other dependency notes
 
-- **TelnetNegotiationCore 2.6.5** (repo owner is its author — extend it by PR rather than working
+- **TelnetNegotiationCore 2.7.0** (repo owner is its author — extend it by PR rather than working
   around it). Fluent builder API; negotiates MCCP/MSDP/MXP itself; ships the keepalive interpreter
   (`WithKeepAlive(TimeSpan?, …)`, default 30s, clamped to 1s–24h). `TelnetSession` sets the
   init-only `CallbackOnByteAsync` reflectively to see raw bytes including unterminated prompts — a
@@ -559,19 +559,26 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   payload _parsing_ stay our layer.**
 - **MSSP is read by the library, not by us — since 2.6.5, and that is the standing example of the
   rule above.** 2.6.0's reader destroyed the protocol's own array notation inside the library:
-  `PORT "80" "23" "4201"` arrived as the integer `80234201`, `REFERRAL` (array-only, and the whole
-  reason a crawler connects) arrived null, booleans failed to bind from `1`/`0`, `CHARSET` and every
-  invented name were dropped, `CRAWL_DELAY`/`MINIMUM_AGE` bound to nothing, and a variable with no
-  value wedged MSSP for the rest of the connection. We carried a byte-level `MsspSubnegotiationParser`
-  for exactly as long as that was true; the fix went upstream (PR #56) and the parser is **deleted**.
-  Do not re-add one. `MSSPConfig.Variables` is now an ordered name → value-**list** map,
-  `MsspData.From` projects it, and `MsspData` is a projection with **no parsing in it** — what it adds
-  is ours: `REFERRAL` as crawlable `MsspHost`s, `CRAWL DELAY` −1 as "no preference", ports validated
-  as ports. Two upstream defects remain open and are pinned by name in `MsspParsingTests`: MSSP fields
-  are decoded as **ASCII** rather than the negotiated charset (a non-ASCII `NAME` comes back as
-  question marks, one per byte), and an escaped `IAC IAC` inside a value **loses the literal byte**.
-  MSSP also has no payload size cap upstream — `SubnegotiationBuffer` guards GMCP, MSDP and CHARSET's
-  TTABLE, but not this — so a hostile server can make the crawler buffer as much as it likes.
+  `PORT "80" "23" "4201"` arrived as the integer `80234201`, `REFERRAL` (array-only) arrived null,
+  booleans failed to bind from `1`/`0`, `CHARSET` and every invented name were dropped,
+  `CRAWL_DELAY`/`MINIMUM_AGE` bound to nothing, and a variable with no value wedged MSSP for the rest
+  of the connection. We carried a byte-level `MsspSubnegotiationParser` for exactly as long as that was
+  true; the fix went upstream (PR #56) and the parser is **deleted**. Do not re-add one.
+  `MSSPConfig.Variables` is now an ordered name → value-**list** map, `MsspData.From` projects it, and
+  `MsspData` is a projection with **no parsing in it** — what it adds is ours: ports validated as
+  ports, and `-1` read as the specification's "data not available" rather than as minus one. Two
+  further upstream defects — MSSP fields decoded as **ASCII** rather than the negotiated charset, and
+  an escaped `IAC IAC` inside a value **losing the literal byte** — were fixed in **2.7.0**, and
+  `MsspParsingTests` now pins the fixed behaviour by name rather than the bugs. MSSP still has no
+  payload size cap upstream — `SubnegotiationBuffer` guards GMCP, MSDP and CHARSET's TTABLE, but not
+  this — so a hostile server can make a session buffer as much as it likes.
+- **MSSP is asked for, not waited for, and the client surfaces it** (`TelnetSessionOptions.RequestOptions`
+  / `MsspOption`; `MsspCache`; the F5 ▸ `i` INFO screen). The library's opening negotiation is
+  `IAC WILL NAWS` and nothing else, so MSSP is only ever reached if the server volunteers it — and a
+  great many servers that fully support MSSP answer `IAC DO MSSP` and volunteer nothing, which is why
+  the protocol's own reference client asks. `WorldSession`'s session factory therefore sets
+  `RequestOptions = [MsspOption]`. Do not "simplify" that away: without it the INFO screen is empty
+  against most of the servers that have the data.
 - **Text encoding is CHARSET's answer, not a setting** (`SessionEncoding`, `TelnetSession.CurrentEncoding`).
   A world's `encoding` is `auto` by default — state the app's `CharsetOrder`, decode with whatever RFC
   2066 settles on — and naming one is an *override*: still offered at the head of the order so a
@@ -625,7 +632,7 @@ Planned solution layout:
 | `SharpMUTerm.Graphics` | Kitty/Sixel encoders, capability probe, half-block fallback, `InlineImagePolicy` (no UI deps) |
 | `SharpMUTerm.Scripting` | MoonSharp host + scripting API |
 | `SharpMUTerm.Tui` | SharpConsoleUI application |
-| `*.Tests` (Core, Graphics, Scripting, Web, Tui, Crawler) | TUnit |
+| `*.Tests` (Core, Graphics, Scripting, Web, Tui) | TUnit |
 
 ## Milestone M1 — first task (delivered)
 

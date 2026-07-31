@@ -632,6 +632,13 @@ public sealed class WorldSession : IAsyncDisposable
     /// errors — went to <c>NullLogger</c> and was discarded. That is the detail you want when a MU*
     /// misbehaves, and it now reaches the client's diagnostics pipeline.
     /// </para>
+    /// <para>
+    /// <b>MSSP is asked for rather than waited for</b> (<see cref="TelnetSessionOptions.RequestOptions"/>).
+    /// The library opens with <c>IAC WILL NAWS</c> and nothing else, so a server that supports MSSP but
+    /// waits to be asked — a great many of them — is never asked, and the INFO screen would report it as
+    /// publishing no MSSP. That is a claim about the server made out of our own silence. Three bytes,
+    /// once per connection, and a server without the option answers <c>IAC WONT</c>.
+    /// </para>
     /// </summary>
     private ITelnetSession DefaultSessionFactory(ConnectionOptions options)
     {
@@ -646,6 +653,7 @@ public sealed class WorldSession : IAsyncDisposable
                 CharsetOrder = order,
                 EncodingOverride = encodingOverride,
                 KeepaliveInterval = TelnetSessionOptions.ResolveKeepalive(World.KeepaliveSeconds),
+                RequestOptions = [TelnetSessionOptions.MsspOption],
             });
     }
 
