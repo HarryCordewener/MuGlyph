@@ -312,15 +312,22 @@ public sealed class WorldSession : IAsyncDisposable
             return;
         }
 
+        var emitted = false;
         foreach (var completed in _parser.Feed(e.Text))
         {
             ProcessOutputLine(completed);
+            emitted = true;
         }
 
         var tail = _parser.Flush();
         if (tail is not null)
         {
             ProcessOutputLine(tail);
+            emitted = true;
+        }
+        else if (!emitted)
+        {
+            ProcessOutputLine(StyledLine.Empty);
         }
     }
 

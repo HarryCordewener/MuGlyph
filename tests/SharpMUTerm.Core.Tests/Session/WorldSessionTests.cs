@@ -35,6 +35,20 @@ public class WorldSessionTests
     }
 
     [Test]
+    public async Task EmptyOutputLine_IsAppendedAsBlankLine()
+    {
+        var (session, telnet) = Create(World());
+        await session.ConnectAsync();
+        var before = session.Scrollback.Snapshot().Count;
+
+        telnet.EmitLine(string.Empty);
+
+        var after = session.Scrollback.Snapshot();
+        await Assert.That(after.Count).IsEqualTo(before + 1);
+        await Assert.That(after[^1].IsEmpty).IsTrue();
+    }
+
+    [Test]
     public async Task AnsiColor_InOutput_IsParsedIntoStyledSpans()
     {
         var (session, telnet) = Create(World());
