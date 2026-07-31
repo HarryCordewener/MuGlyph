@@ -8,7 +8,7 @@ namespace SharpMUTerm.Tui;
 /// <summary>
 /// Renders <see cref="RailModel"/> rows into markup lines for the connection rail: a header, worlds
 /// with an accent spine, characters with a connected dot and active marker, and windows with
-/// unread/unsent/pane detail. Pure so the rail layout is unit-testable.
+/// unread/unsent detail and the chord that goes to them. Pure so the rail layout is unit-testable.
 /// <para>
 /// A row carrying a <see cref="RailRow.Target"/> is wrapped in a <c>[link=…]</c> span, which is how
 /// clicking it switches. The span is invisible chrome: <c>[link=…]</c> emits no cell, so the rail
@@ -57,7 +57,7 @@ internal static class RailRenderer
     /// <summary>
     /// Renders a row, and if it does not fit, renders it again with its <see cref="RailRow.Label"/> shortened
     /// by however much it overran. The label is the only part that may give ground: the accent spine, the
-    /// connected dot, the unread count, the ✎ pen and the pane column are all information. Measured with the
+    /// connected dot, the unread count, the ✎ pen and the chord column are all information. Measured with the
     /// app's own <see cref="SharpMUTermApp.MarkupWidth"/>, because that is the measure the sidebar's width is
     /// derived from — anything else could agree here and disagree where it matters.
     /// <para>
@@ -65,9 +65,10 @@ internal static class RailRenderer
     /// one cell whatever it says (the spine, the ● / ○ dot, the ▸ active marker, the ▪ bullet) or occupies a
     /// reserved field that is blank when it has nothing to say (<see cref="UnsentFieldWidth"/>,
     /// <see cref="UnreadFieldWidth"/>). That is what stops a keystroke or a line of output resizing the
-    /// sidebar and, through it, every connected server's terminal size. The pane column is the one
-    /// remaining variable part and it is deliberately left so: it exists only in a split and appears when
-    /// the layout changes, which is already a relayout that re-reports every pane.
+    /// sidebar and, through it, every connected server's terminal size. The chord column is the one
+    /// remaining variable part and it is deliberately left so: it is absent only while the workspace holds
+    /// a single window, and it appears when a second one opens — which is a structural change that
+    /// rebuilds the pane area and re-reports every pane anyway.
     /// </para>
     /// </summary>
     private static string Fit(RailRow row, int maxWidth, Func<RailRow, string> render)
@@ -120,20 +121,19 @@ internal static class RailRenderer
 
     /// <summary>
     /// A character row: the active marker, the connected dot, the name, its unread total — and, in the
-    /// same right-hand column the window rows use, the pane its session is in.
+    /// same right-hand column the window rows use, the chord that goes to this character.
     /// <para>
-    /// That column is how the pane numbering is legible from anywhere. Window rows are drawn for the
-    /// active character only, so <c>pane 3</c> used to be visible only to whoever was already in it,
-    /// while ⌥3 was reaching it from every other character. It is drawn on the active character's row
-    /// too, deliberately: a column that appeared and vanished as you switched would be a third thing to
-    /// learn, and repeating "where this character is" above its window rows is redundant rather than
-    /// ambiguous — unlike <c>▪ main   main</c>, both columns here mean the same thing and say it in the
-    /// one vocabulary (<c>pane N</c>).
+    /// That column is how the window numbering is legible from anywhere. Window rows are drawn for the
+    /// active character only, so a background character's windows were numbered, one keystroke away, and
+    /// unnamed by anything on the screen. It is drawn on the active character's row too, deliberately: a
+    /// column that appeared and vanished as you switched would be a third thing to learn, and repeating
+    /// the digit above that character's own window row is redundant rather than ambiguous — unlike
+    /// <c>▪ main   main</c>, both cells here are the same chord to the same window, spelt the one way.
     /// </para>
     /// <para>
     /// It costs the sidebar nothing at rest: a window row is indented one level deeper and carries the
     /// pen field as well, so it is the wider row wherever one exists, and the model leaves
-    /// <see cref="RailRow.Pane"/> null on a single-pane workspace exactly as it does for windows.
+    /// <see cref="RailRow.Chord"/> null on a single-window workspace exactly as it does for windows.
     /// </para>
     /// </summary>
     private static string Character(RailRow row)
@@ -141,7 +141,7 @@ internal static class RailRenderer
         var marker = row.Active ? "[bold]▸[/]" : " ";
         var dot = row.Connected ? "●" : "○";
         var name = row.Active ? $"[bold]{Escape(row.Label)}[/]" : Escape(row.Label);
-        var tail = row.Pane is { Length: > 0 } pane ? $" [dim]{Escape(pane)}[/]" : string.Empty;
+        var tail = row.Chord is { Length: > 0 } chord ? $" [dim]{Escape(chord)}[/]" : string.Empty;
         return $"{Indent(row)}{Link(row, $"{marker} [{Accent(row)}]{dot}[/] {name}{UnreadField(row.Unread)}{tail}")}";
     }
 
@@ -189,20 +189,27 @@ internal static class RailRenderer
             : $"[{UnreadBadge.Tint}]{UnreadBadge.Format(unread).PadLeft(UnreadFieldWidth)}[/]";
 
     /// <summary>
-    /// A window row: what the window is, then — when there is anything to say — where it is.
+    /// A window row: what the window is, then — when there is anything to say — how to get to it.
     /// <para>
-    /// The second column is the hosting pane, and it earns its place only in a split: with one pane there
-    /// is one place a window can be, so the model leaves <see cref="RailRow.Pane"/> null and nothing is
-    /// drawn. That is not only tidiness. The three spaces of the gap were emitted unconditionally, so a
-    /// single-pane rail measured three cells wider than its content — and the rail's width is taken out of
-    /// the pane area, which is what every connected session is told over NAWS.
+    /// The second column is the <c>⌥N</c> that goes to this window, and it earns its place only once the
+    /// workspace holds a second window: with one, there is one place to be, so the model leaves
+    /// <see cref="RailRow.Chord"/> null and nothing is drawn. That is not only tidiness. The gap was once
+    /// emitted unconditionally, so a rail with nothing to say in this column measured three cells wider
+    /// than its content — and the rail's width is taken out of the pane area, which is what every
+    /// connected session is told over NAWS.
     /// </para>
-    /// <para><c>closed</c> is a state rather than a place, so it always shows.</para>
+    /// <para>
+    /// It used to be the hosting <em>pane</em>, from when ⌥N named panes. A window past the ninth has no
+    /// chord and so shows nothing here, which is the honest reading: the row is still clickable and still
+    /// reachable by ⌃N and the tab strip, and a column claiming a key that would go somewhere else is the
+    /// one thing this numbering exists to prevent.
+    /// </para>
+    /// <para><c>closed</c> is a state rather than a destination, so it always shows.</para>
     /// </summary>
     private static string Window(RailRow row)
     {
         var name = Escape(row.Label);
-        var where = row.Closed ? "closed" : row.Pane is { Length: > 0 } pane ? pane : null;
+        var where = row.Closed ? "closed" : row.Chord is { Length: > 0 } chord ? chord : null;
 
         // One space. The reserved badge fields sit between the label and this column and are blank far more
         // often than not, so they already hold the gap open; anything on top of them is paid for in sidebar

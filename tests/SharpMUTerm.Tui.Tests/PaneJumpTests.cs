@@ -8,35 +8,31 @@ using SharpMUTerm.Graphics;
 namespace SharpMUTerm.Tui.Tests;
 
 /// <summary>
-/// <b>⌥1–⌥9 go to a numbered pane and bring it forward.</b> The request was "ALT-1 2 3 4 5, or
-/// CTRL-1 2 3 4 5 — go to those numbered panes and bring them to the forefront"; this is the half of it
-/// that can be delivered, and these are the four claims it stands on.
+/// <b>⌃B 1–⌃B 9 go to a numbered pane and bring it to the front.</b> This chord was ⌥1–⌥9 until that was
+/// given to <em>windows</em> (see <see cref="WindowJumpTests"/> for why); a pane and a window are
+/// different destinations and one key cannot mean both. These are the claims the move leaves standing.
 /// <para>
-/// <b>1. The number is the number on the screen.</b> Panes are counted in <c>Layout.Panes</c> order, which
-/// is the order the connection rail's hosting column spells <c>pane N</c> in — so the assertions read the
-/// label off the <em>live rail</em> and press the digit that label names, rather than writing down which
-/// pane ought to be third. A chord that lands somewhere other than the label says is worse than no chord,
-/// and this repository has already paid for two spellings of one pane once (<c>▪ main   main</c>).
+/// <b>1. It is kept rather than dropped.</b> Every pane is reachable by ⌥N through whatever window it
+/// holds, so this is not the only route there — but the pane <em>numbering</em> does not go away with the
+/// chord. Move mode badges each pane with its digit, the move prompt and the drag overlay both say
+/// <c>pane 2</c>, the ⌃P entry says <c>Go to pane 2</c>, and ⌃O counts in the same order. A numbering the
+/// client prints and asks you to press inside a mode, with no key outside that mode that acts on it,
+/// would be a numbering that only half exists. It is also the one motion that moves to a pane
+/// <em>without</em> naming what is in it: the ordinal member of the ⌃O / ⌃arrow family.
 /// </para>
 /// <para>
-/// <b>2. It is the full activation, on painted cells.</b> "Bring it to the forefront" is not
-/// <c>FocusedPaneId</c> being assigned: it is the pane's plane on the frame, its window active, and the
-/// command line talking to its character. All three are asserted, the first off the frame the driver was
-/// handed — a focus indicator can be set on a control arranged at zero rows and read back happily.
+/// <b>2. It is on ⌃B because that is where the pane keymap lives</b> — split, zoom, close, cycle, move,
+/// freeze, rail. The digits were the one part of that keymap nothing claimed, so it costs no key, and the
+/// which-key panel lists it beside the others rather than leaving it to be found.
 /// </para>
 /// <para>
-/// <b>3. Nothing falls through to the framework.</b> SharpConsoleUI claims Alt+1–9 for its own top-level
-/// window selector (<c>InputCoordinator.HandleAltInput</c>), which — unlike the move and resize handlers
-/// beside it — is <em>not</em> gated on <c>IsMovable</c>/<c>IsResizable</c>, so <c>Movable(false)</c> did
-/// not switch it off. All nine digits are claimed as application shortcuts, which
-/// <c>InputCoordinator</c> tries before it offers the key to a window at all; an out-of-range digit
-/// therefore reports here and stops rather than reaching a window selector that would do something else.
+/// <b>3. The number on the screen is the number pressed.</b> Panes are counted in <c>Layout.Panes</c>
+/// order (creation order), which is what move mode badges and what the ⌃P entry names, so the assertions
+/// drive the overlay and read its words rather than writing down which pane ought to be third.
 /// </para>
 /// <para>
-/// <b>4. Alt, because Ctrl+digit is not a chord this terminal has.</b> Read off a real pty rather than
-/// remembered: every Alt+digit is <c>ESC</c> + the digit, while Ctrl+digit is the bare digit for 1/9/0 and
-/// a byte already spelt Escape (3), Backspace (8) or NUL (2) for the rest. <c>MacroKeys.Verdict</c> is
-/// where that is recorded, and <see cref="MacroKeyCaptureTests"/> holds it.
+/// <b>4. Arrival is unchanged.</b> Full activation of the pane's own window, the session and command line
+/// following, the zoom carried, and an out-of-range digit reported rather than swallowed.
 /// </para>
 /// </summary>
 /// <remarks>
@@ -52,20 +48,20 @@ public class PaneJumpTests
     private static readonly TerminalCapabilities Headless =
         new(GraphicsProtocol.None, supportsTrueColor: true, supportsKittyGraphics: false, supportsSixel: false);
 
-    // --- the numbering, against the rail's own labels ----------------------------------------------
+    // --- the numbering ------------------------------------------------------------------------------
 
     /// <summary>
-    /// <b>The claim, end to end.</b> Three panes, three characters, one each. For every digit: press ⌥N,
-    /// and the pane whose plane the frame paints as focused is the pane the rail labels <c>pane N</c> —
-    /// with that pane's window active and its character on the command line.
+    /// <b>The claim, end to end.</b> Three panes, three characters. For every digit: ⌃B N, and the pane
+    /// whose plane the frame paints as focused is the pane move mode calls <c>pane N</c> — with that
+    /// pane's window active and its character on the command line.
     /// <para>
-    /// The label is read from <see cref="SharpMUTermApp.RailLines"/> after the jump, which is the rail the
-    /// app really drew. Nothing here writes down which pane is third: the assertion is that the two agree,
-    /// which is the only property that makes the chord usable.
+    /// The label comes out of the real move overlay rather than being written down here, so the two
+    /// surfaces are held against each other. A chord that lands somewhere other than the label says is
+    /// worse than no chord.
     /// </para>
     /// </summary>
     [Test]
-    public async Task EachDigitLandsOnThePaneTheRailNumbersWithIt()
+    public async Task EachDigitLandsOnThePaneTheMoveOverlayNumbersWithIt()
     {
         var three = await ThreePanes();
         var (focused, _) = three.App.PaneBandColors;
@@ -73,56 +69,43 @@ public class PaneJumpTests
 
         for (var n = 1; n <= 3; n++)
         {
-            three.App.SimulateKey(Alt(n));
+            Prefix(three.App, n);
             var frame = three.App.RenderWholeFrame();
 
-            // The rail's own word for where the now-active window is.
-            await Assert.That(RailPaneLabel(three.App))
-                .IsEqualTo($"⌥{n}")
-                .Because($"⌥{n} must land on the pane the sidebar calls pane {n}");
+            var landed = three.App.FocusedPaneId;
 
-            // The session, so the command line is talking to the pane you are looking at.
+            // The session and the window, so the command line is talking to the pane you are looking at.
             await Assert.That(three.App.ActiveSessionKey).IsEqualTo(three.Sessions[n - 1]);
             await Assert.That(three.App.ActiveWindowId()).IsEqualTo(three.Windows[n - 1]);
 
             // And the paint: this pane's rectangle carries the focused plane and no other one does.
-            var landed = three.App.FocusedPaneId;
             await Assert.That(CellsPaintedIn(frame, rects[landed], focused))
                 .IsGreaterThan(0)
-                .Because($"⌥{n} must paint pane {n} as the focused one");
+                .Because($"⌃B {n} must paint pane {n} as the focused one");
             foreach (var other in three.App.PaneIds.Where(id => id != landed))
             {
                 await Assert.That(CellsPaintedIn(frame, rects[other], focused)).IsEqualTo(0);
             }
+
+            // And the overlay, which is where a user reads the pane's number, targets the same pane with
+            // the same digit — driven through a real commit, so the answer is the id the overlay stored.
+            var (target, prompt) = MoveOverlayTarget(three.App, n);
+            await Assert.That(target)
+                .IsEqualTo(landed)
+                .Because($"⌃B {n} must land on the pane the overlay picks for {n}");
+            await Assert.That(prompt)
+                .Contains($"pane {n}")
+                .Because("the prompt's words and the digit it accepted are one number");
         }
     }
 
     /// <summary>
-    /// And the line typed next goes to that pane's character. Asserted on the bytes the transport received,
-    /// because <c>SendUserInputAsync</c> returns immediately with nothing underneath it — "the right world
-    /// got it" against an unconnected session is true however broken the routing is.
+    /// The pane label the ⌃P surface offers names this chord and not the old one — the entry is a second
+    /// door onto ⌃B N, and an entry still saying ⌥2 would send a reader to a key that now goes to a
+    /// window. Both routes are driven and reach the same pane.
     /// </summary>
     [Test]
-    public async Task TheLineTypedAfterAJumpReachesThatPanesCharacter()
-    {
-        var three = await ThreePanes();
-
-        three.App.SimulateKey(Alt(3));
-        Send(three.App, "look");
-        three.App.SimulateKey(Alt(2));
-        Send(three.App, "score");
-
-        await Assert.That(three.Transports[2].Lines).IsEquivalentTo(new[] { "look" });
-        await Assert.That(three.Transports[1].Lines).IsEquivalentTo(new[] { "score" });
-        await Assert.That(three.Transports[0].Lines).IsEmpty();
-    }
-
-    /// <summary>
-    /// The pane label the ⌃P surface offers and the label the sidebar draws are the same number, for every
-    /// pane — the entry is a second door onto the chord, not a second numbering.
-    /// </summary>
-    [Test]
-    public async Task TheCommandSurfaceOffersOneEntryPerPaneAndAgreesWithTheChord()
+    public async Task TheCommandSurfaceOffersOneEntryPerPaneAndNamesTheNewChord()
     {
         var three = await ThreePanes();
 
@@ -136,15 +119,15 @@ public class PaneJumpTests
             var entry = entries.Single(e => e.Id == CommandIds.Pane(n));
             await Assert.That(entry.Title).IsEqualTo($"Go to pane {n}");
             await Assert.That(entry.Subtitle)
-                .IsEqualTo($"⌥{n}")
+                .IsEqualTo($"⌃B {n}")
                 .Because("an entry that named the wrong chord would be worse than a bare one");
 
             // Both routes reach the same pane.
-            three.App.SimulateKey(Alt(1));
-            three.App.SimulateKey(Alt(n));
+            Prefix(three.App, 1);
+            Prefix(three.App, n);
             var viaKey = three.App.FocusedPaneId;
 
-            three.App.SimulateKey(Alt(1));
+            Prefix(three.App, 1);
             await Assert.That(three.App.DispatchCommand(CommandIds.Pane(n))).IsTrue();
             await Assert.That(three.App.FocusedPaneId).IsEqualTo(viaKey);
         }
@@ -166,27 +149,65 @@ public class PaneJumpTests
             .IsFalse();
     }
 
+    /// <summary>
+    /// <b>Closing pane 2 of three makes the third pane into pane 2, on the chord and in the overlay
+    /// together.</b> Creation sequences are never reused, so a number read straight off one would leave a
+    /// hole here: ⌃B 2 would report "there is no pane 2" while two panes sat on the screen. The number is
+    /// the pane's position in the numbering for exactly this reason.
+    /// </summary>
+    [Test]
+    public async Task ClosingAPaneCompactsTheNumberingOnTheChordAndInTheOverlay()
+    {
+        var three = await ThreePanes();
+
+        Prefix(three.App, 2);                                      // stand in Bob's pane
+        await Assert.That(three.App.DispatchCommand("layout:close")).IsTrue();
+        three.App.RenderNextFrame();
+        await Assert.That(three.App.PaneIds.Count).IsEqualTo(2);
+
+        var entries = three.App.BuildCatalog()
+            .Where(c => c.Id.StartsWith(CommandIds.PanePrefix, StringComparison.Ordinal))
+            .Select(c => c.Id)
+            .ToList();
+        await Assert.That(entries)
+            .IsEquivalentTo(new[] { CommandIds.Pane(1), CommandIds.Pane(2) })
+            .Because("the panes on the screen must be numbered 1 and 2, not 1 and 3");
+
+        Prefix(three.App, 1);
+        Prefix(three.App, 2);
+        await Assert.That(three.App.ActiveSessionKey)
+            .IsEqualTo("Cara.Cal")
+            .Because("⌃B 2 must reach the second pane rather than the hole the closed one left");
+
+        Prefix(three.App, 3);
+        await Assert.That(three.App.StatusMarkup).Contains("there is no pane 3");
+        await Assert.That(three.App.ActiveSessionKey).IsEqualTo("Cara.Cal");
+    }
+
     // --- out of range: report, never a silent no-op -------------------------------------------------
 
     /// <summary>
-    /// <b>⌥7 with three panes says so.</b> A silent no-op is the most-repeated defect in this codebase's
-    /// history, and a digit with no pane behind it is the commonest way to press this chord wrong. The
-    /// notice names the digit and the count, and nothing moves.
+    /// <b>⌃B 7 with three panes says so, and names the chord it is answering.</b> A silent no-op is the
+    /// most-repeated defect in this codebase's history, and a digit with no pane behind it is the
+    /// commonest way to press this wrong. Nothing moves.
     /// </summary>
     [Test]
     public async Task AnOutOfRangeDigitReportsAndMovesNothing()
     {
         var three = await ThreePanes();
-        three.App.SimulateKey(Alt(2));
+        Prefix(three.App, 2);
         var pane = three.App.FocusedPaneId;
         var session = three.App.ActiveSessionKey;
 
         foreach (var digit in new[] { 4, 7, 9 })
         {
-            three.App.SimulateKey(Alt(digit));
+            Prefix(three.App, digit);
 
             await Assert.That(three.App.StatusMarkup).Contains($"there is no pane {digit}");
             await Assert.That(three.App.StatusMarkup).Contains("3");
+            await Assert.That(three.App.StatusMarkup)
+                .Contains("⌃B")
+                .Because("the notice names the chord that was pressed, and ⌥ is no longer it");
             await Assert.That(three.App.FocusedPaneId).IsEqualTo(pane);
             await Assert.That(three.App.ActiveSessionKey).IsEqualTo(session);
         }
@@ -202,115 +223,61 @@ public class PaneJumpTests
         var app = App();
         app.RenderSnapshot();
 
-        app.SimulateKey(Alt(2));
+        Prefix(app, 2);
 
         await Assert.That(app.StatusMarkup).Contains("one pane");
         await Assert.That(app.StatusMarkup).Contains("⌃B |");
     }
 
-    /// <summary>
-    /// <b>Every digit the framework's selector would act on is claimed.</b> <c>HandleAltInput</c> matches
-    /// <c>KeyChar</c> '1'–'9' and selects a top-level window by index; it is reached from
-    /// <c>InputCoordinator</c>'s fall-through, and a registered application shortcut is tried before the
-    /// key is offered to any window. Leaving one digit unclaimed — the out-of-range ones are the
-    /// temptation — would hand exactly that digit back to it. So the claim is the whole range, and the
-    /// app's own registration is the proof: <c>RegisterGlobalShortcuts</c> throws at startup for a claim
-    /// with no action, so an app that constructs at all has all nine wired to something.
-    /// </summary>
-    [Test]
-    public async Task AllNineDigitsAreClaimedSoNoneReachesTheFrameworksWindowSelector()
-    {
-        var app = App();
-        app.RenderSnapshot(); // constructing and registering is itself half the assertion
-
-        for (var n = 1; n <= 9; n++)
-        {
-            var key = ConsoleKey.D0 + n;
-            await Assert.That(MacroKeys.AppShortcuts.Any(s => s.Modifiers == ConsoleModifiers.Alt && s.Key == key))
-                .IsTrue()
-                .Because($"⌥{n} must be claimed by this app, or the framework's window selector takes it");
-            await Assert.That(MacroKeys.PaneJumpNumber(key)).IsEqualTo(n);
-        }
-
-        // ⌥0 is deliberately outside the range: the framework ignores it too, so it costs nothing to
-        // leave bindable, and F4 says a macro on it fires.
-        await Assert.That(MacroKeys.PaneJumpNumber(ConsoleKey.D0)).IsNull();
-        await Assert.That(MacroKeys.AppShortcuts.Any(
-            s => s.Modifiers == ConsoleModifiers.Alt && s.Key == ConsoleKey.D0)).IsFalse();
-        await Assert.That(MacroKeys.Verdict("Alt+0").Fires).IsTrue();
-    }
+    // --- what the move off ⌥ must not have broken ---------------------------------------------------
 
     /// <summary>
-    /// And an out-of-range digit really is consumed rather than merely ignored: it produced a notice, which
-    /// only this app can write. A key that fell through to the framework would leave the status line alone.
+    /// <b>The digits are not global shortcuts, and must not become them.</b> ⌃B 1 is a key on the prefix
+    /// keymap, consumed by the armed prefix; a bare <c>1</c> with no prefix is typing, which is what F4
+    /// reports and what the command line receives. Registering these as application shortcuts would take
+    /// the digit row away from the prompt entirely.
     /// </summary>
     [Test]
-    public async Task AnUnusedDigitIsConsumedByThisAppRatherThanPassedOn()
-    {
-        var app = App();
-        app.RenderSnapshot();
-        var before = app.StatusMarkup;
-
-        var routed = app.SimulateKey(Alt(9));
-
-        await Assert.That(routed).IsNull();               // nothing was sent to a world
-        await Assert.That(app.StatusMarkup).IsNotEqualTo(before);
-        await Assert.That(app.ArmedInputText).DoesNotContain("9"); // and it did not type, either
-    }
-
-    // --- what must not regress ---------------------------------------------------------------------
-
-    /// <summary>
-    /// <b>The focus pin is untouched.</b> The chord moves pane selection and the session behind the command
-    /// line; it does not move framework keyboard focus, which stays on the armed bar — the fix for the
-    /// paste bug, and the reason typing lands where the caret is drawn.
-    /// </summary>
-    [Test]
-    public async Task JumpingLeavesTheKeyboardOnTheArmedBar()
+    public async Task ABareDigitStillTypesRatherThanJumping()
     {
         var app = App();
         app.RenderSnapshot("split");
+        var pane = app.FocusedPaneId;
 
-        foreach (var digit in new[] { 2, 1, 2 })
-        {
-            app.SimulateKey(Alt(digit));
-            app.RenderNextFrame();
-            await Assert.That(app.ArmedBarHasFocus).IsTrue();
-        }
+        app.SimulateKey(Plain('2', ConsoleKey.D2));
+
+        await Assert.That(app.ArmedInputText).Contains("2");
+        await Assert.That(app.FocusedPaneId).IsEqualTo(pane);
+        await Assert.That(MacroKeys.Verdict("2").Delivery).IsEqualTo(MacroKeyDelivery.Taken);
+        await Assert.That(MacroKeys.AppShortcuts.Any(s => s.Modifiers == 0 && s.Key == ConsoleKey.D2)).IsFalse();
     }
 
     /// <summary>
-    /// And it moves no pane rectangle, so no connected world is told a new terminal size. Restated for this
-    /// chord for the reason <c>FocusIndicationTests.MovingFocusDoesNotMoveAnyPaneRectangle</c> exists: the
-    /// indicator recolours what is drawn and may never grow a cell.
+    /// <b>The which-key panel lists it.</b> This surface is where the ⌃B keymap is discovered from, and a
+    /// chord it does not name is a chord nobody finds — the state ⌃L's newline sat in until it was
+    /// reported as missing. It is blocked on the same fact as zoom and cycle: with one pane there is
+    /// nowhere to go.
     /// </summary>
     [Test]
-    public async Task JumpingMovesNoPaneRectangle()
+    public async Task ThePrefixPanelNamesTheNumberedPaneJump()
     {
-        var app = App();
-        app.RenderSnapshot("split");
-        var before = app.PaneOutputRects().ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal);
+        var onOne = PrefixPanel.Entries(PrefixFacts.Fresh).Single(e => e.Keys == "1–9");
+        await Assert.That(onOne.Title).Contains("numbered pane");
+        await Assert.That(onOne.Available)
+            .IsFalse()
+            .Because("with one pane it can do nothing, and a panel listing it as live sends a reader to press it");
 
-        app.SimulateKey(Alt(2));
-        app.RenderNextFrame();
-        app.SimulateKey(Alt(1));
-        app.RenderNextFrame();
+        var onTwo = PrefixPanel.Entries(PrefixFacts.Fresh with { PaneCount = 2 }).Single(e => e.Keys == "1–9");
+        await Assert.That(onTwo.Available).IsTrue();
 
-        var after = app.PaneOutputRects();
-        await Assert.That(after.Count).IsEqualTo(before.Count);
-        foreach (var (paneId, rect) in before)
-        {
-            await Assert.That(after[paneId]).IsEqualTo(rect);
-        }
+        await Assert.That(PrefixPanel.StripKeys).Contains("1–9");
     }
-
-    // --- zoom ---------------------------------------------------------------------------------------
 
     /// <summary>
     /// <b>A zoom follows the jump.</b> A zoomed workspace realises exactly one pane, so a mover that
     /// changed the selection and left the zoom where it was would put the selection, the session and the
-    /// caret on a pane that is not on the screen. ⌥2 over a zoomed pane 1 therefore shows pane 2 zoomed —
-    /// the pane you asked for is the one filling the screen — and ⌃B z still un-zooms.
+    /// caret on a pane that is not on the screen. ⌃B 2 over a zoomed pane 1 therefore shows pane 2 zoomed,
+    /// and ⌃B z still un-zooms.
     /// </summary>
     [Test]
     public async Task JumpingWhileZoomedBringsTheTargetToTheFrontRatherThanHidingIt()
@@ -323,7 +290,7 @@ public class PaneJumpTests
         await Assert.That(app.DispatchCommand("layout:zoom")).IsTrue();
         await Assert.That(app.ZoomedPaneId).IsEqualTo(first);
 
-        app.SimulateKey(Alt(2));
+        Prefix(app, 2);
         var frame = app.RenderWholeFrame();
 
         await Assert.That(app.FocusedPaneId).IsEqualTo(second);
@@ -341,16 +308,28 @@ public class PaneJumpTests
     }
 
     /// <summary>
-    /// ⌃O is the other ordinal mover and gets the same rule, so the two cannot come to mean different
-    /// things — it used to cycle the selection out from under a zoom and leave it invisible.
+    /// ⌃O is the other ordinal pane mover and counts the same order, so the two cannot come to mean
+    /// different things — three presses of ⌃O from pane 1 land where ⌃B 4 does. It also still carries a
+    /// zoom; it used to cycle the selection out from under one and leave it invisible.
     /// </summary>
     [Test]
-    public async Task CyclingWhileZoomedCarriesTheZoomToo()
+    public async Task CyclingCountsTheSameOrderAsTheChordAndCarriesTheZoomToo()
     {
+        var three = await ThreePanes();
+
+        Prefix(three.App, 1);
+        three.App.SimulateKey(Ctrl(ConsoleKey.O));
+        three.App.SimulateKey(Ctrl(ConsoleKey.O));
+        var viaCycle = three.App.FocusedPaneId;
+
+        Prefix(three.App, 3);
+        await Assert.That(three.App.FocusedPaneId)
+            .IsEqualTo(viaCycle)
+            .Because("the two ordinal pane movers must count one sequence");
+
         var app = App();
         app.RenderSnapshot("split");
         var first = app.FocusedPaneId;
-
         await Assert.That(app.DispatchCommand("layout:zoom")).IsTrue();
         await Assert.That(app.DispatchCommand("layout:cycle")).IsTrue();
 
@@ -361,18 +340,23 @@ public class PaneJumpTests
     // --- one spelling of one pane -------------------------------------------------------------------
 
     /// <summary>
-    /// <b>The move overlay and the sidebar call the first pane the same thing.</b> The overlay used to call
-    /// it <c>main</c> — the spelling the rail abandoned because it collided with the <em>window</em> named
-    /// main — so the same pane was <c>pane 1</c> in the sidebar and <c>main</c> under the cursor. ⌥1 is a
-    /// chord that lands on a pane a label names, and it cannot survive two labels.
+    /// <b>The move overlay and the ⌃P entry call the first pane the same thing.</b> The overlay used to
+    /// call it <c>main</c> — the spelling the rail abandoned because it collided with the <em>window</em>
+    /// named main — so the same pane was <c>pane 1</c> in one place and <c>main</c> under the cursor.
+    /// ⌃B 1 is a chord that lands on a pane a label names, and it cannot survive two labels.
+    /// <para>
+    /// The sidebar is the other half now, and it is asserted the other way round: it prints <c>⌥N</c>,
+    /// which is the <em>window</em> numbering, and must never print <c>pane N</c> — two numberings sharing
+    /// one vocabulary is the thing that would make either chord unreadable.
+    /// </para>
     /// </summary>
     [Test]
-    public async Task TheMoveOverlayAndTheSidebarSpellTheFirstPaneTheSameWay()
+    public async Task TheMoveOverlaySpellsTheFirstPanePaneOneAndTheSidebarNeverSaysPane()
     {
         var app = App();
         app.RenderSnapshot("split");
 
-        // ⌃B m lifts the active window; '1' targets the first pane — the same digit ⌥1 uses.
+        // ⌃B m lifts the active window; '1' targets the first pane — the same digit ⌃B 1 uses.
         app.SimulateKey(Ctrl(ConsoleKey.B));
         app.SimulateKey(Plain('m', ConsoleKey.M));
         app.SimulateKey(Plain('1', ConsoleKey.D1));
@@ -380,42 +364,42 @@ public class PaneJumpTests
         await Assert.That(app.StatusMarkup).Contains("pane 1");
         await Assert.That(app.StatusMarkup)
             .DoesNotContain("main")
-            .Because("the first pane is pane 1 everywhere, or ⌥1 names something the screen does not");
-        await Assert.That(app.RailLines.Any(l => l.Contains("⌥1", StringComparison.Ordinal))).IsTrue();
+            .Because("the first pane is pane 1 everywhere, or ⌃B 1 names something the screen does not");
 
         app.SimulateKey(Plain('\x1b', ConsoleKey.Escape)); // leave move mode
+
+        await Assert.That(app.RailLines.Any(l => l.Contains("pane ", StringComparison.Ordinal)))
+            .IsFalse()
+            .Because("the sidebar numbers windows, and a pane noun there would be a second reading of ⌥N");
+        await Assert.That(app.RailLines.Any(l => Regex.IsMatch(l, @"⌥\d"))).IsTrue();
     }
 
     /// <summary>
-    /// <b>Move mode targets by the same number as everything else.</b> It used to letter the panes
-    /// <c>a</c>–<c>j</c> while the prompt one line below named the target <c>pane N</c> — one ordering
-    /// spelt in two alphabets, which meant translating <c>B</c> into <c>pane 2</c> in your head to use
-    /// the feature the prompt was explaining.
-    /// <para>
-    /// Driven for every pane: press the digit, and the target the prompt reports is the pane the rail
-    /// numbers with that digit. The prompt is read rather than the badge because the prompt is what
-    /// names the pane in words; the badge is asserted separately by the digit having worked at all — an
-    /// unmapped digit leaves the target alone, so a wrong badge cannot produce a right prompt.
-    /// </para>
+    /// <b>Move mode targets by the same number as the chord.</b> It used to letter the panes <c>a</c>–
+    /// <c>j</c> while the prompt one line below named the target <c>pane N</c> — one ordering spelt in two
+    /// alphabets. Driven for every pane: press the digit, and the target the prompt reports is the pane
+    /// ⌃B with the same digit goes to.
     /// </summary>
     [Test]
-    public async Task MoveModeTargetsThePaneTheRailNumbersWithTheSameDigit()
+    public async Task MoveModeTargetsThePaneTheChordGoesToWithTheSameDigit()
     {
         var three = await ThreePanes();
 
-        three.App.SimulateKey(Ctrl(ConsoleKey.B));
-        three.App.SimulateKey(Plain('m', ConsoleKey.M));
-
         for (var n = 1; n <= 3; n++)
         {
-            three.App.SimulateKey(Plain((char)('0' + n), ConsoleKey.D0 + n));
-
-            await Assert.That(three.App.StatusMarkup)
-                .Contains($"pane {n}")
-                .Because($"pressing {n} in move mode must target the pane the sidebar calls pane {n}");
+            Prefix(three.App, n);
+            var viaChord = three.App.FocusedPaneId;
+            var (target, prompt) = MoveOverlayTarget(three.App, n);
+            await Assert.That(target)
+                .IsEqualTo(viaChord)
+                .Because($"pressing {n} in move mode must target the pane ⌃B {n} goes to");
+            await Assert.That(prompt).Contains($"pane {n}");
         }
 
         // A digit past the last pane leaves the target where it was rather than clearing it.
+        three.App.SimulateKey(Ctrl(ConsoleKey.B));
+        three.App.SimulateKey(Plain('m', ConsoleKey.M));
+        three.App.SimulateKey(Plain('3', ConsoleKey.D3));
         three.App.SimulateKey(Plain('9', ConsoleKey.D9));
         await Assert.That(three.App.StatusMarkup)
             .Contains("pane 3")
@@ -428,57 +412,6 @@ public class PaneJumpTests
         three.App.SimulateKey(Plain('\x1b', ConsoleKey.Escape));
     }
 
-    // --- honesty ------------------------------------------------------------------------------------
-
-    /// <summary>
-    /// <c>--help</c> names the chord that works and says why the one that was asked for is absent. Both
-    /// halves: a page that named Ctrl+digit would send a reader to press Escape and Backspace.
-    /// </summary>
-    [Test]
-    public async Task HelpNamesAltDigitAndSaysWhyNotCtrlDigit()
-    {
-        var help = Program.UsageText;
-
-        await Assert.That(help).Contains("Alt+1..Alt+9");
-        await Assert.That(help).Contains("Ctrl+digit is not");
-        await Assert.That(help).Contains("Escape and");
-    }
-
-    /// <summary>
-    /// F4 reports each of the nine as taken, and the sentence it prints names the pane the chord goes to —
-    /// so a user who tried to bind a macro there is told what has it, not merely that something does.
-    /// </summary>
-    [Test]
-    public async Task TheKeypadScreenSaysWhatHasEachDigit()
-    {
-        for (var n = 1; n <= 9; n++)
-        {
-            var verdict = MacroKeys.Verdict($"Alt+{n}");
-
-            await Assert.That(verdict.Delivery).IsEqualTo(MacroKeyDelivery.Taken);
-            await Assert.That(verdict.Reason).Contains($"pane {n}");
-        }
-    }
-
-    /// <summary>
-    /// And every Ctrl+digit is reported as never arriving, each with the byte the terminal really sends —
-    /// observed on a pty, not assumed. Three of them are keys this client cannot afford to bind over.
-    /// </summary>
-    [Test]
-    [Arguments(0, "bare 0")]
-    [Arguments(1, "bare 1")]
-    [Arguments(2, "NUL")]
-    [Arguments(3, "Escape")]
-    [Arguments(8, "Backspace")]
-    [Arguments(9, "bare 9")]
-    public async Task CtrlDigitIsReportedAsUnreachableWithTheByteTheTerminalSends(int digit, string byteName)
-    {
-        var verdict = MacroKeys.Verdict($"Ctrl+{digit}");
-
-        await Assert.That(verdict.Delivery).IsEqualTo(MacroKeyDelivery.NeverArrives);
-        await Assert.That(verdict.Reason).Contains(byteName);
-    }
-
     // --- harness ------------------------------------------------------------------------------------
 
     private static SharpMUTermApp App(int width = 120, int height = 34)
@@ -487,56 +420,43 @@ public class PaneJumpTests
         return new SharpMUTermApp(DemoScene.Build(), Headless, new HeadlessConsoleDriver(width, height));
     }
 
-    /// <summary>The chord as the terminal delivers it: <c>ESC</c> + the digit, decoded as that digit with Alt.</summary>
-    private static ConsoleKeyInfo Alt(int digit) =>
-        new((char)('0' + digit), ConsoleKey.D0 + digit, false, true, false);
-
     private static ConsoleKeyInfo Ctrl(ConsoleKey key) => new('\0', key, false, false, true);
 
     private static ConsoleKeyInfo Plain(char c, ConsoleKey key) => new(c, key, false, false, false);
 
-    /// <summary>Empties the armed command line and types <paramref name="text"/> into it, key by key.</summary>
-    private static void Type(SharpMUTermApp app, string text)
+    /// <summary>The chord, as the two keystrokes it is: ⌃B and then the bare digit.</summary>
+    private static void Prefix(SharpMUTermApp app, int digit)
     {
-        app.SimulateKey(Ctrl(ConsoleKey.E));
-        app.SimulateKey(Ctrl(ConsoleKey.U));
-        foreach (var c in text)
-        {
-            app.SimulateKey(Plain(c, ConsoleKey.NoName));
-        }
-    }
-
-    private static void Send(SharpMUTermApp app, string line)
-    {
-        Type(app, line);
-        app.SimulateKey(Plain('\r', ConsoleKey.Enter));
+        app.SimulateKey(Ctrl(ConsoleKey.B));
+        app.SimulateKey(Plain((char)('0' + digit), ConsoleKey.D0 + digit));
     }
 
     /// <summary>
-    /// The pane label the rail is drawing for the active character's <em>window</em>, e.g. <c>pane 2</c>.
-    /// Read out of the rendered rows rather than recomputed, because the whole assertion is that the chord
-    /// and the sidebar agree — a re-derived label would agree with itself.
+    /// Which pane the real move overlay targets for <paramref name="digit"/>, and what its prompt calls
+    /// that pane.
     /// <para>
-    /// Window rows are picked out by their <c>▪</c> bullet, because character rows now carry the same
-    /// column: the rail says which pane every character is in, active or not, which is what makes the
-    /// numbering readable from a character other than the one you are looking at. Taking the first
-    /// <c>pane N</c> on any row would read the active character's own row and answer 1 for ever.
+    /// Read by driving the overlay and <em>committing</em>: ⏎ moves the active window into the pane the
+    /// overlay picked, so the answer comes back through <c>PaneDrop</c> from the id the overlay stored.
+    /// Nothing here indexes <c>Layout.Panes</c> — that is the list under test, and a helper that read it
+    /// would agree with the chord by construction.
     /// </para>
     /// </summary>
-    private static string RailPaneLabel(SharpMUTermApp app)
+    private static (string Pane, string Prompt) MoveOverlayTarget(SharpMUTermApp app, int digit)
     {
-        foreach (var line in app.RailLines.Where(l => l.Contains('▪', StringComparison.Ordinal)))
-        {
-            var match = Regex.Match(line, @"⌥\d+");
-            if (match.Success)
-            {
-                return match.Value;
-            }
-        }
+        var window = app.ActiveWindowId();
+        app.SimulateKey(Ctrl(ConsoleKey.B));
+        app.SimulateKey(Plain('m', ConsoleKey.M));
+        app.SimulateKey(Plain((char)('0' + digit), ConsoleKey.D0 + digit));
 
-        throw new InvalidOperationException(
-            $"the rail is drawing no pane label: {string.Join(" / ", app.RailLines)}");
+        var prompt = Visible(app.StatusMarkup);
+        app.SimulateKey(Plain('\r', ConsoleKey.Enter)); // commit: the window lands in the targeted pane
+
+        return (app.PaneIdOf(window) ?? throw new InvalidOperationException($"{window} is in no pane"), prompt);
     }
+
+    /// <summary>Markup with its style and link tags removed.</summary>
+    private static string Visible(string markup) =>
+        Regex.Replace(markup, @"\[(?:/|[^\]\[]*)\]", string.Empty).Replace("[[", "[").Replace("]]", "]");
 
     /// <summary>The truecolor background escape a colour is written as.</summary>
     private static string Sgr(SharpConsoleUI.Color color) => $"48;2;{color.R};{color.G};{color.B}";
@@ -544,8 +464,7 @@ public class PaneJumpTests
     /// <summary>
     /// Walks a frame into a <c>{(row, column): background}</c> grid, the way a terminal walks it. Note
     /// <c>48</c> and not <c>38</c> — reading foreground here and concluding about planes is the classic
-    /// mistake. Same walker as <see cref="FocusIndicationTests"/>, deliberately: this suite's claim is
-    /// about the same painted planes.
+    /// mistake.
     /// </summary>
     private static Dictionary<(int Row, int Column), string?> Backgrounds(string ansi)
     {
@@ -619,18 +538,11 @@ public class PaneJumpTests
     private sealed record Three(
         SharpMUTermApp App,
         IReadOnlyList<string> Windows,
-        IReadOnlyList<string> Sessions,
-        IReadOnlyList<RecordingTelnetSession> Transports);
+        IReadOnlyList<string> Sessions);
 
     /// <summary>
     /// A <em>resumed</em> workspace of three panes, each holding one character's window, built the way the
-    /// shell restores one. Three separate worlds so each session's writes are attributable by host — the
-    /// suite turns on which transport a line reached, and one world's characters would share one.
-    /// <para>
-    /// The pane order is the split tree's, which is what <c>Layout.Panes</c> enumerates and what the rail
-    /// numbers; the windows are placed p1/p2/p3 so the expected pairing is stated once, here, and every
-    /// assertion afterwards reads the rail rather than restating it.
-    /// </para>
+    /// shell restores one. Three separate worlds so each pane holds a different session.
     /// </summary>
     private static async Task<Three> ThreePanes()
     {
@@ -658,15 +570,15 @@ public class PaneJumpTests
             {
                 new WorkspaceWindowState
                 {
-                    Id = windows[0], Title = "Ann", Kind = WindowKind.Main, SessionKey = sessions[0],
+                    Id = windows[0], Title = "Ann", Kind = WindowKind.Main, SessionKey = sessions[0], Sequence = 1,
                 },
                 new WorkspaceWindowState
                 {
-                    Id = windows[1], Title = "Bob", Kind = WindowKind.Main, SessionKey = sessions[1],
+                    Id = windows[1], Title = "Bob", Kind = WindowKind.Main, SessionKey = sessions[1], Sequence = 2,
                 },
                 new WorkspaceWindowState
                 {
-                    Id = windows[2], Title = "Cal", Kind = WindowKind.Main, SessionKey = sessions[2],
+                    Id = windows[2], Title = "Cal", Kind = WindowKind.Main, SessionKey = sessions[2], Sequence = 3,
                 },
             },
             Root = new LayoutNodeState
@@ -675,25 +587,25 @@ public class PaneJumpTests
                 Direction = SplitDirection.Row,
                 Children =
                 {
-                    new LayoutNodeState { Type = "pane", Id = "p1", Tabs = { windows[0] }, ActiveIndex = 0 },
-                    new LayoutNodeState { Type = "pane", Id = "p2", Tabs = { windows[1] }, ActiveIndex = 0 },
-                    new LayoutNodeState { Type = "pane", Id = "p3", Tabs = { windows[2] }, ActiveIndex = 0 },
+                    new LayoutNodeState
+                    {
+                        Type = "pane", Id = "p1", Tabs = { windows[0] }, ActiveIndex = 0, Sequence = 1,
+                    },
+                    new LayoutNodeState
+                    {
+                        Type = "pane", Id = "p2", Tabs = { windows[1] }, ActiveIndex = 0, Sequence = 2,
+                    },
+                    new LayoutNodeState
+                    {
+                        Type = "pane", Id = "p3", Tabs = { windows[2] }, ActiveIndex = 0, Sequence = 3,
+                    },
                 },
             },
             FocusedPaneId = "p1",
         };
 
         var app = new SharpMUTermApp(config, Headless, new HeadlessConsoleDriver(Width, Height));
-        var transports = new[]
-        {
-            new RecordingTelnetSession(), new RecordingTelnetSession(), new RecordingTelnetSession(),
-        };
-        app.TelnetFactory = options => options.Host[0] switch
-        {
-            'a' => transports[0],
-            'b' => transports[1],
-            _ => transports[2],
-        };
+        app.TelnetFactory = _ => new RecordingTelnetSession();
 
         foreach (var key in sessions)
         {
@@ -708,7 +620,7 @@ public class PaneJumpTests
         app.RenderNextFrame();
 
         // The fixture's own claim: three panes, in the order the windows were placed. Everything after
-        // this reads the rail, so a resumed layout that came back differently must fail here and not
+        // this reads the overlay, so a resumed layout that came back differently must fail here and not
         // silently make the assertions vacuous.
         if (app.PaneIds.Count != 3)
         {
@@ -724,6 +636,6 @@ public class PaneJumpTests
             }
         }
 
-        return new Three(app, windows, sessions, transports);
+        return new Three(app, windows, sessions);
     }
 }

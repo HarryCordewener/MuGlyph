@@ -45,23 +45,28 @@ public sealed record RailRow(
     bool Unsent = false,
     bool Closed = false,
     int Unread = 0,
-    string? Pane = null,
+    string? Chord = null,
     string? Target = null);
 
 /// <summary>A world as projected into the rail: its identity, accent, and characters.</summary>
 public sealed record RailWorld(string Name, string Host, int Port, TerminalColor Accent, IReadOnlyList<RailCharacter> Characters);
 
 /// <summary>
-/// A character in the rail: connection/active state, unread total, its windows, and the pane its
-/// session lives in.
+/// A character in the rail: connection/active state, unread total, its windows, and the chord that
+/// goes to them.
 /// <para>
-/// <b><paramref name="Pane"/> is what makes the pane numbering visible across characters.</b> Only the
-/// <em>active</em> character's windows are listed (see <see cref="RailModel.Build"/>), so before this
-/// field a reader looking at character A could see that <c>pane 3</c> existed only if one of A's own
-/// windows happened to be in it — B's pane was on the screen, numbered, and reachable with ⌥3, and
-/// nothing anywhere said so. The number is useless if it cannot be read off the sidebar, and the whole
-/// point of ⌥N being global is that it switches character. Null when the workspace has a single pane
-/// (one pane is no information) or the character has no window open.
+/// <b><paramref name="Chord"/> is what makes the window numbering visible across characters.</b> Only
+/// the <em>active</em> character's windows are listed (see <see cref="RailModel.Build"/>), so without
+/// this field a reader looking at character A could see A's own <c>⌥N</c>s and nothing else — B's
+/// windows were on the screen, numbered, and one keystroke away, and nothing anywhere said which
+/// keystroke. The number is useless if it cannot be read off the sidebar, and switching character is
+/// the commonest thing these nine chords are for.
+/// </para>
+/// <para>
+/// It is the chord of the character's <em>own</em> window — their session window when they have one —
+/// so pressing it goes to that character, and so a character row and the window row beneath it that
+/// names the same window carry the same digit. Null when the workspace holds a single window (one
+/// window is no information) or the character has none open.
 /// </para>
 /// </summary>
 public sealed record RailCharacter(
@@ -71,14 +76,19 @@ public sealed record RailCharacter(
     bool Active,
     int Unread,
     IReadOnlyList<RailWindow> Windows,
-    string? Pane = null);
+    string? Chord = null);
 
 /// <summary>
-/// A window in the rail: its title, the workspace id a click activates, hosting pane (or closed),
-/// unread, and unsent marker. The id is required rather than optional because a row the rail draws
-/// as a destination and cannot name is a row that silently does nothing when clicked.
+/// A window in the rail: its title, the workspace id a click activates, the <c>⌥N</c> chord that goes
+/// to it (or none), unread, and unsent marker. The id is required rather than optional because a row
+/// the rail draws as a destination and cannot name is a row that silently does nothing when clicked.
+/// <para>
+/// The second column used to be the <em>hosting pane</em>, back when ⌥N named a pane. It names the
+/// window itself now, which is the row it is drawn on — so the number beside a window is the number
+/// that goes to that window, rather than to whatever else happens to share its pane.
+/// </para>
 /// </summary>
-public sealed record RailWindow(string Title, string Id, string? Pane, int Unread, bool HasUnsent, bool Closed);
+public sealed record RailWindow(string Title, string Id, string? Chord, int Unread, bool HasUnsent, bool Closed);
 
 /// <summary>
 /// Projects the worlds/characters/windows tree into a flat list of <see cref="RailRow"/>s for the
@@ -88,13 +98,13 @@ public sealed record RailWindow(string Title, string Id, string? Pane, int Unrea
 /// "no characters". (A world's <c>host:port</c> is deliberately <em>not</em> a row; the rail shows
 /// name and characters only, which <c>RailModelTests</c> pins.) Pure and unit-testable.
 /// <para>
-/// <b>Every</b> character row carries its own hosting pane (<see cref="RailCharacter.Pane"/>), active or
-/// not, and that is the one thing here that is not scoped to the active character. It has to be: the
-/// pane numbering is a property of the workspace rather than of whoever is in front, ⌥3 is a character
-/// switch as much as a pane switch, and a number that is only legible once you are already there is a
-/// number nobody presses. Listing the other characters' <em>windows</em> would have said the same thing
-/// and cost the rail its one unambiguous reading — a window row means "this is yours", which is why the
-/// owner filter exists.
+/// <b>Every</b> character row carries its own chord (<see cref="RailCharacter.Chord"/>), active or not,
+/// and that is the one thing here that is not scoped to the active character. It has to be: the window
+/// numbering is a property of the workspace rather than of whoever is in front, ⌥3 is a character switch
+/// as much as a window switch, and a number that is only legible once you are already there is a number
+/// nobody presses. Listing the other characters' <em>windows</em> would have said the same thing and cost
+/// the rail its one unambiguous reading — a window row means "this is yours", which is why the owner
+/// filter exists.
 /// </para>
 /// <para>
 /// Every row that names somewhere you can go also carries the <see cref="RailRow.Target"/> a click
@@ -141,7 +151,7 @@ public static class RailModel
                     Active: character.Active,
                     Connected: character.Connected,
                     Unread: character.Unread,
-                    Pane: character.Pane,
+                    Chord: character.Chord,
                     Target: CommandIds.Character(character.SessionKey)));
 
                 if (!character.Active)
@@ -159,7 +169,7 @@ public static class RailModel
                         Unsent: window.HasUnsent,
                         Closed: window.Closed,
                         Unread: window.Unread,
-                        Pane: window.Pane,
+                        Chord: window.Chord,
                         // Closed windows get a target too. The shell answers a "go to" for a window no
                         // pane holds by saying it is not open any more, which is what the row's own
                         // "closed" label already tells you — and it is the same answer the ⌃P entry for

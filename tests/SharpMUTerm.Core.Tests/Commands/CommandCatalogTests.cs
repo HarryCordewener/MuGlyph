@@ -50,9 +50,9 @@ public class CommandCatalogTests
 
     /// <summary>
     /// The numbered pane entries: one per pane that exists, in <c>Panes</c> order (which is the order the
-    /// shell's sidebar numbers them in), and only when there is more than one pane. The first nine carry
-    /// their chord; a tenth pane has none, and an entry naming a key that does something else would be
-    /// worse than a bare one.
+    /// move overlay badges them in), and only when there is more than one pane. The first nine carry
+    /// their chord — <c>⌃B N</c>, since ⌥N goes to a window now — and a tenth pane has none, because an
+    /// entry naming a key that does something else would be worse than a bare one.
     /// </summary>
     [Test]
     public async Task NumberedPaneEntries_AppearOnlyOnASplit_AndOnlyTheFirstNineCarryAChord()
@@ -92,7 +92,52 @@ public class CommandCatalogTests
             var entry = entries[n - 1];
             await Assert.That(entry.Id).IsEqualTo(CommandIds.Pane(n));
             await Assert.That(entry.Title).IsEqualTo($"Go to pane {n}");
-            await Assert.That(entry.Subtitle).IsEqualTo(n <= CommandIds.PaneJumpDigits ? $"⌥{n}" : null);
+            await Assert.That(entry.Subtitle).IsEqualTo(n <= CommandIds.PaneJumpDigits ? $"⌃B {n}" : null);
+        }
+    }
+
+    /// <summary>
+    /// <b>A window's entry names the chord that goes to it, and the chord is the numbering's.</b> The ⌃P
+    /// surface is a second door onto ⌥N rather than a second way of switching window, so the subtitle
+    /// leads with the digit — and the digit is read out of <c>PlacedWindows</c>, the one order windows
+    /// are numbered in, rather than counted here.
+    /// <para>
+    /// The tenth window and beyond carry no chord: ⌥0 is unclaimed and there is no tenth key, so the
+    /// subtitle drops back to the owner alone rather than naming something that would go elsewhere.
+    /// </para>
+    /// </summary>
+    [Test]
+    public async Task WindowEntries_LeadWithTheirChord_AndOnlyTheFirstNineHaveOne()
+    {
+        var ws = new Workspace(mainWindowId: "main", mainTitle: "Main", sessionKey: "Aetherfall.Corvid");
+        for (var i = 1; i <= 10; i++)
+        {
+            ws.RouteSpawn($"w{i}", "Aetherfall.Corvid");
+        }
+
+        var placed = ws.PlacedWindows;
+        await Assert.That(placed.Count).IsEqualTo(11);
+
+        // Nothing is active, so every window gets an entry — the skip is only for the focused one.
+        ws.Layout.FocusedPane.ActiveIndex = -1;
+        var entries = CommandCatalog.Build(ws, Characters, null, new CommandContext())
+            .Where(c => c.Id.StartsWith(CommandIds.WindowPrefix, StringComparison.Ordinal))
+            .ToDictionary(c => c.Id, c => c.Subtitle, StringComparer.Ordinal);
+
+        for (var n = 1; n <= placed.Count; n++)
+        {
+            var subtitle = entries[CommandIds.Window(placed[n - 1].Id)];
+            await Assert.That(subtitle).IsNotNull();
+            if (n <= CommandIds.WindowJumpDigits)
+            {
+                await Assert.That(subtitle!).StartsWith($"⌥{n} · ");
+            }
+            else
+            {
+                await Assert.That(subtitle!.Contains('⌥'))
+                    .IsFalse()
+                    .Because($"window {n} has no chord, and naming one would name a key that goes elsewhere");
+            }
         }
     }
 

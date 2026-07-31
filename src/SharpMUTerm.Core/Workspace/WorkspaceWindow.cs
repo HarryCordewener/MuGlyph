@@ -31,6 +31,32 @@ public sealed class WorkspaceWindow
     /// <summary>Stable window identity, unique within a workspace and referenced by pane tabs.</summary>
     public string Id { get; }
 
+    /// <summary>
+    /// When this window was created, as a per-workspace counter that only ever goes up. Windows are
+    /// <em>numbered</em> by this (see <see cref="Workspace.PlacedWindows"/>) rather than by where their
+    /// tab happens to sit, so a window's ⌥N number is fixed for as long as it is open.
+    /// <para>
+    /// It is a sort key and not the number itself. The number is the window's position in the sorted
+    /// list, which is what keeps ⌥1–⌥N contiguous when a window in the middle closes.
+    /// </para>
+    /// <para>
+    /// <b>Deliberately the same mechanism as <see cref="PaneNode.Sequence"/>, and deliberately not the
+    /// registry's own order.</b> <see cref="Workspace.Windows"/> is a dictionary's values: its order is
+    /// unspecified after a removal, so a client that closed a channel and opened another could find the
+    /// new one dropped into the freed slot — the number moving under a user who had not touched it,
+    /// which is the exact defect creation order was given to panes to prevent.
+    /// </para>
+    /// </summary>
+    public int Sequence { get; internal set; } = Unsequenced;
+
+    /// <summary>
+    /// The <see cref="Sequence"/> of a window nobody has numbered yet — one restored from a workspace
+    /// persisted before windows carried a creation order. <see cref="Workspace"/> replaces it on load,
+    /// from the order the windows were saved in, so an old configuration comes back numbered the way it
+    /// was left rather than scrambled. Same value and same reasoning as <see cref="PaneNode.Unsequenced"/>.
+    /// </summary>
+    public const int Unsequenced = 0;
+
     /// <summary>Display title (rail entry, tab label).</summary>
     public string Title { get; set; }
 

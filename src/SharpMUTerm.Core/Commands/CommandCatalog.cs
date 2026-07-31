@@ -74,6 +74,17 @@ public static class CommandCatalog
                 $"{character.WorldName} · {state}"));
         }
 
+        // The chord each window's entry names, from the one place windows are numbered. Built as a lookup
+        // rather than read per entry because the entries walk the *registry* (which includes windows no
+        // pane holds, drawn here as much as anywhere) while the numbering walks the placed ones — a
+        // closed window correctly gets no chord, and correctly does not consume a digit.
+        var windowOrdinals = new Dictionary<string, int>(StringComparer.Ordinal);
+        var placed = workspace.PlacedWindows;
+        for (var i = 0; i < placed.Count && i < CommandIds.WindowJumpDigits; i++)
+        {
+            windowOrdinals[placed[i].Id] = i + 1;
+        }
+
         foreach (var window in workspace.Windows)
         {
             if (window.Id == activeWindow)
@@ -83,11 +94,17 @@ public static class CommandCatalog
 
             var owner = window.SessionKey ?? "unowned";
             var unread = window.Unread > 0 ? $" · {window.Unread} unread" : string.Empty;
+
+            // The chord leads, because it is the part a reader is here to learn — the owner and the count
+            // describe the window and this says how to reach it without the surface at all. Windows past
+            // the ninth get the same subtitle minus the chord, rather than one naming a key that would do
+            // something else.
+            var chord = windowOrdinals.TryGetValue(window.Id, out var ordinal) ? $"⌥{ordinal} · " : string.Empty;
             items.Add(new CommandItem(
                 CommandGroup.GoTo,
                 $"Go to {window.Title}",
                 CommandIds.Window(window.Id),
-                $"{owner}{unread}"));
+                $"{chord}{owner}{unread}"));
         }
 
         // WORLD
@@ -175,14 +192,14 @@ public static class CommandCatalog
 
         // Numbered pane jumps, one entry per pane that exists — the one group here that is *not* listed
         // unconditionally, because "Go to pane 4" on a workspace with two panes names a place there is no
-        // way to make. The rail already numbers the panes the same way in its hosting column, so the entry
-        // and the label a user is reading off the sidebar are the same number; that is the whole point of
-        // deriving both from Panes order rather than spelling either out.
+        // way to make. The number is the one the move and drag overlays badge each pane with, so the entry
+        // and the digit a user is about to press in move mode are the same number.
         //
-        // Only the first nine carry a chord: ⌥0 is not claimed (it stays bindable as a macro, and the
-        // framework's own Alt+digit handler ignores it), so a tenth pane gets an entry with no subtitle
-        // rather than one naming a key that does something else. An entry with no chord is the honest
-        // shape for a place only the mouse, ⌃O and the arrows can reach.
+        // The chord is ⌃B N and no longer ⌥N: ⌥N names a *window* now, and a pane and a window are
+        // different destinations that cannot share one key. ⌃B is where the rest of the pane keymap lives.
+        // Only the first nine carry it, so a tenth pane gets an entry with no subtitle rather than one
+        // naming a key that does something else — the honest shape for a place only the mouse, ⌃O, the
+        // arrows and this entry can reach.
         var paneCount = workspace.Layout.Panes.Count;
         if (paneCount > 1)
         {
@@ -192,7 +209,7 @@ public static class CommandCatalog
                     CommandGroup.Layout,
                     $"Go to pane {n}",
                     CommandIds.Pane(n),
-                    n <= CommandIds.PaneJumpDigits ? $"⌥{n}" : null));
+                    n <= CommandIds.PaneJumpDigits ? $"⌃B {n}" : null));
             }
         }
 

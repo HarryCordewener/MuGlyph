@@ -67,12 +67,13 @@ internal static class MacroKeys
     internal static IReadOnlyList<AppShortcut> AppShortcuts { get; } = BuildAppShortcuts();
 
     /// <summary>
-    /// The pane number a claimed <see cref="ConsoleKey"/> stands for, or null when the key is not one of
-    /// the nine digits ⌥1–⌥9 are registered on. The one place the mapping is written down, so the
-    /// registration, the F4 screen and the app's action cannot disagree about which digit is which pane.
+    /// The window number a claimed <see cref="ConsoleKey"/> stands for, or null when the key is not one
+    /// of the nine digits ⌥1–⌥9 are registered on. The one place the mapping is written down, so the
+    /// registration, the F4 screen and the app's action cannot disagree about which digit is which
+    /// window.
     /// </summary>
-    internal static int? PaneJumpNumber(ConsoleKey key) =>
-        key >= ConsoleKey.D1 && key <= ConsoleKey.D0 + CommandIds.PaneJumpDigits
+    internal static int? WindowJumpNumber(ConsoleKey key) =>
+        key >= ConsoleKey.D1 && key <= ConsoleKey.D0 + CommandIds.WindowJumpDigits
             ? key - ConsoleKey.D0
             : null;
 
@@ -84,14 +85,18 @@ internal static class MacroKeys
     {
         var claims = new List<AppShortcut>(Fixed());
 
-        // ⌥1–⌥9 — jump to a numbered pane. Generated rather than written out nine times so the digit, the
-        // pane number and the sentence F4 prints are one expression; and claimed *here*, in the list the
-        // app registers from, because the framework claims Alt+1–9 for its own top-level window selector
-        // and that handler is not gated on anything we can switch off (see SharpMUTermApp.JumpToPane).
-        // Every one of the nine is claimed, in range or not — an unclaimed digit would fall through to it.
-        for (var n = 1; n <= CommandIds.PaneJumpDigits; n++)
+        // ⌥1–⌥9 — jump to a numbered window. Generated rather than written out nine times so the digit,
+        // the window number and the sentence F4 prints are one expression; and claimed *here*, in the list
+        // the app registers from, because the framework claims Alt+1–9 for its own top-level window
+        // selector and that handler is not gated on anything we can switch off (see
+        // SharpMUTermApp.JumpToWindow). Every one of the nine is claimed, in range or not — an unclaimed
+        // digit would fall through to it.
+        //
+        // The numbered *pane* jump is not here: it is ⌃B N, a key on the prefix keymap rather than a
+        // global shortcut, so it never reaches this list and F4 reports the bare digits as the prompt's.
+        for (var n = 1; n <= CommandIds.WindowJumpDigits; n++)
         {
-            claims.Add(new AppShortcut(ConsoleModifiers.Alt, ConsoleKey.D0 + n, $"goes to pane {n}"));
+            claims.Add(new AppShortcut(ConsoleModifiers.Alt, ConsoleKey.D0 + n, $"goes to window {n}"));
         }
 
         return claims.ToArray();
@@ -244,7 +249,7 @@ internal static class MacroKeys
     /// spells those bytes Tab, Enter and Backspace, and which <em>no</em> digit produces usefully (see
     /// <see cref="DigitBytes"/>); with Alt it is an ESC prefix, except for the one letter the parser has
     /// already spent on its own SS3 introducer. Alt+digit is the one modifier the digit row does deliver,
-    /// which is why the pane-jump chords are on it — <see cref="AppShortcuts"/> then reports ⌥1–⌥9 as
+    /// which is why the window-jump chords are on it — <see cref="AppShortcuts"/> then reports ⌥1–⌥9 as
     /// taken through <see cref="Claimed"/>, and ⌥0 stays free for a macro.
     /// </summary>
     private static MacroKeyVerdict Chord(MacroKeyParts parts)
@@ -277,7 +282,7 @@ internal static class MacroKeys
     }
 
     /// <summary>
-    /// What a terminal actually writes for <c>Ctrl</c>+each digit — the reason the pane-jump chord is
+    /// What a terminal actually writes for <c>Ctrl</c>+each digit — the reason the numbered-jump chord is
     /// <c>Alt</c> and not <c>Ctrl</c>, which is what was asked for.
     /// <para>
     /// There is no Ctrl+digit encoding to speak of. The digit row has no control bytes of its own beyond

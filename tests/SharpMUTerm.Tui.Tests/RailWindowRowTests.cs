@@ -70,21 +70,24 @@ public class RailWindowRowTests
         // gaps are the reserved badge fields: the pen's two cells and the unread count's three are always
         // there, blank when there is nothing to put in them, so that a keystroke or a line of output
         // cannot resize the sidebar (see RailRenderer.UnsentFieldWidth).
+        // The chord column is the tail of each row: the demo holds two windows, so ⌥1 and ⌥2 both name
+        // somewhere to go and the sidebar says which key goes there.
         await Assert.That(windows.Select(r => r.TrimEnd()).Select(r => r.TrimStart()).ToList())
-            .IsEquivalentTo(new[] { "▪ main " + Glyphs.Draft, "▪ Chat    2" });
+            .IsEquivalentTo(new[] { "▪ main " + Glyphs.Draft + "    ⌥1", "▪ Chat    2 ⌥2" });
     }
 
     /// <summary>
-    /// <b>The two columns never wear the same word.</b> The hosting-pane column called the first pane
-    /// "main" too, so a row could read <c>▪ main   main</c> — the naive fix for the label, and two different
-    /// meanings in one line. The sidebar spells a pane <c>⌥N</c> — the chord that goes there — which no
-    /// window title is, and which is four cells narrower than the words it replaced.
+    /// <b>The two columns never wear the same word.</b> The second column used to be the hosting pane and
+    /// it called the first pane "main" too, so a row could read <c>▪ main   main</c> — the naive fix for
+    /// the label, and two different meanings in one line. It is now the <c>⌥N</c> that goes to the window
+    /// the row <em>is</em>, which no window title can be mistaken for, and which the panes' own
+    /// <c>pane N</c> vocabulary cannot be mistaken for either.
     /// </summary>
     [Test]
-    public async Task TheHostingPaneColumnNeverRepeatsTheWindowsOwnName()
+    public async Task TheChordColumnNeverRepeatsTheWindowsOwnName()
     {
         var app = App();
-        app.RenderSnapshot("split"); // two panes, so the column has something to say
+        app.RenderSnapshot("split"); // two panes, so both windows are visible at once
         app.RenderNextFrame();
 
         var windows = Rail(app).Where(r => r.TrimStart().StartsWith("▪", StringComparison.Ordinal)).ToList();
@@ -94,37 +97,57 @@ public class RailWindowRowTests
         {
             await Assert.That(row).Contains("⌥");
             await Assert.That(row.Trim()).IsNotEqualTo("▪ main   main");
+            await Assert.That(row)
+                .DoesNotContain("pane ")
+                .Because("panes are numbered separately, and a pane noun here would be a second reading of ⌥N");
         }
     }
 
     /// <summary>
-    /// And with one pane the column is not drawn at all — there is one place a window can be, so naming it
-    /// says nothing, and the three cells of the gap came out of the pane area through the rail's width.
+    /// <b>With one window the column is not drawn at all</b> — there is one place to be, so naming it says
+    /// nothing, and the three cells it costs come out of the pane area through the rail's width.
+    /// <para>
+    /// The condition is the <em>window</em> count and no longer the pane count: the column named the
+    /// hosting pane until ⌥N was given to windows, so it appeared only in a split. It now appears as soon
+    /// as there is somewhere else to go, which on a fresh client with one capture open is immediately —
+    /// and that is the point, because the capture is what the chord was asked to reach.
+    /// </para>
     /// </summary>
     [Test]
-    public async Task WithOnePaneTheHostingColumnIsNotDrawn()
+    public async Task WithOneWindowTheChordColumnIsNotDrawn()
     {
-        var app = App();
+        var app = OneWindow();
         app.RenderSnapshot();
 
-        await Assert.That(app.PaneIds.Count).IsEqualTo(1);
+        await Assert.That(app.PlacedWindowIds.Count).IsEqualTo(1);
         foreach (var row in Rail(app).Where(r => r.TrimStart().StartsWith("▪", StringComparison.Ordinal)))
         {
             await Assert.That(row).DoesNotContain("⌥");
         }
 
-        // The rows do end in blanks now, and that is the reserved badge fields rather than slack — so the
+        // The rows do end in blanks, and that is the reserved badge fields rather than slack — so the
         // claim this used to make with DoesNotEndWith(" ") is made by width instead, which is the thing
-        // that actually mattered: a single-pane rail must not pay for a column with nothing in it. (It
-        // used to: three spaces were emitted unconditionally and the sidebar was three cells wider.)
-        // The column is now `⌥N` behind a single space rather than `pane N` behind two, so what it costs
-        // when it *is* drawn is three cells, not seven.
+        // that actually mattered: a rail with nothing to say in this column must not pay for it.
         var single = MainWindowRowWidth(app);
-        await Assert.That(app.DispatchCommand("layout:split-right")).IsTrue();
-        app.RenderNextFrame();
 
-        await Assert.That(Rail(app).Single(MainRow)).Contains("⌥");
-        await Assert.That(MainWindowRowWidth(app)).IsGreaterThan(single);
+        var two = App();
+        two.RenderSnapshot(); // the demo resumes with a Chat capture beside the main window
+        await Assert.That(two.PlacedWindowIds.Count).IsEqualTo(2);
+
+        await Assert.That(Rail(two).Single(MainRow)).Contains("⌥");
+        await Assert.That(MainWindowRowWidth(two))
+            .IsEqualTo(single + 3)
+            .Because("the column is `⌥N` behind one space — three cells, and only when it has something to say");
+    }
+
+    /// <summary>The demo scene with its capture window taken out, so one window is left in one pane.</summary>
+    private static SharpMUTermApp OneWindow()
+    {
+        Console.SetIn(TextReader.Null);
+        var config = DemoScene.Build();
+        config.LastSession!.Windows.RemoveAll(w => w.Kind == WindowKind.Spawn);
+        config.LastSession.Root.Tabs.RemoveAll(t => t.StartsWith("spawn:", StringComparison.Ordinal));
+        return new SharpMUTermApp(config, Headless, new HeadlessConsoleDriver(Width, Height));
     }
 
     private static bool MainRow(string row) =>

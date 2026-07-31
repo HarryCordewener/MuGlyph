@@ -316,51 +316,67 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   the least warning: it is reached from `ProcessInput`'s fall-through for *any* unhandled Alt chord and,
   unlike the move and resize handlers on the two lines above it, is **not** gated on
   `IsMovable`/`IsResizable` — so `Movable(false)`, which switched off the ⌃X-swallowing move handler,
-  did nothing here. `⌥1`–`⌥9` are ours (`JumpToPane`, go to the numbered pane) and are claimed as
+  did nothing here. `⌥1`–`⌥9` are ours (`JumpToWindow`, go to the numbered **window**) and are claimed as
   **application shortcuts**, which `InputCoordinator` tries before it offers a key to any window at all;
   `PreviewKeyPressed` would also have won (`WindowEventDispatcher.ProcessInput` raises it first and
   returns immediately when handled), one step later. **All nine are claimed, in range or not**: an
   out-of-range ⌥7 reports and stops rather than falling through to a window selector that would do
   something else. `⌥0` is deliberately left free — the framework ignores it too, so it stays bindable.
-- **Ctrl+digit is not a chord this terminal has, and that is why the pane jump is Alt.** Read off a
+- **Ctrl+digit is not a chord this terminal has, and that is why the numbered jump is Alt.** Read off a
   pty with `kitten @ send-key` at a raw-mode reader, the same way `Alt+Shift+arrow` was established:
   every `Alt+digit` is `ESC` + the digit (one Alt chord out of `ProcessEscape`), while Ctrl+digit is
   `1`→`0x31`, `2`→NUL, `3`→**`0x1B` (Escape)**, `4`–`7`→`0x1C`–`0x1F`, `8`→**`0x7F` (Backspace)**,
   `9`→`0x39`, `0`→`0x30`. So three of them are keys the client cannot afford to bind over and three are
   indistinguishable from typing — binding any breaks the plain key, exactly as with Ctrl+H/I/J/M.
   Recorded per digit in `MacroKeys.DigitBytes`, which is what F4 prints.
-- **Panes are numbered one way, everywhere: `pane N` in `Layout.Panes` order, which is *creation*
-  order.** The rail's hosting column, the ⌃P `Go to pane N` entries, the move/drag overlays
-  (`PaneLabel`) and the ⌥N chord are four spellings of that one number. `PaneLabel` used to call the
-  first pane `main` — the spelling the rail abandoned because `▪ main   main` is two meanings in one
-  line — so the same pane read `pane 1` in the sidebar and `main` under the cursor. Harmless until a
-  *chord* had to land on the pane a label names; a key that disagrees with the label is worse than no key.
+- **There are two numberings, over two different sets, and they are spelt differently everywhere.**
+  **Windows** are `⌥N` in `Workspace.PlacedWindows` order; **panes** are `pane N` in `Layout.Panes`
+  order. Both are *creation* order, both take the number from the **index** rather than the sequence,
+  and neither is ever written in the other's vocabulary. That separation is the whole safety property:
+  the digits are the same ten characters, so if a surface could print a bare number that might be either,
+  a user reading it cannot know which key to press.
+  - **⌥1–⌥9 go to a window** (`JumpToWindow`). That is what was asked for — "switch not just characters,
+    but captures, etc." — and it is why it is not the pane: a capture sharing a pane with its character's
+    own window had no number of its own and was reachable only while it happened to be that pane's active
+    tab. `WorkspaceWindow.Sequence` is a per-workspace counter assigned at creation, persisted in
+    `WorkspaceWindowState`, never reused; a window restored without one is seeded from the saved order.
+    **`Workspace.Windows` is a dictionary's values and is not the numbering** — its order is unspecified
+    after a removal, so opening a window into a closed one's slot renumbers everything after it
+    (`WindowNumberingTests.AWindowOpenedIntoAClosedOnesSlotStillTakesTheLastNumber` is the pin, and it
+    took a four-window fixture to expose: with fewer, both orders agree).
+    Only **placed** windows are numbered — one no pane holds is drawn `closed` and a digit for it would
+    name nowhere to go.
+  - **⌃B 1–⌃B 9 go to a pane.** It was ⌥N until windows took that; it is on the prefix because that is
+    where the rest of the pane keymap lives, and it is kept rather than dropped because the pane
+    numbering does not go away with the chord — move mode badges each pane with it, the move and drag
+    prompts say `pane 2`, the ⌃P entry says `Go to pane 2`, and ⌃O counts in it. It also refuses on a
+    single-pane workspace *including ⌃B 1*, because the which-key panel dims that row.
   - **`Layout.Panes` is creation order; `LayoutNode.Panes()` is tree order, and they are different
     things.** Tree order (left-to-right, then top-to-bottom) is geometry and is what `LayoutSolver`,
     `PaneResize` and the renderer walk. It used to be the numbering too, and a number that is a function
     of *where a pane is* moves when a pane is inserted before it: dropping a window on the left edge of
-    pane 2 made that pane into pane 3, so ⌥2 stopped meaning what it meant while the user was doing
-    something else. `PaneNode.Sequence` is a per-workspace counter assigned at creation, persisted in
-    `LayoutNodeState`, and never reused; a pane restored without one (a config written before the field)
-    is seeded from tree order, which is the numbering it was saved under.
-  - **The number is the *index* in `Layout.Panes`, never the `Sequence` itself.** Sequences have holes
-    after a close; the numbering may not, or ⌥2 is a silent no-op with panes 1 and 3 on the screen.
-    Closing pane 2 of three leaves 1 and 2 (`PaneNumberingTests`,
-    `PaneNumberingRailTests.ClosingAPaneCompactsTheNumberingOnTheChordAndInTheSidebar`).
-  - **⌃O cycles in that same order.** It read tree order, which agreed with the numbering back when the
-    numbering *was* tree order. The two ordinal movers have to count one sequence or three presses of
-    ⌃O from pane 1 don't land where ⌥4 does.
-- **The pane number is global, and the rail is where you read it.** ⌥N has always indexed the
-  workspace's one split tree rather than the active character's windows, so it has always been able to
-  reach another character's pane — that is what makes the nine chords a character switcher. But window
-  rows are drawn for the *active* character only (`BuildRailWindows`'s owner filter, which stays: a
-  window row under a character means that window is theirs), so the other panes' numbers were invisible
-  from anywhere you could use them. Every **character** row now carries the pane its session is in
-  (`CharacterPaneLabel` → `RailCharacter.Pane`), active or not — one column on a row that already
-  exists, in the same `pane N` vocabulary, costing no width at rest because a window row is indented
-  deeper and carries the pen field as well.
-- **The ordinal pane movers carry a zoom; the directional ones cannot.** A zoomed workspace realises
-  exactly one pane, so ⌃O or ⌥N moving the selection and leaving `ZoomedPaneId` behind puts the
+    pane 2 made that pane into pane 3, so the digit that meant it stopped meaning it while the user was
+    doing something else. `PaneNode.Sequence` is the same mechanism as the window one, seeded from tree
+    order for a config written before the field.
+  - **The number is the *index*, never the `Sequence` itself,** in both numberings. Sequences have holes
+    after a close; the numbering may not, or a digit is a silent no-op with the things still on the
+    screen. `PaneNumberingTests`, `WindowNumberingTests`,
+    `WindowJumpTests.ClosingAWindowCompactsTheNumberingOnTheChordAndInTheSidebar`.
+  - **⌃O cycles panes in the pane order.** It read tree order once, which agreed with the numbering back
+    when the numbering *was* tree order. Its partner is ⌃B N, not ⌥N — the window movers (⌥N, ⌃N) are a
+    separate ladder — and three presses of ⌃O from pane 1 must land where ⌃B 4 does.
+- **The window number is global, and the rail is the only place you read it.** ⌥N indexes the
+  workspace's whole window registry rather than the active character's, so ⌥3 reaches another
+  character's window — that is what makes the nine chords a character switcher. But window rows are drawn
+  for the *active* character only (`BuildRailWindows`'s owner filter, which stays: a window row under a
+  character means that window is theirs), so other characters' digits would be invisible from anywhere
+  you could use them. Every **character** row therefore carries the chord of its own window
+  (`CharacterChordLabel` → `RailCharacter.Chord`), active or not — one column on a row that already
+  exists, costing no width at rest because a window row is indented deeper and carries the pen field as
+  well. **The sidebar prints `⌥N` and never `pane N`**: it numbers windows, and a pane noun there would
+  be a second reading of the same column.
+- **The ordinal movers carry a zoom; the directional ones cannot.** A zoomed workspace realises
+  exactly one pane, so ⌃O, ⌃B N or ⌥N moving the selection and leaving `ZoomedPaneId` behind puts the
   selection, the session the bar talks to and the caret on a pane that is **not on the screen** — the
   "attention on one pane, keystrokes to another" defect again. `WorkspaceLayout.CarryZoomToFocused`
   re-points an existing zoom (it never starts or ends one) and both movers call it. ⌃←/→/↑/↓ do not and
@@ -453,11 +469,12 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   in a reserved field capped by `UnreadBadge`, the same as the rail's. **The lesson generalises: any cell
   on the chrome whose width is a function of something arriving from the wire needs a reserved field, and
   "it is only one digit" is exactly the size of every instance of this bug so far.**
-- **A rail window row is `what` then `where`, and neither column may wear the other's word.** A
-  character's own session window reads `main` (`RailWindowLabel`); its title names the *connection*, which
-  the row's own ancestors — its character, under its world — have already said. The hosting-pane column
-  exists only in a split (one pane, one possible answer) and spells panes `pane N`, because it used to call
-  the first pane `main` too and `▪ main   main` is two meanings in one line.
+- **A rail window row is `what` then `how you get there`, and neither column may wear the other's word.**
+  A character's own session window reads `main` (`RailWindowLabel`); its title names the *connection*,
+  which the row's own ancestors — its character, under its world — have already said. The second column
+  is the `⌥N` that goes to that window and exists only once there are two windows (one window, one place
+  to be). It used to be the hosting *pane*, from when ⌥N named panes — and before that it called the
+  first pane `main` too, and `▪ main   main` is two meanings in one line.
 - **Focus is indicated by recolouring what is already drawn — never by spending a cell.** Per-pane NAWS
   is derived from the pane rectangle (`PaneOutputRects`), so a border, gutter or marker column that only
   the focused pane has would re-announce a different terminal size to every connected server on every

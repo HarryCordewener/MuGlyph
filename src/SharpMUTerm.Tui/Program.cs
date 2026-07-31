@@ -294,11 +294,19 @@ internal static class Program
         // asked for) and it cannot work — no digit has a control byte of its own, so a terminal sends the
         // bare digit, or one already spelt Escape or Backspace. Naming the working chord and the reason
         // the obvious one is absent is the same honesty this page owes everywhere else.
-        usage.WriteLine("Panes:  Alt+1..Alt+9 go straight to a numbered pane and bring it forward — the numbers the");
-        usage.WriteLine("        sidebar shows beside each window ('pane 2', 'pane 3'...), counted left to right then");
-        usage.WriteLine("        top to bottom. It says so when there is no pane with that number. Ctrl+digit is not");
-        usage.WriteLine("        offered: no terminal sends a distinct Ctrl+digit — 3 and 8 arrive as Escape and");
-        usage.WriteLine("        Backspace, and 1, 9 and 0 as the bare digit.");
+        //
+        // It says *window* and not pane. The chord counted panes until a capture window sharing a pane
+        // turned out to be the thing people wanted to reach; the numbered pane jump is ⌃B N now, and both
+        // are named here so a reader is not left thinking one replaced the other silently.
+        usage.WriteLine("Windows: Alt+1..Alt+9 go straight to a numbered window and bring it forward — a character's");
+        usage.WriteLine("        own window, a capture window, the web view. The numbers are the ones the sidebar");
+        usage.WriteLine("        prints beside each window and each character ('Alt+2', 'Alt+3'...), in the order the");
+        usage.WriteLine("        windows were opened. It says so when there is no window with that number.");
+        usage.WriteLine("        Ctrl+digit is not offered: no terminal sends a distinct Ctrl+digit — 3 and 8 arrive");
+        usage.WriteLine("        as Escape and Backspace, and 1, 9 and 0 as the bare digit.");
+        usage.WriteLine("Panes:  Ctrl+B then 1..9 goes to a numbered pane instead — the pane itself, whatever tab it");
+        usage.WriteLine("        is showing. Panes are numbered in the order they were created, which is the numbering");
+        usage.WriteLine("        Ctrl+O counts in and the one the move overlay (Ctrl+B m) badges each pane with.");
 
         // Alt+Shift+arrow is a chord this host does deliver — the parser reads both modifier bits out of
         // CSI 1;4 <final> — which is why it may be named here at all; see TerminalKeyArrivalTests. It is
@@ -320,7 +328,7 @@ internal static class Program
         // reader has to know that before pressing it.
         usage.WriteLine("World:  Alt+R reconnects the focused character (drops the connection and redials it at once);");
         usage.WriteLine("        Ctrl+D disconnects it at once. Neither asks. With nothing connected, each says so.");
-        usage.WriteLine("Panes:  Ctrl+B then | - z o x b m i < > splits, zooms, closes and moves; Esc or Ctrl+B");
+        usage.WriteLine("Panes:  Ctrl+B then | - z o 1-9 x b m i < > splits, zooms, goes and moves; Esc or Ctrl+B");
         usage.WriteLine("        cancels, and pausing after Ctrl+B pops a panel naming each key. Or drag a tab");
         usage.WriteLine("        strip onto another pane — middle drops it as a tab, an edge splits there.");
     }

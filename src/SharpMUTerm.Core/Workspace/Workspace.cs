@@ -11,34 +11,99 @@ public sealed class Workspace
 {
     private readonly Dictionary<string, WorkspaceWindow> _windows = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// The last <see cref="WorkspaceWindow.Sequence"/> handed out. Never reused, so a number is a
+    /// window's for as long as it is open — see <see cref="PlacedWindows"/> for why the ordinal is then
+    /// taken from the sorted position rather than from this.
+    /// </summary>
+    private int _sequenceCounter;
+
     /// <summary>Creates a workspace with a single main window in one pane.</summary>
     public Workspace(string mainWindowId = "main", string mainTitle = "Main", string? sessionKey = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(mainWindowId);
         Layout = new WorkspaceLayout(new[] { mainWindowId });
-        var main = new WorkspaceWindow(mainWindowId, mainTitle, WindowKind.Main, sessionKey);
-        _windows[main.Id] = main;
+        Register(new WorkspaceWindow(mainWindowId, mainTitle, WindowKind.Main, sessionKey));
     }
 
     /// <summary>
     /// Rebuilds a workspace from a restored set of windows and a pre-built layout (session resume).
     /// The two are assumed consistent — every window id referenced by a pane tab should have a window.
+    /// <para>
+    /// <b>A window restored without a creation sequence is given one here, from the order it arrived
+    /// in.</b> Windows are numbered by <see cref="WorkspaceWindow.Sequence"/> and a configuration
+    /// written before that field existed carries none, so without this every restored window would sort
+    /// equal and the numbering would be whatever the sort happened to do. The saved order is the
+    /// numbering such a workspace was saved under, which is why it is the right seed. Any window that
+    /// <em>does</em> carry a sequence keeps it, and unsequenced ones are numbered after the highest
+    /// already taken, so a half-migrated set cannot produce two windows with one number. Same shape,
+    /// and the same reasoning, as <see cref="WorkspaceLayout"/>'s restoring constructor.
+    /// </para>
     /// </summary>
     public Workspace(IEnumerable<WorkspaceWindow> windows, WorkspaceLayout layout)
     {
         ArgumentNullException.ThrowIfNull(windows);
         Layout = layout ?? throw new ArgumentNullException(nameof(layout));
-        foreach (var window in windows)
+        var restored = windows.ToList();
+        foreach (var window in restored)
         {
             _windows[window.Id] = window;
+        }
+
+        _sequenceCounter = restored.Select(w => w.Sequence).DefaultIfEmpty(WorkspaceWindow.Unsequenced).Max();
+        foreach (var window in restored.Where(w => w.Sequence <= WorkspaceWindow.Unsequenced))
+        {
+            window.Sequence = ++_sequenceCounter;
         }
     }
 
     /// <summary>The pane tree.</summary>
     public WorkspaceLayout Layout { get; }
 
-    /// <summary>Every known window, in insertion order.</summary>
+    /// <summary>
+    /// Every known window, whether or not a pane still holds it. The order is the registry's, which is a
+    /// dictionary's — fine for "what exists", and <b>not</b> what anything numbers windows by; see
+    /// <see cref="PlacedWindows"/>.
+    /// </summary>
     public IReadOnlyCollection<WorkspaceWindow> Windows => _windows.Values;
+
+    /// <summary>
+    /// <b>Every window a pane is holding, in creation order — the one order this client numbers windows
+    /// in.</b> The Nth entry is the window ⌥N goes to, the <c>⌥N</c> the connection rail prints on that
+    /// window's row (and on its character's), and the chord the ⌃P <c>Go to …</c> entry for it names.
+    /// Those are three spellings of this index and there is deliberately no second ordering for any of
+    /// them to drift onto.
+    /// <para>
+    /// <b>Creation order, for the reason panes are in creation order.</b> Any ordering that is a function
+    /// of <em>where</em> a window sits — its tab index, its pane's position — moves when something is
+    /// inserted before it, so dragging a channel one slot left would renumber every window after it and
+    /// ⌥4 would stop meaning what it meant while the user was doing something else entirely. A window's
+    /// number is fixed for as long as it is open, and a new one always appears at the end.
+    /// </para>
+    /// <para>
+    /// <b>The number is the index, not the sequence.</b> Sequences are never reused, so reading them
+    /// directly would leave holes — close the second of three windows and the survivors would be 1 and
+    /// 3, with ⌥2 doing nothing while two windows sat on the screen.
+    /// </para>
+    /// <para>
+    /// <b>Placed, because ⌥N has to land somewhere.</b> A window the registry still knows and no pane
+    /// holds is drawn in the rail as <c>closed</c>; giving it a number would spend a digit on a place
+    /// there is no way to go, and would shift every window after it for a row that names nothing.
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<WorkspaceWindow> PlacedWindows =>
+        _windows.Values
+            .Where(w => Layout.FindWindow(w.Id) is not null)
+            .OrderBy(w => w.Sequence)
+            .ToList();
+
+    /// <summary>Files a window in the registry, giving it the next creation sequence.</summary>
+    private WorkspaceWindow Register(WorkspaceWindow window)
+    {
+        window.Sequence = ++_sequenceCounter;
+        _windows[window.Id] = window;
+        return window;
+    }
 
     /// <summary>Looks up a window by id, or null.</summary>
     public WorkspaceWindow? FindWindow(string id) => _windows.GetValueOrDefault(id);
@@ -61,8 +126,7 @@ public sealed class Workspace
             return existing;
         }
 
-        var window = new WorkspaceWindow(id, title, kind, sessionKey);
-        _windows[id] = window;
+        var window = Register(new WorkspaceWindow(id, title, kind, sessionKey));
         Layout.AddWindow(id, paneId);
         return window;
     }
@@ -78,8 +142,7 @@ public sealed class Workspace
         var id = SpawnWindowId(target);
         if (!_windows.TryGetValue(id, out var window))
         {
-            window = new WorkspaceWindow(id, target, WindowKind.Spawn, sessionKey);
-            _windows[id] = window;
+            window = Register(new WorkspaceWindow(id, target, WindowKind.Spawn, sessionKey));
             Layout.AddWindow(id, activate: false); // spawns open in the background and accrue unread
         }
 
