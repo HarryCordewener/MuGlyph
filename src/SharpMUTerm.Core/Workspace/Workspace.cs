@@ -172,9 +172,11 @@ public sealed class Workspace
             return false;
         }
 
-        // The owner's exact length, then the colon that closes it: anything shorter is not this encoding.
+        // The owner's exact length, then the colon that closes it: anything shorter is not this
+        // encoding. Written as `<=` rather than `< length + 1` so a declared length of int.MaxValue
+        // cannot overflow the comparison into passing and then index off the end.
         var owner = rest[(separator + 1)..];
-        if (owner.Length < length + 1 || owner[length] != ':')
+        if (owner.Length <= length || owner[length] != ':')
         {
             return false;
         }

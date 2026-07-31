@@ -107,6 +107,10 @@ public class SpawnWindowIdTests
     [Arguments("spawn:99:short:x")]
     [Arguments("spawn:+3:abc:x")]
     [Arguments("spawn: 3:abc:x")]
+    // A declared length at the top of the range: the bounds check has to be written so this cannot
+    // overflow into passing and then index off the end of the string.
+    [Arguments("spawn:2147483647:abc:x")]
+    [Arguments("spawn:99999999999999999999:abc:x")]
     public async Task WhatIsNotOneOfTheseIsRefused(string id)
     {
         await Assert.That(Workspace.TryReadSpawnWindowId(id, out _, out _)).IsFalse();
