@@ -130,18 +130,54 @@ public class SpawnWindowPerSessionTests
         await Assert.That(two.App.WindowTitleOf(Workspace.SpawnWindowId(Ann, "Public"))).IsEqualTo("Public");
         await Assert.That(two.App.WindowTitleOf(Workspace.SpawnWindowId(Bob, "Public"))).IsEqualTo("Public");
 
-        // The tab strip and the sidebar say the same, and neither says the session key.
+        // The tab strip and the sidebar say the same — asserted about *those two windows* rather than
+        // over the whole frame, so the test cannot pass because some unrelated surface happened to
+        // satisfy it.
+        //
+        // What must not leak is the *session key*. The character's own name is a different thing and is
+        // on the strip deliberately: a spawn tab reads "Ann - Public" precisely so two characters each
+        // capturing Public can be told apart — which is the feature this PR exists for. So the drawn
+        // title carries "Ann" and must never carry "Convergence.Ann".
         two.App.RenderNextFrame();
-        var tabs = string.Join("\n", two.App.PaneTabTitles.Values.SelectMany(t => t));
-        await Assert.That(tabs).Contains("Public");
-        await Assert.That(tabs).DoesNotContain(Bob);
 
-        // The rail's *visible* text, with the markup (and so the `win:<id>` click payloads) stripped:
-        // the id may carry the owner, the drawn row may not.
-        var drawn = string.Join("\n", two.App.RailLines.Select(StripMarkup));
-        await Assert.That(drawn).Contains("Public");
-        await Assert.That(drawn).DoesNotContain(Bob);
+        foreach (var owner in new[] { Ann, Bob })
+        {
+            var id = Workspace.SpawnWindowId(owner, "Public");
+
+            var pane = two.App.PaneIdOf(id);
+            await Assert.That(pane).IsNotNull().Because($"{owner}'s Public pane must be placed");
+
+            // Read through StripMarkup: the strip's labels are markup — #14 tints the tab a line
+            // arrived in — so the raw string carries colour tags around the name.
+            var tab = two.App.PaneTabTitles[pane!]
+                .Select(StripMarkup)
+                .SingleOrDefault(t => t.Contains("Public", StringComparison.Ordinal) &&
+                                      t.Contains(CharacterOf(owner), StringComparison.Ordinal));
+
+            await Assert.That(tab).IsNotNull().Because($"{owner}'s Public pane must have a tab naming it");
+            await Assert.That(tab!)
+                .DoesNotContain(owner)
+                .Because("the id carries the session key; the tab the reader sees must not");
+
+            // The rail row is found by its `win:<id>` click payload — which does carry the owner — and
+            // then read for what it *draws*, which must not. Only the active character's window rows are
+            // drawn, so exactly one of the two is on screen.
+            var row = two.App.RailLines.SingleOrDefault(l => l.Contains("win:" + id, StringComparison.Ordinal));
+            if (row is null)
+            {
+                continue;
+            }
+
+            var drawn = StripMarkup(row);
+            await Assert.That(drawn).Contains("Public");
+            await Assert.That(drawn)
+                .DoesNotContain(owner)
+                .Because("the id carries the session key; the row the reader sees must not");
+        }
     }
+
+    /// <summary>The character half of a <c>World.Character</c> session key.</summary>
+    private static string CharacterOf(string sessionKey) => sessionKey[(sessionKey.IndexOf('.') + 1)..];
 
     /// <summary>
     /// The id is stable across a reconnect: the same character dropping and dialling back in keeps the

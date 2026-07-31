@@ -63,7 +63,11 @@ public class SpawnWindowIdMigrationTests
         await Assert.That(window.Title).IsEqualTo("Chat");
         await Assert.That(window.SessionKey).IsEqualTo("Aetherfall.Corvid");
         await Assert.That(window.OwnerLabel).IsEqualTo("Corvid");
-        await Assert.That(window.CapturePattern).IsEqualTo(@"^\[Chat\]");
+
+        // There is no CapturePattern to assert any more: the capture header it fed was removed with the
+        // spawn pane's dim "⇱ capture …" row, and the field went with it. A v4 document may still carry
+        // the property — the fixture below does — and System.Text.Json drops what it cannot map, which is
+        // the behaviour that lets an old config load at all.
 
         await Assert.That(config.LastSession.Root.Tabs).IsEquivalentTo(new[] { "main", CorvidsChat });
     }
