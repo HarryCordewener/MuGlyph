@@ -8,6 +8,7 @@ using SharpMUTerm.Core.Input;
 using SharpMUTerm.Core.Logging;
 using SharpMUTerm.Core.Session;
 using SharpMUTerm.Core.Telnet;
+using SharpMUTerm.Core.Telnet.Mssp;
 using SharpMUTerm.Core.Text;
 using SharpMUTerm.Core.Transport;
 using SharpMUTerm.Core.Theming;
@@ -223,6 +224,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private readonly CommandPalette _palette;
     private readonly SettingsOverlay _settings;
 
+    /// <summary>
+    /// The settings overlay, so a headless test can drive a key into an open screen and ask what
+    /// happened. It is the same seam <c>SimulateKey</c> exists for and for the same reason: the
+    /// framework only pumps input inside <c>Run()</c>, which no test enters.
+    /// </summary>
+    internal SettingsOverlay Settings => _settings;
+
     /// <summary>The ⌃P ▸ <c>Show client messages</c> viewer over the diagnostics log.</summary>
     private readonly MessageLogOverlay _messageLog;
 
@@ -326,6 +334,16 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private readonly RestoreLog? _restore;
 
+    /// <summary>
+    /// Every server's last MSSP report, which is what the F5 ▸ <c>i</c> INFO screen reads. Never null,
+    /// and that is the difference from the three above rather than an inconsistency with them: a cache
+    /// built with no path is memory-only <em>by construction</em> — it reads nothing and writes nothing —
+    /// so the guarantee those three get from a null check, this one gets from the object it is handed.
+    /// A structural guarantee beats a check at every use site, and there is exactly one use site here
+    /// that a check could be forgotten at anyway. Only <c>Program</c> hands one a path.
+    /// </summary>
+    private readonly MsspCache _mssp;
+
     /// <summary>The pane the live mouse drag is hovering, and the edge it would split — null when idle.</summary>
     private string? _dragTargetPaneId;
     private Edge? _dragEdge;
@@ -388,6 +406,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// has no business creating those. It is also what keeps the demo scene honest — a
     /// <c>--demo-config</c> snapshot would otherwise restore <em>your</em> panes into the demo's.
     /// </param>
+    /// <param name="mssp">
+    /// Where each server's MSSP report is kept between launches, or null for a memory-only cache — which
+    /// is the default, and is what every test and every snapshot gets. It differs from the three
+    /// parameters above in one way that matters: the *field* is never null, because a memory-only
+    /// <see cref="MsspCache"/> is a working cache that happens to own no file. The INFO screen therefore
+    /// needs no "is there a cache" branch, and a snapshot can seed a report through the same writer a
+    /// live session uses without any of it reaching disk.
+    /// </param>
     public SharpMUTermApp(
         AppConfiguration config,
         TerminalCapabilities capabilities,
@@ -396,12 +422,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         ClientDiagnostics? diagnostics = null,
         Action<AppConfiguration>? save = null,
         string? logRoot = null,
-        RestoreLog? restore = null)
+        RestoreLog? restore = null,
+        MsspCache? mssp = null)
     {
         _config = config;
         _save = save;
         _logRoot = string.IsNullOrWhiteSpace(logRoot) ? null : logRoot;
         _restore = restore;
+        _mssp = mssp ?? new MsspCache();
         _capabilities = capabilities;
         _time = time ?? TimeProvider.System;
         _diagnostics = diagnostics ?? ClientDiagnostics.InMemory();
@@ -964,6 +992,32 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _settings.OpenForSnapshot(ConsoleKey.F5, WorldsScreen());
             _settings.SimulateKey(Stroke('\0', ConsoleKey.Delete));
             _settings.SimulateKey(Stroke('\0', ConsoleKey.Escape));
+        }
+
+        // The MSSP report, reached the only way a user can reach it: open F5 and press `i` on the
+        // selected world. Nothing about the screen is faked here — the key runs the real button, which
+        // opens the real binding over the real overlay.
+        //
+        // Three views because the screen has three states and two of them are empty ones that must not
+        // look alike. `mssp` seeds a report through the live writer; `mssp-none` only records a
+        // connection, which is the "connected and this server publishes no MSSP" arm; `mssp-never`
+        // seeds nothing at all, which is the arm a world you have not dialled is in.
+        if (view is not null && view.StartsWith(MsspScreenRenderer.View, StringComparison.OrdinalIgnoreCase))
+        {
+            var world = _config.Worlds.Count > 0 ? _config.Worlds[0] : null;
+            if (world is not null && !view.EndsWith("-never", StringComparison.OrdinalIgnoreCase))
+            {
+                _mssp.RecordConnection(world.Host, world.Port, _time.GetUtcNow());
+                if (!view.EndsWith("-none", StringComparison.OrdinalIgnoreCase))
+                {
+                    CaptureMssp(world, DemoScene.MsspReport());
+                }
+            }
+
+            _settings.OpenForSnapshot(ConsoleKey.F5, WorldsScreen());
+            _settings.SimulateKey(Stroke('i', ConsoleKey.I));
+            SyncInputWidth();
+            return RenderFrame();
         }
 
         // Settings screens (composed-control or markup — SettingsView hands back a control factory
@@ -1633,10 +1687,24 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             if (e.State == ConnectionState.Connected)
             {
                 ReportAutomation(session);
+
+                // Recorded on the *connection*, not on the report — because "we reached this server and
+                // it published nothing" is a fact the INFO screen has to be able to state, and it is
+                // only ever knowable from the connection having happened. MSSP arrives on the read loop
+                // after this transition, so a server that does publish overwrites nothing: it adds a
+                // report beside a connection time that is already here.
+                _mssp.RecordConnection(session.World.Host, session.World.Port, _time.GetUtcNow());
             }
 
             UpdateStatus();
         });
+
+        // MSSP is captured per world and kept, so the report is readable while nothing is connected —
+        // which is when it is wanted, since the question the screen answers is "what is this world"
+        // asked before or between sessions. It goes through CaptureMssp rather than straight into the
+        // cache so the snapshot's demo report is written by the same code the wire is (see DemoScene's
+        // remarks on state a live session writes).
+        session.MsspReceived += (_, e) => OnUi(() => CaptureMssp(session.World, e.Data));
         session.GmcpReceived += (_, e) => OnUi(() =>
         {
             if (_stats.Update(e.Package, e.Json))
@@ -3812,6 +3880,54 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// character's trigger sets → the selected world's security checkboxes), seeded on whatever is
     /// connected so the screen opens where the user already is.
     /// </summary>
+    /// <summary>
+    /// Files one server's MSSP report under the world it came from. The one writer: the live
+    /// subscription in <see cref="BindSession"/> and the snapshot's demo report both go through it, so
+    /// the endpoint a frame is rendered from and the endpoint a connection files under cannot be
+    /// different strings — the gap that has hidden three separate bugs in the demo scene already.
+    /// </summary>
+    internal void CaptureMssp(WorldDefinition world, MsspData report)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+        _mssp.RecordReport(world.Host, world.Port, report, _time.GetUtcNow());
+    }
+
+    /// <summary>
+    /// Opens the read-only MSSP report for a world, over the screen that asked for it. Bounds-checked
+    /// against the live list rather than trusted, because the index was captured when the WORLDS pane's
+    /// buttons were built and a keystroke between then and now could have deleted the row.
+    /// </summary>
+    private void OpenMsspScreen(int world)
+    {
+        if (world < 0 || world >= _config.Worlds.Count)
+        {
+            return;
+        }
+
+        _settings.OpenDetail(MsspScreen(_config.Worlds[world]));
+    }
+
+    /// <summary>
+    /// The MSSP report screen for one world. A full <see cref="ScreenBinding"/> like every other screen
+    /// — the same session, the same key table, the same overlay — because that is what gives it
+    /// scrolling, a cursor and headless key simulation for nothing. Its model offers no fields, no
+    /// toggles and no removals, so the header derives none of those hints.
+    /// </summary>
+    private ScreenBinding MsspScreen(WorldDefinition world)
+    {
+        var observation = _mssp.Find(world.Host, world.Port);
+        var session = new SettingsSession(_ => MsspScreenRenderer.Model(
+            world, observation, _time.GetUtcNow(), _system.DesktopDimensions.Width));
+
+        return new ScreenBinding(session, () => MsspScreenView.Build(
+            world,
+            observation,
+            _time.GetUtcNow(),
+            _system.DesktopDimensions.Width,
+            session.Focus(),
+            _system.DesktopDimensions.Height));
+    }
+
     private ScreenBinding WorldsScreen() => WorldsScreen(WorldsScreenRenderer.FKey, onCharacters: false);
 
     /// <summary>
@@ -3838,7 +3954,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _config.TriggerSets,
             selection.SelectionIn(WorldsScreenRenderer.WorldsPane),
             selection.SelectionIn(WorldsScreenRenderer.CharactersPane),
-            selection.SelectionIn(WorldsScreenRenderer.TriggerSetsPane)),
+            selection.SelectionIn(WorldsScreenRenderer.TriggerSetsPane),
+            OpenMsspScreen),
             SaveConfiguration);
         session.Selection.Seed(WorldsScreenRenderer.WorldsPane, ActiveWorldIndex());
         session.Selection.Seed(WorldsScreenRenderer.CharactersPane, ActiveCharacterIndex());
@@ -3856,7 +3973,8 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             session.Focus(),
             fkey,
             session.Selection.SelectionIn(WorldsScreenRenderer.TriggerSetsPane),
-            _system.DesktopDimensions.Height));
+            _system.DesktopDimensions.Height,
+            info: true));
     }
 
     /// <summary>

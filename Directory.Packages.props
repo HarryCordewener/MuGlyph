@@ -22,13 +22,6 @@
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.2" />
 
     <!--
-      A console sink, used by exactly one project: SharpMUTerm.Crawler, a headless tool whose output is
-      its terminal. Emphatically not for the TUI, which owns the screen and where a console sink would
-      paint over the display (see CLAUDE.md).
-    -->
-    <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.2" />
-
-    <!--
       Client diagnostics: Serilog behind Microsoft.Extensions.Logging. Only the Tui's composition root
       (ClientDiagnostics) references Serilog types; everything else logs through ILogger. Sinks are a
       rolling file and an in-memory buffer — deliberately never a console sink, which would write to

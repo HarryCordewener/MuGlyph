@@ -96,11 +96,13 @@ public sealed class TelnetSessionOptions
     /// reached if the server volunteers it. A great many servers that fully support MSSP do not
     /// volunteer anything — they answer <c>IAC DO MSSP</c> and are otherwise silent, which is why the
     /// protocol's own reference client (TinTin++'s <c>#session mssp</c>) asks rather than listens. A
-    /// crawler that only listens simply does not see those servers, and reports them as having no MSSP.
+    /// client that only listens simply does not see those servers, and its INFO screen reports them as
+    /// publishing no MSSP — which is a different and wronger claim than "we never asked".
     /// </para>
     /// <para>
-    /// This is negotiation, not traffic: <c>IAC DO</c> is the client half of the option handshake and is
-    /// the only category of byte a crawler may put on the wire.
+    /// This is negotiation, not traffic: <c>IAC DO</c> is the client half of the option handshake, it
+    /// costs three bytes once per connection, and a server that does not implement the option answers
+    /// <c>IAC WONT</c> and is no worse off.
     /// </para>
     /// </summary>
     public IReadOnlyList<byte> RequestOptions { get; init; } = [];

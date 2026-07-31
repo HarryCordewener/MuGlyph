@@ -40,6 +40,15 @@ Multi-world tabs · regex triggers · aliases · macros/keybinds · spawns · ma
 inline image viewer · puppets · multiple input windows · scripting (Lua) · TLS + IPv6 ·
 HTML logging · GMCP / MSDP / MSSP / MCCP · MXP + Pueblo · Unicode/emoji.
 
+**MSSP is in and readable.** Every server's own description of itself — name, players, uptime,
+codebase, contact, website, and the rest of what it chose to publish, official variables and invented
+ones alike — is captured on connect, kept between launches, and read from **F5 ▸ `i`** on the selected
+world. (Capture is bounded and stripped of control characters, because the report comes off the wire
+from a stranger; the limits are far above anything a real server sends.) It says when it was captured,
+because a player count from last week is not a player count; and it distinguishes a world you have
+never dialled from a server that answered and publishes no MSSP, which is the ordinary case on a MUSH
+and not a fault.
+
 ## Solution layout (planned)
 
 | Project | Responsibility |

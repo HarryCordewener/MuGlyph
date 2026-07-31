@@ -49,7 +49,7 @@ fallbacks) for inline images/maps.
   paged off an ephemeral per-session cache under `$XDG_CACHE_HOME`; absolute line indices, ranged
   reads capped at `MaxRangeLines`, and any disk failure degrades to memory-only. Emphatically **not**
   the session log — that stays `PlainTextLogSink`/`HtmlLogSink`, opt-in and kept),
-  `TcpTransport` (TLS + IPv6), `TelnetSession` (wraps TelnetNegotiationCore **2.6.5**),
+  `TcpTransport` (TLS + IPv6), `TelnetSession` (wraps TelnetNegotiationCore **2.7.0**),
   trigger/alias/macro engines + `IntervalScheduler`, plain-text + HTML logging, versioned JSON
   config (worlds → characters + shared trigger sets, with migration),
   `Theme`/`ThemeLibrary`, and `WorldSession`/`SessionManager` orchestration.
@@ -103,6 +103,26 @@ fallbacks) for inline images/maps.
   Restored content is closed off by one `RestoreBarRenderer` row and the lines themselves are left
   alone. Restoring 3,000 lines costs ~18 ms before the first frame. `restore:` is the third member of
   the `save:`/`logRoot:` family — **null by default, so no test and no snapshot owns one**.
+- **Every server's MSSP report is kept, and the INFO screen reads it** (`MsspCache`, Core; `mssp.json`
+  beside `config.json`, keyed by `host:port`; F5 ▸ `i`). Fourth of the `save:`/`logRoot:`/`restore:`
+  family with **one deliberate difference**: the constructor parameter is null by default like the
+  others, but the *field* never is — a `MsspCache` with no path is memory-only **by construction**, so
+  the "a snapshot writes nothing" guarantee is a property of the object rather than a null check at
+  each use site, and the screen needs no "is there a cache" branch. Three decisions worth not
+  relitigating. **Keyed by endpoint, not world**: MSSP describes a *server*, a world name is a
+  user-editable label two entries may share, and a rename must not lose a report. **A second report
+  replaces the first**: MSSP is not a delta protocol — a server sends its whole table once per
+  connection — so a merge would keep variables it has stopped publishing and would leave a report that
+  is a snapshot of no moment that existed. **Two timestamps**, because there are *three* states and two
+  would only separate two: `ConnectedAt` is written on the `Connected` transition and `ObservedAt` only
+  when a report arrives, so "never dialled", "dialled and publishes nothing" and "here is the report,
+  as of…" are three different screens. Report capture is bounded at the door
+  (`MaxVariables`/`MaxValuesPerVariable`/`MaxValueLength`), not only at the renderer — a value only the
+  screen trimmed would still be full size on disk and in memory on every later launch.
+- **`IAC DO MSSP` is sent on connect** (`TelnetSessionOptions.RequestOptions`, set by `WorldSession`'s
+  session factory). The library opens with `IAC WILL NAWS` and nothing else, so a server that supports
+  MSSP but waits to be asked is never asked — and the INFO screen would then report it as publishing
+  none, which is a claim about the server made out of our own silence.
 - **A launch connects nothing unless it is told to** (`StartupConnections.Resolve`, Core). A host on the
   command line wins outright; otherwise it is every character with `ConnectAtStartup` (F5's `at start`),
   in configuration order; otherwise none, and the client says which of the two empty states it is in.
@@ -131,8 +151,8 @@ fallbacks) for inline images/maps.
   ```bash
   dotnet run -c Release --project tests/SharpMUTerm.Core.Tests </dev/null
   ```
-  There are six: Core, Graphics, Scripting, Web, Tui, Crawler. Primary signal is
-  `dotnet build SharpMUTerm.slnx` plus all six green and warning-free.
+  There are five: Core, Graphics, Scripting, Web, Tui. Primary signal is
+  `dotnet build SharpMUTerm.slnx` plus all five green and warning-free.
 - **Building against the local SharpConsoleUI clone surfaces 2 NuGet advisory warnings** for
   AngleSharp. They are the framework's, not ours; a build against the package has none.
 
@@ -163,7 +183,11 @@ python3 tools/ansi_frame_to_image.py frame.ansi frame.html   # or .svg
   `messages`, `quit`, `connections` (**two connections on one world** — the one view where the header's
   fraction, the rail's dots and the quit prompt's count are all visible together and all have to agree;
   every other view has at most one character connected per world, which is what hid a header dividing
-  connections by *worlds* and a quit prompt reducing them to distinct world names), `deletions`, `web`,
+  connections by *worlds* and a quit prompt reducing them to distinct world names), `deletions`,
+  `mssp`/`mssp-none`/`mssp-never` (the **three** states of the F5 ▸ `i` server-information report —
+  a report, a server that answered and publishes none, and a world nothing has dialled; all three
+  reached by driving the real `i` into a real F5, and all three needed because the two empty ones are
+  the pair it is easy to conflate), `web`,
   `rail-long`, `scrollback`, `scrollback-up`, `freeze-scrollback`, `prefix-panel` (the ⌃B which-key
   panel — the state `prefix` becomes a few hundred milliseconds later, if no key has arrived),
   `focus`/`focus-moved` (a split *and* a second command line — the one geometry showing a focused pane
@@ -550,7 +574,7 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
 
 ## Other dependency notes
 
-- **TelnetNegotiationCore 2.6.5** (repo owner is its author — extend it by PR rather than working
+- **TelnetNegotiationCore 2.7.0** (repo owner is its author — extend it by PR rather than working
   around it). Fluent builder API; negotiates MCCP/MSDP/MXP itself; ships the keepalive interpreter
   (`WithKeepAlive(TimeSpan?, …)`, default 30s, clamped to 1s–24h). `TelnetSession` sets the
   init-only `CallbackOnByteAsync` reflectively to see raw bytes including unterminated prompts — a
@@ -559,19 +583,26 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   payload _parsing_ stay our layer.**
 - **MSSP is read by the library, not by us — since 2.6.5, and that is the standing example of the
   rule above.** 2.6.0's reader destroyed the protocol's own array notation inside the library:
-  `PORT "80" "23" "4201"` arrived as the integer `80234201`, `REFERRAL` (array-only, and the whole
-  reason a crawler connects) arrived null, booleans failed to bind from `1`/`0`, `CHARSET` and every
-  invented name were dropped, `CRAWL_DELAY`/`MINIMUM_AGE` bound to nothing, and a variable with no
-  value wedged MSSP for the rest of the connection. We carried a byte-level `MsspSubnegotiationParser`
-  for exactly as long as that was true; the fix went upstream (PR #56) and the parser is **deleted**.
-  Do not re-add one. `MSSPConfig.Variables` is now an ordered name → value-**list** map,
-  `MsspData.From` projects it, and `MsspData` is a projection with **no parsing in it** — what it adds
-  is ours: `REFERRAL` as crawlable `MsspHost`s, `CRAWL DELAY` −1 as "no preference", ports validated
-  as ports. Two upstream defects remain open and are pinned by name in `MsspParsingTests`: MSSP fields
-  are decoded as **ASCII** rather than the negotiated charset (a non-ASCII `NAME` comes back as
-  question marks, one per byte), and an escaped `IAC IAC` inside a value **loses the literal byte**.
-  MSSP also has no payload size cap upstream — `SubnegotiationBuffer` guards GMCP, MSDP and CHARSET's
-  TTABLE, but not this — so a hostile server can make the crawler buffer as much as it likes.
+  `PORT "80" "23" "4201"` arrived as the integer `80234201`, `REFERRAL` (array-only) arrived null,
+  booleans failed to bind from `1`/`0`, `CHARSET` and every invented name were dropped,
+  `CRAWL_DELAY`/`MINIMUM_AGE` bound to nothing, and a variable with no value wedged MSSP for the rest
+  of the connection. We carried a byte-level `MsspSubnegotiationParser` for exactly as long as that was
+  true; the fix went upstream (PR #56) and the parser is **deleted**. Do not re-add one.
+  `MSSPConfig.Variables` is now an ordered name → value-**list** map, `MsspData.From` projects it, and
+  `MsspData` is a projection with **no parsing in it** — what it adds is ours: ports validated as
+  ports, and `-1` read as the specification's "data not available" rather than as minus one. Two
+  further upstream defects — MSSP fields decoded as **ASCII** rather than the negotiated charset, and
+  an escaped `IAC IAC` inside a value **losing the literal byte** — were fixed in **2.7.0**, and
+  `MsspParsingTests` now pins the fixed behaviour by name rather than the bugs. MSSP still has no
+  payload size cap upstream — `SubnegotiationBuffer` guards GMCP, MSDP and CHARSET's TTABLE, but not
+  this — so a hostile server can make a session buffer as much as it likes.
+- **MSSP is asked for, not waited for, and the client surfaces it** (`TelnetSessionOptions.RequestOptions`
+  / `MsspOption`; `MsspCache`; the F5 ▸ `i` INFO screen). The library's opening negotiation is
+  `IAC WILL NAWS` and nothing else, so MSSP is only ever reached if the server volunteers it — and a
+  great many servers that fully support MSSP answer `IAC DO MSSP` and volunteer nothing, which is why
+  the protocol's own reference client asks. `WorldSession`'s session factory therefore sets
+  `RequestOptions = [MsspOption]`. Do not "simplify" that away: without it the INFO screen is empty
+  against most of the servers that have the data.
 - **Text encoding is CHARSET's answer, not a setting** (`SessionEncoding`, `TelnetSession.CurrentEncoding`).
   A world's `encoding` is `auto` by default — state the app's `CharsetOrder`, decode with whatever RFC
   2066 settles on — and naming one is an *override*: still offered at the head of the order so a
@@ -625,7 +656,7 @@ Planned solution layout:
 | `SharpMUTerm.Graphics` | Kitty/Sixel encoders, capability probe, half-block fallback, `InlineImagePolicy` (no UI deps) |
 | `SharpMUTerm.Scripting` | MoonSharp host + scripting API |
 | `SharpMUTerm.Tui` | SharpConsoleUI application |
-| `*.Tests` (Core, Graphics, Scripting, Web, Tui, Crawler) | TUnit |
+| `*.Tests` (Core, Graphics, Scripting, Web, Tui) | TUnit |
 
 ## Milestone M1 — first task (delivered)
 
@@ -640,7 +671,7 @@ Kept for context; **M1 is done** (see *Repository state* above). As originally s
 
 ## Verification
 
-- Primary signal: `dotnet build SharpMUTerm.slnx` plus all six suites (see *Building and testing*).
+- Primary signal: `dotnet build SharpMUTerm.slnx` plus all five suites (see *Building and testing*).
   Keep coverage in `SharpMUTerm.Core.Tests` — ANSI/SGR parser, telnet round-trips, engines.
 - **The TUI is verifiable headlessly** via the snapshot pipeline above; a claim about layout or
   chrome should be backed by a rendered frame you actually looked at, not by reading the markup.

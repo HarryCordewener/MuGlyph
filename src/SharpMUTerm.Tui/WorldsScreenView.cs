@@ -25,7 +25,8 @@ internal static class WorldsScreenView
         ScreenFocus? focus = null,
         string fkey = WorldsScreenRenderer.FKey,
         int selectedSet = 0,
-        int height = 0)
+        int height = 0,
+        bool info = false)
     {
         // Both panes end in button rows, so a raw cursor can point past its list; resolving once here
         // keeps every block of the screen agreeing on which world and character are selected.
@@ -33,8 +34,10 @@ internal static class WorldsScreenView
             WorldsScreenRenderer.Resolve(worlds, selectedWorld, selectedCharacter);
         var accent = WorldsScreenRenderer.AccentFor(worlds, selectedWorld);
 
+        // The model is rebuilt here only to derive the header's hints, so the INFO row's presence is all
+        // it needs of the action — a no-op stands in for it, and the delegate stays with the session.
         var model = WorldsScreenRenderer.Model(
-            worlds, triggerSets, selectedWorld, selectedCharacter, selectedSet);
+            worlds, triggerSets, selectedWorld, selectedCharacter, selectedSet, info ? _ => { } : null);
         var header = ScreenChrome.Band(
             WorldsScreenRenderer.HeaderLine(width, model, focus, fkey), ScreenPalette.HeaderBg);
         var footer = ScreenChrome.Band(
@@ -60,7 +63,7 @@ internal static class WorldsScreenView
 
         // Body: WORLDS list │ detail, as two real columns.
         var worldsCol = ScreenChrome.Stretch(new MarkupControl(
-            WorldsScreenRenderer.WorldsColumn(worlds, selectedWorld, focus, rows).ToList()));
+            WorldsScreenRenderer.WorldsColumn(worlds, selectedWorld, focus, rows, info).ToList()));
         var detailCol = ScreenChrome.Stretch(new MarkupControl(
             WorldsScreenRenderer
                 .DetailColumn(worlds, triggerSets, selectedWorld, selectedCharacter, accent, focus, rows)

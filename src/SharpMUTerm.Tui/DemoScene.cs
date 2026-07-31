@@ -1,6 +1,7 @@
 using SharpMUTerm.Core.Automation;
 using SharpMUTerm.Core.Configuration;
 using SharpMUTerm.Core.Telnet;
+using SharpMUTerm.Core.Telnet.Mssp;
 using SharpMUTerm.Core.Text;
 using SharpMUTerm.Core.Workspaces;
 
@@ -79,6 +80,53 @@ internal static class DemoScene
             Characters = { new CharacterDefinition { Name = "Thistle" } },
         });
     }
+
+    /// <summary>
+    /// The MSSP report the demo's Aetherfall is pretended to have published, for the <c>mssp</c>
+    /// snapshot view.
+    /// <para>
+    /// <b>It is written through <c>SharpMUTermApp.CaptureMssp</c> — the same method the live
+    /// subscription calls — and not poked into a cache here.</b> The demo has no session, so anything a
+    /// session writes has to be written by hand; three separate bugs have hidden in exactly that gap,
+    /// and the rule this file already carries for the main window's title is the rule here: pin the
+    /// faked state against the live writer rather than against a second copy of what it does.
+    /// </para>
+    /// <para>
+    /// The contents are chosen to make the screen's own hard cases visible in one frame: a multi-valued
+    /// <c>PORT</c> and <c>CODEBASE</c> (drawn as the lists they are, not as their first value), a
+    /// <c>-1</c> world count (drawn as <em>unknown</em>), an <c>UPTIME</c> that is a Unix timestamp
+    /// (drawn as a duration), an official variable with no strongly typed reading (<c>CHARSET</c>), an
+    /// unofficial one that looks standard (<c>PUEBLO</c>), and one nothing anywhere has heard of.
+    /// </para>
+    /// </summary>
+    public static MsspData MsspReport() => MsspData.From(
+    [
+        Variable("NAME", "Aetherfall"),
+        Variable("PLAYERS", "37"),
+        Variable("UPTIME", "1735689600"),
+        Variable("CODEBASE", "PennMUSH 1.8.8", "SharpMUSH 1.0"),
+        Variable("FAMILY", "TinyMUD"),
+        Variable("HOSTNAME", "aetherfall.mux"),
+        Variable("PORT", "4200", "4201"),
+        Variable("SSL", "4201"),
+        Variable("CHARSET", "UTF-8"),
+        Variable("CONTACT", "wizards@aetherfall.mux"),
+        Variable("WEBSITE", "https://aetherfall.mux/"),
+        Variable("GENRE", "Fantasy"),
+        Variable("STATUS", "Live"),
+        Variable("MINIMUM AGE", "16"),
+        Variable("LANGUAGE", "English"),
+        Variable("LOCATION", "United Kingdom"),
+        Variable("ROOMS", "-1"),
+        Variable("ANSI", "1"),
+        Variable("UTF-8", "1"),
+        Variable("PUEBLO", "1"),
+        Variable("DISCORD", "https://discord.gg/aetherfall"),
+        Variable("CORVID SPECIFIC", "nevermore"),
+    ]);
+
+    private static KeyValuePair<string, IReadOnlyList<string>> Variable(string name, params string[] values) =>
+        new(name, values);
 
     private static void AddTriggerSets(AppConfiguration config)
     {

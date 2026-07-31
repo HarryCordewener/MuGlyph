@@ -29,11 +29,9 @@ public static class MsspVariables
     public const string Charset = "CHARSET";
     public const string Codebase = "CODEBASE";
     public const string Contact = "CONTACT";
-    public const string CrawlDelay = "CRAWL DELAY";
     public const string Hostname = "HOSTNAME";
     public const string MinimumAge = "MINIMUM AGE";
     public const string Port = "PORT";
-    public const string Referral = "REFERRAL";
     public const string Ssl = "SSL";
     public const string Website = "WEBSITE";
 

@@ -1,7 +1,7 @@
 using System.Threading.Channels;
 using SharpMUTerm.Core.Transport;
 
-namespace SharpMUTerm.Crawler.Tests.Support;
+namespace SharpMUTerm.Core.Tests.Telnet;
 
 /// <summary>
 /// An in-memory transport standing in for a server: queue bytes to be delivered, capture everything
@@ -10,7 +10,7 @@ namespace SharpMUTerm.Crawler.Tests.Support;
 /// This is a *server*, not just a pipe. The MSSP handshake is a conversation — the server says
 /// <c>IAC WILL MSSP</c> and only sends its report once the client has answered <c>IAC DO MSSP</c> — so
 /// a transport that replayed a fixed script would test the telnet layer's reader against bytes no real
-/// server would have sent yet, and would never exercise the negotiation the crawler depends on.
+/// server would have sent yet, and would never exercise the negotiation the client depends on.
 /// </para>
 /// </summary>
 internal sealed class ScriptedTransport : ITransport

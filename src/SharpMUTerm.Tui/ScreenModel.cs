@@ -119,6 +119,38 @@ internal readonly record struct ScreenButton(
     }
 
     /// <summary>
+    /// What a read-only detail screen's key is drawn as, for the same reason
+    /// <see cref="RemoveKeyLabel"/> is: the row naming it is not a cursor stop, so a chip would be an
+    /// affordance for something the keyboard cannot land on.
+    /// </summary>
+    internal const string DetailKeyLabel = "i";
+
+    /// <summary>
+    /// Opens a read-only report about the selected row. It is a <see cref="ScreenButton"/> so that the
+    /// row the screen draws and the key that runs it come from one place, exactly as a removal does —
+    /// but it changes nothing, so it returns no undo and moves no cursor, and
+    /// <see cref="SettingsSession"/> runs it <em>outside</em> <see cref="ScreenEdits"/>. Navigation is
+    /// not an edit: routing it through the edit log would persist the configuration and re-periodise
+    /// every running timer every time somebody looked at a world.
+    /// </summary>
+    /// <param name="target">The row this would report on, named on the drawn key-hint row.</param>
+    /// <param name="open">Puts the report on the screen.</param>
+    internal static ScreenButton Detail(string target, Action open)
+    {
+        ArgumentNullException.ThrowIfNull(open);
+
+        return new ScreenButton(
+            DetailKeyLabel,
+            () =>
+            {
+                open();
+                return new ScreenPress(null);
+            },
+            ScreenButtonKind.Detail,
+            target);
+    }
+
+    /// <summary>
     /// Removes the item at <paramref name="index"/>, restoring it *at that index* on undo. The cursor
     /// stays on the same ordinal, which is now whatever followed the deleted row — the same place the
     /// eye is. <paramref name="offset"/> means what it does on <see cref="Add"/>.
@@ -173,6 +205,16 @@ internal enum ScreenButtonKind
     /// Aetherfall</c>) rather than as a chip, because it is not a cursor stop — see <see cref="ScreenModel.Sizes"/>.
     /// </summary>
     Remove,
+
+    /// <summary>
+    /// Opens a read-only report about the selected row (<c>i  info on Aetherfall</c>), changing nothing.
+    /// It is drawn and navigated exactly as a removal is, and for the identical reason: the action has a
+    /// <em>target</em>, and an action with a target must not steal the cursor from the thing it acts on
+    /// (<see cref="ScreenModel.Sizes"/>). A chip walked to with ↑↓ would drag the selection to the last
+    /// row of the list, so an INFO chip could only ever report on the last world — the same defect as
+    /// "only the last world can be deleted", one feature later.
+    /// </summary>
+    Detail,
 }
 
 /// <summary>
@@ -270,16 +312,22 @@ internal sealed class ScreenModel
     internal IReadOnlyList<int> Sizes { get; }
 
     /// <summary>
-    /// How many of a pane's rows the cursor may occupy: all of them but the destructive buttons at the
-    /// end. Removals are appended last on every screen (a pane reads list → add → duplicate → remove), so
-    /// this is a count and not a set of holes — the cursor never has to skip a row in the middle, and
-    /// <see cref="ScreenSelection"/> stays a plain clamp. <see cref="ScreenReachabilityTests"/> pins that
-    /// the shape really is that way on all eight screens.
+    /// How many of a pane's rows the cursor may occupy: all of them but the <em>targeted</em> buttons at
+    /// the end. Those are appended last on every screen (a pane reads list → add → duplicate → info →
+    /// remove), so this is a count and not a set of holes — the cursor never has to skip a row in the
+    /// middle, and <see cref="ScreenSelection"/> stays a plain clamp. <c>ScreenModelTests</c> pins the
+    /// count against the drawn rows, and <c>MsspScreenTests.TheInfoRowIsDrawnAndIsNotSomewhereTheCursorCanGo</c>
+    /// pins it for the <see cref="ScreenButtonKind.Detail"/> half.
+    /// <para>
+    /// <b>Both non-stop kinds must stay trailing.</b> A <see cref="ScreenButtonKind.Detail"/> row put
+    /// anywhere but among them gives the cursor a hole, and the clamp becomes a skip list.
+    /// </para>
     /// </summary>
     private static int Stops(IReadOnlyList<ScreenRow> rows)
     {
         var count = rows.Count;
-        while (count > 0 && rows[count - 1].Button is { Kind: ScreenButtonKind.Remove })
+        while (count > 0
+            && rows[count - 1].Button is { Kind: ScreenButtonKind.Remove or ScreenButtonKind.Detail })
         {
             count--;
         }
@@ -438,6 +486,53 @@ internal sealed class ScreenModel
         foreach (var row in _panes[pane])
         {
             if (row.Button is { Kind: ScreenButtonKind.Remove } button)
+            {
+                return button;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Whether any pane offers a read-only report on the selected row. The <c>i info</c> hint is derived
+    /// from this exactly as <c>Del remove</c> is derived from <see cref="HasRemovableRow"/>: a screen
+    /// physically cannot advertise a letter key it does not answer, which matters more here than for
+    /// Delete because <c>i</c> is a letter and a screen that swallowed it silently would be indis-
+    /// tinguishable from one where the key was simply not wired.
+    /// </summary>
+    internal bool HasDetailRow
+    {
+        get
+        {
+            for (var pane = 0; pane < _panes.Length; pane++)
+            {
+                if (DetailIn(pane) is not null)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// A pane's read-only report button, or null when it has none — what <c>i</c> runs while the cursor
+    /// is on one of that pane's list rows. The same shape as <see cref="RemoveIn"/>, and scoped the same
+    /// way: a pane that does not offer the button does not answer the key, which is what keeps <c>i</c>
+    /// from meaning anything in a pane that has editable fields.
+    /// </summary>
+    internal ScreenButton? DetailIn(int pane)
+    {
+        if (pane < 0 || pane >= _panes.Length)
+        {
+            return null;
+        }
+
+        foreach (var row in _panes[pane])
+        {
+            if (row.Button is { Kind: ScreenButtonKind.Detail } button)
             {
                 return button;
             }

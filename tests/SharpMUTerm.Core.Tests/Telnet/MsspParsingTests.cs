@@ -1,36 +1,35 @@
 using System.Text;
+using SharpMUTerm.Core.Telnet;
 using SharpMUTerm.Core.Telnet.Mssp;
-using SharpMUTerm.Crawler.Model;
-using SharpMUTerm.Crawler.Probing;
-using SharpMUTerm.Crawler.Tests.Support;
 using TelnetNegotiationCore.Models;
 
-namespace SharpMUTerm.Crawler.Tests;
+namespace SharpMUTerm.Core.Tests.Telnet;
 
 /// <summary>
 /// What a server's MSSP report turns into, against payloads built byte by byte from the
-/// specification's own format and fed through a real telnet session.
+/// specification's own format and fed through a real <see cref="TelnetSession"/>.
 /// <para>
-/// <b>There is no MSSP parser in this repository any more.</b> These cases used to pin one, written
-/// because TelnetNegotiationCore's reader destroyed arrays, booleans and unknown variables before any
+/// <b>There is no MSSP parser in this repository.</b> These cases used to pin one, written because
+/// TelnetNegotiationCore's reader destroyed arrays, booleans and unknown variables before any
 /// consumer saw them. That is fixed upstream (2.6.5), so the same cases now run against the library's
 /// own <c>MSSPConfig.Variables</c> by way of <see cref="MsspData"/>, and prove the replacement keeps
-/// what the workaround kept. The two that <em>diverge</em> are named as such and say why.
+/// what the workaround kept. The two that <em>diverge</em> from the old behaviour are named as such
+/// and say why.
+/// </para>
+/// <para>
+/// The session is built the way a world's is — <see cref="TelnetSessionOptions.RequestOptions"/>
+/// carrying <see cref="TelnetSessionOptions.MsspOption"/>, so the client asks rather than waits — and
+/// the scripted server answers only a client that asked. These are therefore the pins for the INFO
+/// screen's supply as much as for the model.
 /// </para>
 /// </summary>
 public class MsspParsingTests
 {
-    private static MsspHost Host => MsspHost.Create("server.example.org", 4201)!;
-
-    private static CrawlOptions Options => new()
-    {
-        ConnectTimeout = TimeSpan.FromSeconds(5),
-        MsspTimeout = TimeSpan.FromSeconds(5),
-    };
+    private static readonly TimeSpan Patience = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// One server, one report: a scripted server offers MSSP, answers the crawler's <c>DO</c> with
-    /// <paramref name="entries"/>, and the report the probe came back with is returned.
+    /// One server, one report: a scripted server offers MSSP, answers the client's <c>DO</c> with
+    /// <paramref name="entries"/>, and the report the session raised is returned.
     /// </summary>
     private static Task<MsspData> Read(params (string Variable, string[] Values)[] entries) =>
         ReadRaw(MsspWire.Subnegotiation(entries));
@@ -40,11 +39,28 @@ public class MsspParsingTests
         var transport = new ScriptedTransport { Greeting = MsspWire.Offer(), Fragmented = fragmented }
             .RespondingToDo(MsspWire.Mssp, payload);
 
-        var result = await new TelnetMsspProbe(Options, _ => transport).ProbeAsync(Host, CancellationToken.None);
+        return await ReadFrom(transport)
+            ?? throw new InvalidOperationException("The session raised no MSSP report.");
+    }
 
-        return result.Outcome == CrawlOutcome.MsspReceived && result.Data is { } data
-            ? data
-            : throw new InvalidOperationException($"No MSSP report: {result.Outcome} ({result.Error}).");
+    /// <summary>
+    /// Connects a real session to <paramref name="transport"/> and returns the first MSSP report it
+    /// raises, or null when none arrives inside <see cref="Patience"/>. Null is a <em>result</em> here
+    /// rather than a failure: "this server publishes no MSSP" is one of the three states the INFO
+    /// screen has to tell apart, and one case below has that as its whole subject.
+    /// </summary>
+    private static async Task<MsspData?> ReadFrom(ScriptedTransport transport, TimeSpan? patience = null)
+    {
+        var received = new TaskCompletionSource<MsspData>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var session = new TelnetSession(
+            transport,
+            options: new TelnetSessionOptions { RequestOptions = [TelnetSessionOptions.MsspOption] });
+        session.MsspReceived += (_, e) => received.TrySetResult(e.Data);
+
+        await session.ConnectAsync();
+
+        var completed = await Task.WhenAny(received.Task, Task.Delay(patience ?? Patience));
+        return completed == received.Task ? await received.Task : null;
     }
 
     [Test]
@@ -77,11 +93,11 @@ public class MsspParsingTests
     [Test]
     public async Task TheReferralListArrivesAsAList()
     {
-        // REFERRAL is array-only and is what a crawler follows; 2.6.0 delivered it as null.
+        // REFERRAL is array-only; 2.6.0 delivered it as null. Nothing reads it by name any more — the
+        // INFO screen renders it among the rest — so what must survive is the array, whole and in order.
         var data = await Read(("REFERRAL", ["a.example.org 4000", "b.example.net 23", "2001:db8::5 4201"]));
 
-        await Assert.That(data["REFERRAL"]).Count().IsEqualTo(3);
-        await Assert.That(data.Referrals.Select(r => r.ToReferralString()))
+        await Assert.That(data["REFERRAL"])
             .IsEquivalentTo(new[] { "a.example.org 4000", "b.example.net 23", "2001:db8::5 4201" });
     }
 
@@ -184,16 +200,7 @@ public class MsspParsingTests
         var data = await Read(("  crawl   delay ", ["11"]));
 
         await Assert.That(data.ContainsKey("CRAWL DELAY")).IsTrue();
-        await Assert.That(data.CrawlDelay).IsEqualTo(TimeSpan.FromHours(11));
-    }
-
-    [Test]
-    public async Task ACrawlDelayOfMinusOneMeansNoPreferenceRatherThanANegativeInterval()
-    {
-        // "Send -1 to use the crawler's default." The library's own Integer() hands -1 back as-is,
-        // deliberately; the reading that a scheduler can use is this projection's.
-        await Assert.That((await Read(("CRAWL DELAY", ["-1"]))).CrawlDelay).IsNull();
-        await Assert.That((await Read(("CRAWL DELAY", ["23"]))).CrawlDelay).IsEqualTo(TimeSpan.FromHours(23));
+        await Assert.That(data.Default("crawl_delay")).IsEqualTo("11");
     }
 
     [Test]
@@ -246,7 +253,7 @@ public class MsspParsingTests
 
         await Assert.That(data.Name).IsEqualTo("Corvid Nest");
         await Assert.That(data.Ports).IsEquivalentTo(new[] { 80, 23, 4201 });
-        await Assert.That(data.Referrals.Single().ToReferralString()).IsEqualTo("a.example.org 4000");
+        await Assert.That(data["REFERRAL"]).IsEquivalentTo(new[] { "a.example.org 4000" });
     }
 
     [Test]
@@ -290,12 +297,7 @@ public class MsspParsingTests
         var transport = new ScriptedTransport { Greeting = MsspWire.Offer() }
             .RespondingToDo(MsspWire.Mssp, whole.AsSpan(0, whole.Length - 2).ToArray());
 
-        var result = await new TelnetMsspProbe(
-            Options with { MsspTimeout = TimeSpan.FromMilliseconds(400) }, _ => transport)
-            .ProbeAsync(Host, CancellationToken.None);
-
-        await Assert.That(result.Outcome).IsEqualTo(CrawlOutcome.NoMssp);
-        await Assert.That(result.Data).IsNull();
+        await Assert.That(await ReadFrom(transport, TimeSpan.FromMilliseconds(400))).IsNull();
     }
 
     [Test]

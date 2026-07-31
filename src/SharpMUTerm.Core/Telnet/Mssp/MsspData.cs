@@ -6,14 +6,13 @@ namespace SharpMUTerm.Core.Telnet.Mssp;
 
 /// <summary>
 /// One server's MSSP report, in the shape this application wants it: every variable it sent, with
-/// every value, in the order it sent them, plus the domain readings a client and a crawler ask for.
+/// every value, in the order it sent them, plus the domain readings the INFO screen asks for.
 /// <para>
 /// <b>This projects; it does not parse.</b> The bytes are read by TelnetNegotiationCore, which hands
 /// back an ordered name → value-list map (<c>MSSPConfig.Variables</c>); everything here is built from
 /// that. What this type adds over the library's own collection is the part that is ours rather than
-/// the protocol's: <c>REFERRAL</c> read as <see cref="MsspHost"/>s a crawler can follow and
-/// deduplicate, <c>CRAWL DELAY</c> read as the specification's "no preference" rather than a negative
-/// interval, ports validated as ports, and an immutable snapshot a report can be written from.
+/// the protocol's: ports validated as ports, <c>-1</c> read as the specification's "data not
+/// available" rather than as minus one, and an immutable snapshot a report can be written from.
 /// </para>
 /// <para>
 /// The shape is a map from a canonical variable name to an <em>ordered list</em> of values, and that
@@ -26,9 +25,10 @@ namespace SharpMUTerm.Core.Telnet.Mssp;
 /// </para>
 /// <para>
 /// Nothing is discarded on the way in. Variables the specification does not define are kept beside
-/// the ones it does (<see cref="UnofficialNames"/>), because a crawler's job is to record what a
-/// server said rather than what a model expected it to say, and because MSSP's unofficial half is
-/// where several widely-deployed variables live.
+/// the ones it does (<see cref="UnofficialNames"/>), because the job is to record what a server said
+/// rather than what a model expected it to say, and because MSSP's unofficial half is where several
+/// widely-deployed variables live — a <c>DISCORD</c> invite or an <c>INTERMUD</c> network name is
+/// exactly what a world's owner puts there and a player wants to read.
 /// </para>
 /// </summary>
 public sealed class MsspData : IReadOnlyDictionary<string, IReadOnlyList<string>>
@@ -115,50 +115,6 @@ public sealed class MsspData : IReadOnlyDictionary<string, IReadOnlyList<string>
 
     /// <summary>The family — the last listed, which the specification says is the most distant ancestor.</summary>
     public string? Family => Default(MsspVariables.Family);
-
-    /// <summary>
-    /// How long the server asks a crawler to leave between visits, or null when it did not say or
-    /// asked for the crawler's own default.
-    /// <para>
-    /// The specification defines <c>CRAWL DELAY</c> as a "preferred minimum number of hours between
-    /// crawls" and gives <c>-1</c> the meaning "use the crawler's default". A negative value therefore
-    /// resolves to null here rather than to a negative interval — the distinction matters, because a
-    /// caller combining this with its own default must be able to tell "no preference" from "zero".
-    /// </para>
-    /// </summary>
-    public TimeSpan? CrawlDelay =>
-        int.TryParse(Default(MsspVariables.CrawlDelay), NumberStyles.Integer, CultureInfo.InvariantCulture, out var hours)
-        && hours >= 0
-            ? TimeSpan.FromHours(hours)
-            : null;
-
-    /// <summary>
-    /// The peers this server points a crawler at: every parseable <c>REFERRAL</c> value, deduplicated,
-    /// in the order given.
-    /// <para>
-    /// Values that do not parse are dropped silently rather than surfaced as errors. A referral list is
-    /// hand-maintained configuration on somebody else's server; one stale line in it is not a fault in
-    /// the report, and the raw strings remain available through <c>this["REFERRAL"]</c> for anything
-    /// that wants to audit them.
-    /// </para>
-    /// </summary>
-    public IReadOnlyList<MsspHost> Referrals
-    {
-        get
-        {
-            var seen = new HashSet<MsspHost>();
-            var result = new List<MsspHost>();
-            foreach (var value in this[MsspVariables.Referral])
-            {
-                if (MsspHost.TryParse(value, out var host) && seen.Add(host))
-                {
-                    result.Add(host);
-                }
-            }
-
-            return result;
-        }
-    }
 
     /// <summary>An MSSP boolean (<c>1</c> or <c>0</c>), or null when unreported or unparseable.</summary>
     public bool? Flag(string variable) => Default(variable) switch
