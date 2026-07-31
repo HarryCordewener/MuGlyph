@@ -364,18 +364,18 @@ public class ScreenModelTests
         var screen = OptionsScreenRenderer.TextAnsiScreen();
         var model = OptionsScreenRenderer.Model(screen);
 
-        // 7 display rows: 2 section headers + 1 spacer + 4 options. It was 8/5 while F7 still carried
-        // "ambiguous width"; that row named a measurement policy the framework does not expose, so it
-        // went, and both the display count and the navigable count drop by exactly the one row.
-        await Assert.That(screen.Rows.Count).IsEqualTo(7);
+        // 10 display rows: 3 section headers + 2 spacers + 5 options. It was 7/4 before WHITESPACE and
+        // its "tab width (spaces)" row, which brought a header and a spacer with it.
+        await Assert.That(screen.Rows.Count).IsEqualTo(10);
         await Assert.That(model.PaneCount).IsEqualTo(1);
-        await Assert.That(model.Sizes[0]).IsEqualTo(4);
+        await Assert.That(model.Sizes[0]).IsEqualTo(5);
     }
 
     /// <summary>
-    /// F7 is four checkboxes and nothing else now — every row is a toggle, so there is no value row
-    /// for ⏎ to open. Asserted here rather than only in the renderer test, because it is what makes
-    /// <c>HasEditableRow</c> false for this screen and so what removes <c>⏎ edit</c> from its header.
+    /// F7 is four checkboxes and one count. The count is <c>tab width (spaces)</c>, and it is what puts
+    /// <c>⏎ edit</c> back in this screen's header — <c>HasEditableRow</c> was false for as long as every
+    /// row here was a toggle. Asserted here rather than only in the renderer test, because the header
+    /// advertising a key the screen has no use for is exactly the rule these screens are held to.
     /// </summary>
     [Test]
     public async Task Options_TextAnsiRowsWriteBackToTheTextSettings()
@@ -389,10 +389,13 @@ public class ScreenModelTests
         model.ToggleAt(0, 2)!.Value.Flip();
         await Assert.That(text.UnderlineHyperlinks).IsFalse();
 
-        model.ToggleAt(0, 3)!.Value.Flip();
+        model.ToggleAt(0, 4)!.Value.Flip();
         await Assert.That(text.EmojiSubstitution).IsFalse();
 
-        await Assert.That(model.HasEditableRow).IsFalse();
+        // Row 3 is the tab width — a count, so it is a field rather than a toggle, and it is what makes
+        // this screen carry an editable row at all.
+        await Assert.That(model.ToggleAt(0, 3)).IsNull();
+        await Assert.That(model.HasEditableRow).IsTrue();
     }
 
     [Test]
