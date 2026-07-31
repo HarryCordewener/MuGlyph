@@ -297,6 +297,33 @@ public class MsspCacheTests
     }
 
     [Test]
+    public async Task AnEntryOfTheWrongJsonKindIsSkippedRatherThanThrown()
+    {
+        // This file sits beside config.json, which people hand-edit, so a number where a string belongs
+        // is a thing that will happen. JsonNode.GetValue<string>() *throws* on one — and a throw here is
+        // a throw out of the constructor, on the startup path, over a cache.
+        using var temp = new TempRoot();
+        Directory.CreateDirectory(Path.GetDirectoryName(temp.CachePath)!);
+        File.WriteAllText(temp.CachePath, """
+            {
+              "version": "one",
+              "servers": {
+                "a:1": { "connectedAt": 12345 },
+                "b:2": { "connectedAt": "2026-07-30T12:00:00+00:00", "observedAt": true,
+                         "variables": [ { "name": 7, "values": [1, "ok"] } ] }
+              }
+            }
+            """);
+
+        var cache = new MsspCache(temp.CachePath);
+
+        await Assert.That(cache.Find("a", 1)).IsNull();
+        var b = cache.Find("b", 2);
+        await Assert.That(b).IsNotNull();
+        await Assert.That(b!.PublishesNothing).IsTrue();
+    }
+
+    [Test]
     public async Task OneUnreadableEntryDoesNotCostTheRest()
     {
         using var temp = new TempRoot();

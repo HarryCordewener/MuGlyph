@@ -338,7 +338,7 @@ public sealed class MsspCache
                 return $"{FileName} is not a JSON object; starting with no cached server information.";
             }
 
-            var version = root["version"]?.GetValue<int>() ?? 0;
+            var version = Number(root["version"]) ?? 0;
             if (version > CurrentVersion)
             {
                 return $"{FileName} was written by a newer version of SharpMUTerm "
@@ -372,17 +372,29 @@ public sealed class MsspCache
         }
     }
 
+    /// <summary>
+    /// A node as a string, or null when it is absent or is any other JSON kind. <c>GetValue&lt;string&gt;()</c>
+    /// <em>throws</em> on a number or a bool, and this file is on a path a user can hand-edit — so a
+    /// mistyped entry would have taken the client's whole startup with it rather than being one skipped
+    /// row. Same reasoning for <see cref="Number"/>.
+    /// </summary>
+    private static string? Text(JsonNode? node) =>
+        node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
+
+    private static int? Number(JsonNode? node) =>
+        node is JsonValue value && value.TryGetValue<int>(out var number) ? number : null;
+
     private static MsspObservation? Read(string endpoint, JsonObject entry)
     {
         if (endpoint.Length == 0
-            || entry["connectedAt"]?.GetValue<string>() is not { } connectedText
+            || Text(entry["connectedAt"]) is not { } connectedText
             || !DateTimeOffset.TryParse(
                 connectedText, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var connectedAt))
         {
             return null;
         }
 
-        if (entry["observedAt"]?.GetValue<string>() is not { } observedText
+        if (Text(entry["observedAt"]) is not { } observedText
             || !DateTimeOffset.TryParse(
                 observedText, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var observedAt)
             || entry["variables"] is not JsonArray variables)
@@ -394,7 +406,7 @@ public sealed class MsspCache
         foreach (var variable in variables)
         {
             if (variable is not JsonObject pair
-                || pair["name"]?.GetValue<string>() is not { Length: > 0 } name)
+                || Text(pair["name"]) is not { Length: > 0 } name)
             {
                 continue;
             }
@@ -404,7 +416,7 @@ public sealed class MsspCache
             {
                 foreach (var value in list)
                 {
-                    if (value?.GetValue<string>() is { } text)
+                    if (Text(value) is { } text)
                     {
                         values.Add(text.Length > MaxValueLength ? text[..MaxValueLength] : text);
                     }
