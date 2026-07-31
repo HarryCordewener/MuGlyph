@@ -681,10 +681,26 @@ public sealed class TelnetSession : ITelnetSession
         }
     }
 
+    /// <summary>
+    /// Sends one line to the world.
+    /// <para>
+    /// <b>The terminator is the library's, not ours.</b> <c>TelnetInterpreter.SendAsync</c> is a
+    /// <em>line</em> send: it appends the line ending itself. Adding <c>\r\n</c> here as well put
+    /// <c>&lt;text&gt;\r\n\r\n</c> on the wire for every line this client has ever sent — a spurious
+    /// empty command after each real one. On a MU* connect screen that empty line is a command like any
+    /// other, and the servers that redisplay their banner for an unrecognised one did so on every single
+    /// connect: the doubled welcome screen in the transcripts is this bug, not the server's.
+    /// </para>
+    /// <para>
+    /// It is bytes rather than a string because the encoding is this session's decision and not the
+    /// interpreter's (see <see cref="CurrentEncoding"/>), and it goes through <see cref="SendAsync"/> so
+    /// the library still escapes a literal <c>IAC</c> in user text as data.
+    /// </para>
+    /// </summary>
     public ValueTask SendLineAsync(string text, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(text);
-        var bytes = CurrentEncoding.Encoding.GetBytes(text + "\r\n");
+        var bytes = CurrentEncoding.Encoding.GetBytes(text);
         return SendAsync(bytes, cancellationToken);
     }
 

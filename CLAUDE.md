@@ -240,9 +240,11 @@ python3 tools/ansi_frame_to_image.py frame.ansi frame.html   # or .svg
 
 ## SharpConsoleUI — the traps that cost the most time
 
-Package `SharpConsoleUI`, repo `nickprotop/ConsoleEx`, pinned at **2.5.14**. A sibling clone at
-`../SharpConsoleUI` is referenced by project when present, else the package
-(`-p:UseSharpConsoleUIPackage=true` forces the package). Read the source there rather than guessing.
+Package `SharpConsoleUI`, repo `nickprotop/ConsoleEx`, pinned at **2.5.14**. **Always the package** —
+there is no source-reference path and no switch. A sibling clone at `../SharpConsoleUI` used to be
+detected and preferred *by default*, which meant merely having it on disk changed what this repo
+compiled against, silently and differently from CI; that is gone. Clone it and read it, and never wire
+it into this build.
 
 App shape: `ConsoleWindowSystem(new NetConsoleDriver(RenderMode.Buffer), new ConsoleWindowSystemOptions())`;
 fluent `WindowBuilder`/`Controls` factories; `AddControl` is builder-time, so keep refs and mutate at
@@ -279,9 +281,9 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   F8, the second bar showing or hiding) then moved the text and left the caret behind, permanently:
   typing does not fix it, and leaving the terminal and coming back does, because that crosses it with
   the pointer. Fixed in `../SharpConsoleUI` (`CursorBoundsStalenessTests`) by preferring the node in
-  both readers. **Two things follow for this repo.** The fix only reaches builds against the *clone* —
-  a `-p:UseSharpConsoleUIPackage=true` build still has it until a release ships it. And nothing in our
-  suite can catch this class of bug: the framework only registers its driver-mouse handler inside
+  both readers. **Two things follow for this repo.** That fix is not in the pinned package, and this
+  repo builds only against the package, so we still have the bug until a release ships it. And nothing
+  in our suite can catch this class of bug: the framework only registers its driver-mouse handler inside
   `Run()`, which no test calls, so `ControlContentBounds` is never populated headlessly and every caret
   test here silently exercises the *fresh* path. A caret report that our tests cannot reproduce is
   evidence for looking upstream, not evidence that it is not happening.
