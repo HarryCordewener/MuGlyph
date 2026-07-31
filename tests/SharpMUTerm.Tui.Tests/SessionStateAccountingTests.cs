@@ -68,7 +68,7 @@ public class SessionStateAccountingTests
         var mannaz = wired.Config.Worlds[0].Characters[0];
 
         wired.Receive(wired.MannazWire, PublicLine);
-        await Assert.That(SpawnWindowExists(wired.App, "Public")).IsFalse(); // the state the bug lived in
+        await Assert.That(SpawnWindowExists(wired.App, "Convergence.Mannaz", "Public")).IsFalse(); // the state the bug lived in
 
         // WorldsScreenRenderer.Assignment: a character opts into a set by list membership…
         mannaz.TriggerSets.Add("Comms");
@@ -77,8 +77,8 @@ public class SessionStateAccountingTests
 
         wired.Receive(wired.MannazWire, PublicLine);
 
-        await Assert.That(SpawnWindowExists(wired.App, "Public")).IsTrue();
-        await Assert.That(string.Join("\n", wired.App.PaneLines(Workspace.SpawnWindowId("Public"))))
+        await Assert.That(SpawnWindowExists(wired.App, "Convergence.Mannaz", "Public")).IsTrue();
+        await Assert.That(string.Join("\n", wired.App.PaneLines(Workspace.SpawnWindowId("Convergence.Mannaz", "Public"))))
             .Contains("Lol");
     }
 
@@ -97,7 +97,7 @@ public class SessionStateAccountingTests
         wired.App.SaveConfiguration();
 
         wired.Receive(wired.MannazWire, PublicLine);
-        await Assert.That(SpawnWindowExists(wired.App, "Public")).IsFalse();
+        await Assert.That(SpawnWindowExists(wired.App, "Convergence.Mannaz", "Public")).IsFalse();
 
         wired.Config.TriggerSets.Single(s => s.Name == "Comms").Triggers.Add(new Trigger
         {
@@ -109,7 +109,7 @@ public class SessionStateAccountingTests
 
         wired.Receive(wired.MannazWire, PublicLine);
 
-        await Assert.That(SpawnWindowExists(wired.App, "Public")).IsTrue();
+        await Assert.That(SpawnWindowExists(wired.App, "Convergence.Mannaz", "Public")).IsTrue();
     }
 
     /// <summary>
@@ -129,7 +129,7 @@ public class SessionStateAccountingTests
 
         wired.Receive(wired.MannazWire, PublicLine);
 
-        await Assert.That(SpawnWindowExists(wired.App, "Public")).IsTrue();
+        await Assert.That(SpawnWindowExists(wired.App, "Convergence.Mannaz", "Public")).IsTrue();
     }
 
     /// <summary>
@@ -150,7 +150,7 @@ public class SessionStateAccountingTests
 
         wired.Receive(wired.RikoWire, PublicLine);
 
-        await Assert.That(SpawnWindowExists(wired.App, "Public")).IsTrue();
+        await Assert.That(SpawnWindowExists(wired.App, "Grapevine.Riko", "Public")).IsTrue();
     }
 
     /// <summary>
@@ -293,8 +293,13 @@ public class SessionStateAccountingTests
 
     private const string PublicLine = "<Public> Starfall Empress Lucille Wolfsbane says, \"Lol\"\n";
 
-    private static bool SpawnWindowExists(SharpMUTermApp app, string target) =>
-        app.WindowIds().Contains(Workspace.SpawnWindowId(target), StringComparer.Ordinal);
+    /// <summary>
+    /// Whether <paramref name="owner"/> has a spawn window for <paramref name="target"/>. The owner is
+    /// part of the question because it is part of the window id: two characters capturing one target
+    /// have a window each.
+    /// </summary>
+    private static bool SpawnWindowExists(SharpMUTermApp app, string owner, string target) =>
+        app.WindowIds().Contains(Workspace.SpawnWindowId(owner, target), StringComparer.Ordinal);
 
     private static ConsoleKeyInfo CtrlQ() => new('\0', ConsoleKey.Q, false, false, true);
 

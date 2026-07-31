@@ -28,7 +28,9 @@ public class InputAreaEndToEndTests
     private const int Width = 120;
     private const int Height = 34;
     private const string MainWindow = "main";
-    private const string ChatWindow = "spawn:Chat";
+
+    /// <summary>The demo's Chat spawn window. Its id names its owner, so it is asked for rather than spelt.</summary>
+    private static string ChatWindow => DemoScene.ChatWindowId;
 
     private static readonly TerminalCapabilities Headless =
         new(GraphicsProtocol.None, supportsTrueColor: true, supportsKittyGraphics: false, supportsSixel: false);

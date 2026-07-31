@@ -706,7 +706,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // Activate the Chat spawn window so its dim "⇱ capture …" header renders under the tab strip.
         if (string.Equals(view, "spawn", StringComparison.OrdinalIgnoreCase))
         {
-            _workspace.ActivateWindow(Workspace.SpawnWindowId("Chat"));
+            _workspace.ActivateWindow(DemoScene.ChatWindowId);
             RebuildPaneArea();
         }
 
@@ -1205,7 +1205,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
         // The Chat spawn window already exists (opened by the resumed session); feed its backlog and
         // leave it in the background with unread, as if lines arrived while another tab was focused.
-        var chatId = Workspace.SpawnWindowId("Chat");
+        var chatId = DemoScene.ChatWindowId;
         PaneContentFor(chatId, "Chat");
         var chatParser = new AnsiParser();
         foreach (var text in new[]
@@ -1316,14 +1316,31 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
         var restoredWindows = 0;
         var restoredLines = 0;
-        foreach (var window in _restore.Read())
+        var logged = _restore.Read();
+        var carriedOver = CarryLegacySpawnLogsOver(logged);
+        foreach (var window in logged)
         {
+            // A log written before spawn window ids carried their owner has been re-filed under the id
+            // its pane now has; its own file is already gone, and replaying it under the old id would
+            // buffer the previous session's channel where nothing can ever see it. A null replacement
+            // is one whose pane already had a log of its own, so there is nothing left to replay.
+            var windowId = window.WindowId;
+            if (carriedOver.TryGetValue(window.WindowId, out var carriedTo))
+            {
+                if (carriedTo is null)
+                {
+                    continue;
+                }
+
+                windowId = carriedTo;
+            }
+
             // A character who opted out gets their content dropped rather than merely un-drawn: an
             // opt-out that left the last session's text lying in the config directory would be
             // answering a different question from the one it was asked.
-            if (!RestoreLogWanted(_workspace.FindWindow(window.WindowId)?.SessionKey))
+            if (!RestoreLogWanted(_workspace.FindWindow(windowId)?.SessionKey))
             {
-                _restore.Forget(window.WindowId);
+                _restore.Forget(windowId);
                 continue;
             }
 
@@ -1334,13 +1351,13 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
 
             foreach (var line in window.Lines)
             {
-                AppendWindowLine(window.WindowId, _formatter.ToMarkup(line.Line), line.Stamp);
+                AppendWindowLine(windowId, _formatter.ToMarkup(line.Line), line.Stamp);
             }
 
             // The boundary marker carries no stamp: it did not arrive, it was drawn, and a timestamp
             // gutter beside it would be claiming a time for a row the game never sent.
             AppendWindowLine(
-                window.WindowId,
+                windowId,
                 RestoreBarRenderer.Bar(window.Lines.Count, window.LastWritten, FrozenAccentHex()));
 
             restoredWindows++;
@@ -1356,6 +1373,93 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             "Restored {Lines} line(s) into {Windows} pane(s) from the previous session",
             restoredLines,
             restoredWindows);
+    }
+
+    /// <summary>
+    /// Moves any restore log written before a spawn window id carried its owner onto the id that pane
+    /// has now, and hands back the old-id → new-id map the replay reads.
+    /// <para>
+    /// <b>This is the content half of <c>ConfigurationMigrator</c>'s v4→v5 step, and without it that
+    /// step would lose the user's scrollback.</b> The log is keyed by window id and the saved workspace
+    /// has just had its spawn ids rewritten, so the file holding the previous session's <c>Public</c>
+    /// pane is now filed under an id nothing refers to: the pane would come back in the right place and
+    /// empty. It is done by copying the lines onto the new id and dropping the old file rather than by
+    /// remembering a mapping for ever — after this launch there is nothing left to map, so the next
+    /// launch does no work and cannot replay the same content twice.
+    /// </para>
+    /// <para>
+    /// <b>What counts as an old id is decided by shape here, and that is safe in a way it would not be
+    /// in the configuration</b>: an id is old only if it does not parse as a current one
+    /// (<see cref="Workspace.TryReadSpawnWindowId"/>) <em>and</em> names no window this workspace holds
+    /// <em>and</em> exactly one live spawn window claims its target. Anything short of all three is left
+    /// alone, which costs nothing — a log the workspace cannot place is buffered under its own id
+    /// exactly as it has always been, so its pane refills if that channel ever speaks again.
+    /// </para>
+    /// </summary>
+    /// <returns>
+    /// Old id → the id to replay it under, or <see langword="null"/> where the old file was dropped and
+    /// there is nothing left to replay. Ids absent from the map are not old and are replayed as they are.
+    /// </returns>
+    private Dictionary<string, string?> CarryLegacySpawnLogsOver(IReadOnlyList<RestoredWindow> logged)
+    {
+        var carried = new Dictionary<string, string?>(StringComparer.Ordinal);
+        if (_restore is null)
+        {
+            return carried;
+        }
+
+        // Which live spawn window would have been written under which pre-v5 id. A target claimed by
+        // more than one window is ambiguous and is left alone rather than guessed at.
+        var claims = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var window in _workspace.Windows.Where(w => w.Kind == WindowKind.Spawn))
+        {
+            if (!Workspace.TryReadSpawnWindowId(window.Id, out _, out var target))
+            {
+                continue;
+            }
+
+            var legacy = Workspace.SpawnPrefix + target;
+            claims[legacy] = claims.ContainsKey(legacy) ? null : window.Id;
+        }
+
+        var known = logged.Select(w => w.WindowId).ToHashSet(StringComparer.Ordinal);
+        foreach (var window in logged)
+        {
+            if (!window.WindowId.StartsWith(Workspace.SpawnPrefix, StringComparison.Ordinal)
+                || Workspace.TryReadSpawnWindowId(window.WindowId, out _, out _)
+                || _workspace.FindWindow(window.WindowId) is not null
+                || !claims.TryGetValue(window.WindowId, out var replacement)
+                || replacement is null)
+            {
+                continue;
+            }
+
+            // A log already standing under the new id means an earlier launch did this and was
+            // interrupted before it could drop the old file. Take the new one and drop the old, which
+            // loses nothing that is not already there and cannot double a pane's history.
+            carried[window.WindowId] = null;
+            if (!known.Contains(replacement) && RestoreLogWanted(_workspace.FindWindow(replacement)?.SessionKey))
+            {
+                var title = _workspace.FindWindow(replacement)?.Title ?? string.Empty;
+                foreach (var line in window.Lines)
+                {
+                    _restore.Append(replacement, title, line.Line, line.Stamp);
+                }
+
+                carried[window.WindowId] = replacement;
+            }
+
+            _restore.Forget(window.WindowId);
+        }
+
+        var moved = carried.Count(entry => entry.Value is not null);
+        if (moved > 0)
+        {
+            _diagnostics.Logger.LogInformation(
+                "Carried {Count} pane(s) of restored content onto the per-session spawn window ids", moved);
+        }
+
+        return carried;
     }
 
     /// <summary>
@@ -2143,10 +2247,18 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// cosmetic: the rail lists a character's windows by it, and <see cref="WindowSession"/> resolves
     /// which world a link clicked in a spawn window sends to by it.
     /// </para>
+    /// <para>
+    /// The same session key also <em>picks</em> the window (<see cref="Workspace.SpawnWindowId(string?,string)"/>),
+    /// which is what gives two characters running one capture rule a pane each. While the id was the
+    /// target alone there was one window per workspace: the first session to match created it with its
+    /// own key on it and every other session's lines were appended to a pane somebody else owned —
+    /// invisible from the character whose channel it was, because the rail lists window rows for the
+    /// active character only.
+    /// </para>
     /// </summary>
     private void OnSpawnLine(WorldSession session, string target, string pattern, StyledLine line)
     {
-        var existed = _workspace.FindWindow(Workspace.SpawnWindowId(target)) is not null;
+        var existed = _workspace.FindWindow(Workspace.SpawnWindowId(session.SessionKey, target)) is not null;
         var window = _workspace.RouteSpawn(target, session.SessionKey);
 
         // Label the pane with the rule that feeds it. The pattern comes with the line rather than being
@@ -4361,7 +4473,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// windows, plus the ones that belong to nobody.
     /// <para>
     /// The owner test is the point. Every window a session or a trigger opens carries its owner
-    /// (<see cref="OpenSessionWindow"/>, and <c>RouteSpawn(target, _active?.SessionKey)</c>), so a
+    /// (<see cref="OpenSessionWindow"/>, and <c>RouteSpawn(target, session.SessionKey)</c>), so a
     /// window with no owner is an auxiliary like the web view — global, reachable from wherever you
     /// are, and listed here because the rail is the only place you can click back to it. Without the
     /// test this returned <em>every</em> window in the workspace, so the rail drew one character's tabs

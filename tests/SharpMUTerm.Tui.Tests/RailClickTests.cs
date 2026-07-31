@@ -151,9 +151,8 @@ public class RailClickTests
         app.RenderSnapshot();
 
         // The demo's active character owns a spawn window as well as the main one.
-        var spawn = app.WindowIds().First(id => id.StartsWith("spawn:", StringComparison.Ordinal));
-        var title = SpawnTitle(spawn);
-        ClickRailRow(app, title);
+        var spawn = app.WindowIds().First(id => id.StartsWith(Workspace.SpawnPrefix, StringComparison.Ordinal));
+        ClickRailRow(app, app.WindowTitleOf(spawn)!);
 
         await Assert.That(app.ActiveWindowId()).IsEqualTo(spawn);
     }
@@ -417,5 +416,4 @@ public class RailClickTests
         }
     }
 
-    private static string SpawnTitle(string spawnWindowId) => spawnWindowId["spawn:".Length..];
 }

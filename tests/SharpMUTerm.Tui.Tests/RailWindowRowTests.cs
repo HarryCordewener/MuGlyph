@@ -147,7 +147,7 @@ public class RailWindowRowTests
     {
         var app = App();
         app.RenderSnapshot();
-        var chat = Workspace.SpawnWindowId("Chat");
+        var chat = DemoScene.ChatWindowId;
         await Assert.That(string.Join("\n", Rail(app))).Contains("Chat");
 
         await Assert.That(app.DispatchCommand("win:" + chat)).IsTrue(); // bring it up so ⌃W can close it

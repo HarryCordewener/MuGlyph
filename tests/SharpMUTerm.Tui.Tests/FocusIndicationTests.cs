@@ -66,7 +66,7 @@ public class FocusIndicationTests
     }
 
     /// <summary>The demo workspace's spawn window — the second tab, and after a split the second pane.</summary>
-    private static string ChatWindowId => Workspace.SpawnWindowId("Chat");
+    private static string ChatWindowId => DemoScene.ChatWindowId;
 
     /// <summary>The truecolor background escape a colour is written as, e.g. <c>48;2;51;57;76</c>.</summary>
     private static string Sgr(SharpConsoleUI.Color color) => $"48;2;{color.R};{color.G};{color.B}";

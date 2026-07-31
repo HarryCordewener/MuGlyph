@@ -27,7 +27,7 @@ public class WorkspaceStateTests
 
         // Windows survive with their metadata.
         await Assert.That(restored.Windows.Count).IsEqualTo(2);
-        var chat = restored.FindWindow(Workspace.SpawnWindowId("Chat"))!;
+        var chat = restored.FindWindow(Workspace.SpawnWindowId("Aetherfall.Corvid", "Chat"))!;
         await Assert.That(chat.Kind).IsEqualTo(WindowKind.Spawn);
         await Assert.That(chat.OwnerLabel).IsEqualTo("Corvid");
         await Assert.That(chat.CapturePattern).IsEqualTo(@"^\[Chat\]");
@@ -36,9 +36,9 @@ public class WorkspaceStateTests
         // The split tree survives: two panes, main and Chat separated.
         await Assert.That(restored.Layout.Panes.Count).IsEqualTo(2);
         await Assert.That(restored.Layout.FindWindow("main")).IsNotNull();
-        await Assert.That(restored.Layout.FindWindow(Workspace.SpawnWindowId("Chat"))).IsNotNull();
+        await Assert.That(restored.Layout.FindWindow(Workspace.SpawnWindowId("Aetherfall.Corvid", "Chat"))).IsNotNull();
         await Assert.That(restored.Layout.FindWindow("main")!.Id)
-            .IsNotEqualTo(restored.Layout.FindWindow(Workspace.SpawnWindowId("Chat"))!.Id);
+            .IsNotEqualTo(restored.Layout.FindWindow(Workspace.SpawnWindowId("Aetherfall.Corvid", "Chat"))!.Id);
     }
 
     [Test]
@@ -80,6 +80,7 @@ public class WorkspaceStateTests
         await Assert.That(json).Contains("\"kind\": \"Spawn\"");
         await Assert.That(json).Contains("\"type\": \"split\"");
         await Assert.That(restored.Layout.Panes.Count).IsEqualTo(2);
-        await Assert.That(restored.FindWindow(Workspace.SpawnWindowId("Chat"))!.OwnerLabel).IsEqualTo("Corvid");
+        await Assert.That(restored.FindWindow(Workspace.SpawnWindowId("Aetherfall.Corvid", "Chat"))!.OwnerLabel)
+            .IsEqualTo("Corvid");
     }
 }

@@ -75,7 +75,7 @@ public class PaneTabCloseTests
     public async Task TheActiveTabsCloseButtonClosesIt()
     {
         var harness = Rendered();
-        var chat = Workspace.SpawnWindowId("Chat");
+        var chat = DemoScene.ChatWindowId;
         await Assert.That(Tabs(harness.App)).Contains(chat);
 
         SweepRow(harness, 0);
@@ -90,7 +90,7 @@ public class PaneTabCloseTests
     public async Task ClickingATabsLabelSelectsItWithoutClosing()
     {
         var harness = Rendered();
-        var chat = Workspace.SpawnWindowId("Chat");
+        var chat = DemoScene.ChatWindowId;
 
         // Column 1 is inside the first tab's label (the framework pads each tab with a space).
         harness.App.SimulateTabStripClick(harness.PaneId, 1, 0);
@@ -121,6 +121,6 @@ public class PaneTabCloseTests
         SweepRow(harness, 0);
 
         await Assert.That(Tabs(harness.App)).Contains("main");
-        await Assert.That(Tabs(harness.App)).Contains(Workspace.SpawnWindowId("Chat"));
+        await Assert.That(Tabs(harness.App)).Contains(DemoScene.ChatWindowId);
     }
 }

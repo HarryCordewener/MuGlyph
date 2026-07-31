@@ -594,11 +594,11 @@ public class HistorySearchEndToEndTests
     public async Task CtrlWClosesTheWindow()
     {
         var (app, _) = await Demo();
-        app.SimulateWindowChange("spawn:Chat");
-        await Assert.That(app.WindowIds()).Contains("spawn:Chat");
+        app.SimulateWindowChange(DemoScene.ChatWindowId);
+        await Assert.That(app.WindowIds()).Contains(DemoScene.ChatWindowId);
 
         app.SimulateKey(Chord(ConsoleKey.W));
 
-        await Assert.That(app.WindowIds()).DoesNotContain("spawn:Chat");
+        await Assert.That(app.WindowIds()).DoesNotContain(DemoScene.ChatWindowId);
     }
 }

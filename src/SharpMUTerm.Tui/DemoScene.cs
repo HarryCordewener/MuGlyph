@@ -19,6 +19,13 @@ internal static class DemoScene
     /// <summary>The world.character the demo resumes as focused/connected.</summary>
     public const string ActiveSessionKey = "Aetherfall.Corvid";
 
+    /// <summary>
+    /// The demo's Chat spawn window. Spelt once, here, because a spawn window's id names its
+    /// <em>owner</em> as well as its target — the saved workspace, the snapshot's <c>spawn</c> view and
+    /// the scene's own backlog all have to mean the same window, and three hand-built ids would not.
+    /// </summary>
+    public static string ChatWindowId => Workspace.SpawnWindowId(ActiveSessionKey, "Chat");
+
     public static AppConfiguration Build()
     {
         var config = new AppConfiguration();
@@ -243,7 +250,7 @@ internal static class DemoScene
     /// </remarks>
     private static WorkspaceState BuildLastSession()
     {
-        var chatId = Workspace.SpawnWindowId("Chat");
+        var chatId = ChatWindowId;
         return new WorkspaceState
         {
             Windows =

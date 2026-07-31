@@ -70,7 +70,7 @@ public class PaneResizeEndToEndTests
     }
 
     /// <summary>The demo workspace's spawn window — the second tab, and after a split the second pane.</summary>
-    private static string ChatWindowId => Workspace.SpawnWindowId("Chat");
+    private static string ChatWindowId => DemoScene.ChatWindowId;
 
     /// <summary>Presses the chord and renders the frame it produces, the way the running app would.</summary>
     private static void Press(SharpMUTermApp app, ConsoleKey arrow)

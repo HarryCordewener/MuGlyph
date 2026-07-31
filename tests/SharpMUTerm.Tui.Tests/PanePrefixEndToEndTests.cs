@@ -41,9 +41,9 @@ public class PanePrefixEndToEndTests
         return new SharpMUTermApp(new AppConfiguration(), Headless, new HeadlessConsoleDriver(Width, Height));
     }
 
-    private static readonly string ChatId = Workspace.SpawnWindowId("Chat");
+    private static readonly string ChatId = Workspace.SpawnWindowId(null, "Chat");
 
-    private static readonly string OocId = Workspace.SpawnWindowId("OOC");
+    private static readonly string OocId = Workspace.SpawnWindowId(null, "OOC");
 
     /// <summary>
     /// One pane holding three tabs — <c>main</c>, a Chat spawn and an OOC spawn — with the tab at

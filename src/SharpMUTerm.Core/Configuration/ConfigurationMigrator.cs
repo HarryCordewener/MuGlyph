@@ -33,8 +33,113 @@ public static class ConfigurationMigrator
             MigrateV3ToV4(root);
         }
 
+        if (version < 5)
+        {
+            MigrateV4ToV5(root);
+        }
+
         root["version"] = AppConfiguration.CurrentVersion;
     }
+
+    /// <summary>
+    /// v4's spawn window ids named only their target (<c>spawn:Public</c>), so a workspace held one
+    /// capture pane per target however many characters were capturing into it. v5 puts the owning
+    /// session in the id (<see cref="Workspaces.Workspace.SpawnWindowId(string?,string)"/>), so two
+    /// connected characters running the same rule get a pane each. Every saved id is rewritten here —
+    /// in <c>lastSession.windows</c> and in every pane's <c>tabs</c> array that referenced it.
+    /// <para>
+    /// <b>It is a migration and not an adoption, and the reason is that a resumed workspace must not
+    /// come back holding a pane nothing writes to.</b> Left alone, a saved <c>spawn:Public</c> would
+    /// match no id the running client can now produce: the pane would sit there for ever, empty, while
+    /// its channel filled a second pane beside it. Dropping it would have been the other way to avoid
+    /// that and it throws away a pane the user had, plus — through the window id the restore log is
+    /// keyed by — the scrollback in it. Rewriting keeps both: the pane stays where it was, and its log
+    /// file is carried across at startup by <c>SharpMUTermApp.RestorePreviousSession</c>.
+    /// </para>
+    /// <para>
+    /// <b>What supplies the owner is the state itself.</b> <c>WorkspaceWindowState.SessionKey</c> has
+    /// been persisted all along, so an old file already records which character each spawn window
+    /// belonged to and the rewrite is lossless rather than a guess. A window that recorded no owner
+    /// keeps that: it becomes the unowned form, which is exactly what the client produces for a spawn
+    /// window nobody owns, so it too stays reachable.
+    /// </para>
+    /// <para>
+    /// <b>The decision is made by version, never by looking at the id.</b> A target is free text and may
+    /// hold anything — including something that reads like a v5 id — so classifying ids by shape would
+    /// eventually mis-file one and produce the orphan pane this step exists to prevent. Everything under
+    /// a document that says version 4 is v4, by construction.
+    /// </para>
+    /// </summary>
+    private static void MigrateV4ToV5(JsonObject root)
+    {
+        if (root["lastSession"] is not JsonObject session || session["windows"] is not JsonArray windows)
+        {
+            return;
+        }
+
+        var rewritten = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var window in windows.OfType<JsonObject>())
+        {
+            // Kind is written by the string enum converter, so it is the member name and not a number.
+            if (!string.Equals(Text(window["kind"]), nameof(Workspaces.WindowKind.Spawn),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (Text(window["id"]) is not { } id
+                || !id.StartsWith(Workspaces.Workspace.SpawnPrefix, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var target = id[Workspaces.Workspace.SpawnPrefix.Length..];
+            if (target.Length == 0)
+            {
+                continue;
+            }
+
+            var upgraded = Workspaces.Workspace.SpawnWindowId(Text(window["sessionKey"]), target);
+            window["id"] = upgraded;
+            rewritten[id] = upgraded;
+        }
+
+        if (rewritten.Count > 0 && session["root"] is JsonObject layout)
+        {
+            RewriteTabs(layout, rewritten);
+        }
+    }
+
+    /// <summary>Re-points every pane's tab list at the ids <see cref="MigrateV4ToV5"/> rewrote.</summary>
+    private static void RewriteTabs(JsonObject node, Dictionary<string, string> rewritten)
+    {
+        if (node["tabs"] is JsonArray tabs)
+        {
+            for (var i = 0; i < tabs.Count; i++)
+            {
+                if (Text(tabs[i]) is { } tab && rewritten.TryGetValue(tab, out var upgraded))
+                {
+                    tabs[i] = upgraded;
+                }
+            }
+        }
+
+        if (node["children"] is JsonArray children)
+        {
+            foreach (var child in children.OfType<JsonObject>())
+            {
+                RewriteTabs(child, rewritten);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A node's string value, or null when it is absent or is not a string. A hand-edited or
+    /// hand-truncated document must not stop the client starting, and <c>GetValue&lt;string&gt;</c>
+    /// throws on a number where this returns null.
+    /// </summary>
+    private static string? Text(JsonNode? node) =>
+        node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
 
     /// <summary>
     /// v3's <c>autoLogin</c> is gone: whether a character logs itself in is now derived from whether it
