@@ -29,7 +29,7 @@ public abstract class LayoutNode
     /// This is the order the renderer and the resizer want, and it is <b>not</b> the order panes are
     /// numbered in. Tree order is a function of where a pane sits, so creating one renumbers whatever
     /// it was inserted before: splitting the second of two panes on its left edge makes the old pane 2
-    /// into pane 3, and ⌥2 stops meaning what it meant a moment earlier. The numbering users see and
+    /// into pane 3, and the digit that meant pane 2 stops meaning it. The numbering users see and
     /// press comes from <see cref="WorkspaceLayout.Panes"/>, which is creation order.
     /// </para>
     /// </summary>
@@ -71,10 +71,10 @@ public sealed class PaneNode : LayoutNode
     /// When this pane was created, as a per-workspace counter that only ever goes up. Panes are
     /// <em>numbered</em> by this (see <see cref="WorkspaceLayout.Panes"/>) rather than by where they
     /// sit, so a pane's number is fixed for as long as it is open: creating one somewhere to its left
-    /// no longer pushes it from ⌥2 to ⌥3.
+    /// no longer pushes it from pane 2 to pane 3.
     /// <para>
     /// It is a sort key and not the number itself. The number is the pane's position in the sorted
-    /// list, which is what keeps ⌥N contiguous when a pane in the middle closes — see
+    /// list, which is what keeps the pane numbering contiguous when a pane in the middle closes — see
     /// <see cref="WorkspaceLayout.Panes"/>.
     /// </para>
     /// </summary>

@@ -6,19 +6,6 @@ namespace SharpMUTerm.Core.Automation;
 /// <summary>A script callback requested by a matched trigger, with its capture groups.</summary>
 public sealed record TriggerScriptInvocation(string Callback, Match Match);
 
-/// <summary>
-/// One line's route to a spawn window: the window's resolved name, and the pattern of the rule that
-/// sent it there.
-/// <para>
-/// The pattern rides along because the destination is no longer enough to identify the rule. A route
-/// of <c>Channel $1</c> resolves to <c>Channel Public</c>, <c>Channel Newbie</c> and so on, so a
-/// consumer that wanted to know "which rule feeds this pane" and looked the rule up by comparing its
-/// <see cref="TriggerActions.SpawnTarget"/> to the window's name would find nothing for every dynamic
-/// pane. Carrying it costs one reference and removes the lookup.
-/// </para>
-/// </summary>
-public sealed record SpawnRoute(string Target, string Pattern);
-
 /// <summary>The outcome of running the trigger engine over one output line.</summary>
 public sealed class TriggerResult
 {
@@ -26,7 +13,7 @@ public sealed class TriggerResult
         StyledLine line,
         bool suppress,
         IReadOnlyList<string> responses,
-        IReadOnlyList<SpawnRoute> spawnTargets,
+        IReadOnlyList<string> spawnTargets,
         IReadOnlyList<TriggerScriptInvocation> scriptInvocations,
         IReadOnlyList<Trigger> matched)
     {
@@ -47,8 +34,13 @@ public sealed class TriggerResult
     /// <summary>Commands to send back to the server, in order.</summary>
     public IReadOnlyList<string> Responses { get; }
 
-    /// <summary>The spawn windows this line should be routed to, with the rule that routed it.</summary>
-    public IReadOnlyList<SpawnRoute> SpawnTargets { get; }
+    /// <summary>
+    /// The spawn windows this line should be routed to, each already resolved from its rule's
+    /// <see cref="TriggerActions.SpawnTarget"/> template with the match's capture groups substituted, so
+    /// one rule can feed a window per channel. A template that resolves to something that cannot be a
+    /// window name is refused and simply does not appear here.
+    /// </summary>
+    public IReadOnlyList<string> SpawnTargets { get; }
 
     /// <summary>Script callbacks to invoke, with their match data.</summary>
     public IReadOnlyList<TriggerScriptInvocation> ScriptInvocations { get; }
@@ -226,7 +218,7 @@ public sealed class TriggerEngine
         var current = line;
         var suppress = false;
         List<string>? responses = null;
-        List<SpawnRoute>? spawns = null;
+        List<string>? spawns = null;
         List<TriggerScriptInvocation>? scripts = null;
         List<Trigger>? matched = null;
 
@@ -282,7 +274,7 @@ public sealed class TriggerEngine
             if (!string.IsNullOrEmpty(actions.SpawnTarget) &&
                 ResolveSpawnTarget(actions.SpawnTarget, match) is { } target)
             {
-                (spawns ??= new List<SpawnRoute>()).Add(new SpawnRoute(target, trigger.Pattern));
+                (spawns ??= new List<string>()).Add(target);
             }
 
             if (!string.IsNullOrEmpty(actions.ScriptCallback))
@@ -313,7 +305,7 @@ public sealed class TriggerEngine
             current,
             suppress,
             (IReadOnlyList<string>?)responses ?? Array.Empty<string>(),
-            (IReadOnlyList<SpawnRoute>?)spawns ?? Array.Empty<SpawnRoute>(),
+            (IReadOnlyList<string>?)spawns ?? Array.Empty<string>(),
             (IReadOnlyList<TriggerScriptInvocation>?)scripts ?? Array.Empty<TriggerScriptInvocation>(),
             (IReadOnlyList<Trigger>?)matched ?? Array.Empty<Trigger>());
     }

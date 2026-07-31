@@ -294,11 +294,23 @@ internal static class Program
         // asked for) and it cannot work — no digit has a control byte of its own, so a terminal sends the
         // bare digit, or one already spelt Escape or Backspace. Naming the working chord and the reason
         // the obvious one is absent is the same honesty this page owes everywhere else.
-        usage.WriteLine("Panes:  Alt+1..Alt+9 go straight to a numbered pane and bring it forward — the numbers the");
-        usage.WriteLine("        sidebar shows beside each window ('pane 2', 'pane 3'...), counted left to right then");
-        usage.WriteLine("        top to bottom. It says so when there is no pane with that number. Ctrl+digit is not");
-        usage.WriteLine("        offered: no terminal sends a distinct Ctrl+digit — 3 and 8 arrive as Escape and");
-        usage.WriteLine("        Backspace, and 1, 9 and 0 as the bare digit.");
+        //
+        // It says *window* and not pane. The chord counted panes until a capture window sharing a pane
+        // turned out to be the thing people wanted to reach; the numbered pane jump is ⌃B N now, and both
+        // are named here so a reader is not left thinking one replaced the other silently.
+        // The page names chords in ASCII throughout — it is printed before the TUI starts, into whatever
+        // is on the other end of stdout, which may be a pipe or a terminal with no ⌥ glyph. But where a
+        // sentence claims to reproduce what is *on the screen*, it has to be verbatim: these quotes are
+        // the sidebar's own cells, and a reader who searches the sidebar for "Alt+2" finds nothing.
+        usage.WriteLine("Windows: Alt+1..Alt+9 go straight to a numbered window and bring it forward — a character's");
+        usage.WriteLine("        own window, a capture window, the web view. The numbers are the ones the sidebar");
+        usage.WriteLine("        prints beside each window ('⌥2', '⌥3'...), in the order the windows were opened.");
+        usage.WriteLine("        It says so when there is no window with that number.");
+        usage.WriteLine("        Ctrl+digit is not offered: no terminal sends a distinct Ctrl+digit — 3 and 8 arrive");
+        usage.WriteLine("        as Escape and Backspace, and 1, 9 and 0 as the bare digit.");
+        usage.WriteLine("Panes:  Ctrl+B then 1..9 goes to a numbered pane instead — the pane itself, whatever tab it");
+        usage.WriteLine("        is showing. Panes are numbered in the order they were created, which is the numbering");
+        usage.WriteLine("        Ctrl+O counts in and the one the move overlay (Ctrl+B m) badges each pane with.");
 
         // Alt+Shift+arrow is a chord this host does deliver — the parser reads both modifier bits out of
         // CSI 1;4 <final> — which is why it may be named here at all; see TerminalKeyArrivalTests. It is
@@ -319,8 +331,11 @@ internal static class Program
         // spelt out because a reconnect on a live connection is a disconnect with a dial after it and the
         // reader has to know that before pressing it.
         usage.WriteLine("World:  Alt+R reconnects the focused character (drops the connection and redials it at once);");
-        usage.WriteLine("        Ctrl+D disconnects it at once. Neither asks. With nothing connected, each says so.");
-        usage.WriteLine("Panes:  Ctrl+B then | - z o x b m i < > splits, zooms, closes and moves; Esc or Ctrl+B");
+        usage.WriteLine("        Alt+D disconnects it at once. Neither asks. With nothing connected, each says so.");
+        usage.WriteLine("        Alt+J and Alt+K move to the next and previous character you have open — the two the");
+        usage.WriteLine("        sidebar marks '⌥J' and '⌥K'. They never open one that is not; the sidebar and");
+        usage.WriteLine("        Ctrl+P do that.");
+        usage.WriteLine("Panes:  Ctrl+B then | - z o 1-9 x b m i < > splits, zooms, goes and moves; Esc or Ctrl+B");
         usage.WriteLine("        cancels, and pausing after Ctrl+B pops a panel naming each key. Or drag a tab");
         usage.WriteLine("        strip onto another pane — middle drops it as a tab, an edge splits there.");
     }

@@ -8,7 +8,18 @@ public sealed class WorkspaceWindowState
     public WindowKind Kind { get; set; } = WindowKind.Main;
     public string? SessionKey { get; set; }
     public string? OwnerLabel { get; set; }
-    public string? CapturePattern { get; set; }
+
+    /// <summary>
+    /// The window's creation sequence (<see cref="WorkspaceWindow.Sequence"/>), which is what its ⌥N
+    /// number is derived from. Persisted so a resumed workspace comes back numbered the way it was left
+    /// rather than renumbered by whatever order the registry happens to enumerate in.
+    /// <para>
+    /// <see cref="WorkspaceWindow.Unsequenced"/> — the value a configuration written before this field
+    /// existed deserialises to — means "nobody has numbered this window"; <see cref="Workspace"/> assigns
+    /// one on load from the saved order, which is the numbering such a workspace was saved under.
+    /// </para>
+    /// </summary>
+    public int Sequence { get; set; } = WorkspaceWindow.Unsequenced;
 }
 
 /// <summary>
@@ -27,9 +38,10 @@ public sealed class LayoutNodeState
     public bool Frozen { get; set; }
 
     /// <summary>
-    /// The pane's creation sequence (<see cref="PaneNode.Sequence"/>), which is what its ⌥N number is
-    /// derived from. Persisted so a resumed workspace comes back numbered the way it was left rather
-    /// than renumbered by the shape of its split tree.
+    /// The pane's creation sequence (<see cref="PaneNode.Sequence"/>), which is what its <c>pane N</c>
+    /// number — and so the ⌃B N chord that goes there — is derived from. Persisted so a resumed
+    /// workspace comes back numbered the way it was left rather than renumbered by the shape of its
+    /// split tree.
     /// <para>
     /// <see cref="PaneNode.Unsequenced"/> — the value a configuration written before this field existed
     /// deserialises to — means "nobody has numbered this pane"; <see cref="WorkspaceLayout"/> assigns
@@ -63,14 +75,17 @@ public sealed class WorkspaceState
         ArgumentNullException.ThrowIfNull(workspace);
         return new WorkspaceState
         {
-            Windows = workspace.Windows.Select(w => new WorkspaceWindowState
+            // Ordered by the sequence rather than by the registry, so the file itself reads in the
+            // numbering the user sees — and so a configuration written before the field existed, whose
+            // sequences all deserialise to Unsequenced, is re-seeded from an order that means something.
+            Windows = workspace.Windows.OrderBy(w => w.Sequence).Select(w => new WorkspaceWindowState
             {
                 Id = w.Id,
                 Title = w.Title,
                 Kind = w.Kind,
                 SessionKey = w.SessionKey,
                 OwnerLabel = w.OwnerLabel,
-                CapturePattern = w.CapturePattern,
+                Sequence = w.Sequence,
             }).ToList(),
             Root = CaptureNode(workspace.Layout.Root),
             FocusedPaneId = workspace.Layout.FocusedPaneId,
@@ -85,7 +100,7 @@ public sealed class WorkspaceState
             new WorkspaceWindow(w.Id, w.Title, w.Kind, w.SessionKey)
             {
                 OwnerLabel = w.OwnerLabel,
-                CapturePattern = w.CapturePattern,
+                Sequence = w.Sequence,
             });
 
         var layout = new WorkspaceLayout(BuildNode(Root), FocusedPaneId, ZoomedPaneId);

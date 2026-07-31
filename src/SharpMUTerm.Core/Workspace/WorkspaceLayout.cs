@@ -80,22 +80,25 @@ public sealed class WorkspaceLayout
 
     /// <summary>
     /// <b>Every pane in creation order — the one order this client numbers panes in.</b> The Nth entry is
-    /// <c>pane N</c> in the connection rail, the ⌃P <c>Go to pane N</c> entry, the move/drag overlays'
-    /// label and the ⌥N chord; those are four spellings of this index and there is deliberately no
-    /// second ordering for any of them to drift onto.
+    /// <c>pane N</c> in the ⌃P <c>Go to pane N</c> entry, the move/drag overlays' label and badge, and the
+    /// ⌃B N chord; those are three spellings of this index and there is deliberately no second ordering
+    /// for any of them to drift onto. It is <em>not</em> what ⌥N counts — that chord names a window
+    /// (<see cref="Workspace.WindowsFor"/>), which is a different set of things in a different order,
+    /// and the two are kept apart in the vocabulary as well: a pane is <c>pane N</c>, a window's chord is
+    /// <c>⌥N</c>, and the sidebar prints only the second.
     /// <para>
     /// <b>Why not tree order.</b> It used to be <c>Root.Panes()</c>, which is geometry: a pane's position
     /// left-to-right / top-to-bottom. Creating a pane therefore renumbered every pane after the insertion
-    /// point — dropping a window on the left edge of pane 2 made that pane into pane 3 — so ⌥2 silently
-    /// stopped meaning what it meant a moment earlier, on a workspace the user had not otherwise
-    /// rearranged. Creation order cannot do that: a pane's number is fixed for as long as it is open, and
-    /// a new pane always appears at the end.
+    /// point — dropping a window on the left edge of pane 2 made that pane into pane 3 — so the digit that
+    /// meant it silently stopped meaning it, on a workspace the user had not otherwise rearranged.
+    /// Creation order cannot do that: a pane's number is fixed for as long as it is open, and a new pane
+    /// always appears at the end.
     /// </para>
     /// <para>
     /// <b>The number is the index, not the sequence.</b> Sequences are never reused, so reading them
-    /// directly would leave holes — close pane 2 of three and the survivors would be 1 and 3, with ⌥2
-    /// doing nothing while two panes sat on the screen. Taking the position in this list instead compacts
-    /// the numbering on every close, which is what keeps ⌥1–⌥N contiguous.
+    /// directly would leave holes — close pane 2 of three and the survivors would be 1 and 3, with the
+    /// digit 2 doing nothing while two panes sat on the screen. Taking the position in this list instead
+    /// compacts the numbering on every close, which is what keeps 1–N contiguous.
     /// </para>
     /// <para>
     /// Geometry does not read this. The renderer (<c>LayoutSolver</c>), the resizer (<c>PaneResize</c>)
@@ -132,10 +135,18 @@ public sealed class WorkspaceLayout
     /// Cycles focus to the next pane by number (tmux <c>o</c>) — ⌃O from <c>pane 2</c> goes to
     /// <c>pane 3</c>, and wraps from the last back to <c>pane 1</c>.
     /// <para>
-    /// It counts in <see cref="Panes"/> order, which is the order ⌥N counts in, because these are the
-    /// two <em>ordinal</em> movers and a user pressing them alternately must not be counting two
-    /// different sequences: three presses of ⌃O from pane 1 land where ⌥4 does. It used to be tree
-    /// order — the same order ⌥N used at the time, so they agreed then and would not now.
+    /// It counts in <see cref="Panes"/> order, because these are the two <em>ordinal</em> pane movers and
+    /// a user pressing them alternately must not be counting two different sequences: three presses of
+    /// ⌃O from pane 1 land where ⌃B 4 does, and where the move overlay's badge <c>4</c> is drawn. It used
+    /// to be tree order, which was the numbering at the time and stopped being it.
+    /// </para>
+    /// <para>
+    /// <b>The partner it has to agree with changed, and the order did not.</b> That sentence used to name
+    /// ⌥N, which counted panes; ⌥N counts <em>windows</em> now and the numbered pane jump moved to ⌃B N.
+    /// Cycling still counts panes in this order because every surface that still says <c>pane N</c> does
+    /// — the move and drag overlays, the split and resize refusals, the ⌃P entry and ⌃B N. Nothing about
+    /// the window chord gives this a reason to count differently; the window movers are ⌥N and ⌃N, and
+    /// they are a separate ladder.
     /// </para>
     /// </summary>
     public void CycleFocus()

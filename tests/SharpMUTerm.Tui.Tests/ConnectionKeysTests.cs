@@ -8,15 +8,24 @@ using SharpMUTerm.Graphics;
 namespace SharpMUTerm.Tui.Tests;
 
 /// <summary>
-/// The dedicated chords for Reconnect and Disconnect: ⌃D drops the focused character's connection and
-/// Alt+R drops and redials it, both at once and neither asking anything.
+/// The dedicated chords for Reconnect and Disconnect: ⌥D drops the focused character's connection and
+/// ⌥R drops and redials it, both at once and neither asking anything.
 /// <para>
-/// The claim that needs proving first is that the chords <em>arrive</em>. ⌃D is the raw control byte 0x04
-/// and Alt+R is an ESC-prefixed printable, so both survive SharpConsoleUI's input parser — unlike
-/// ⌃I/⌃M/⌃J/⌃H, which collapse onto Tab, Enter and Backspace and have already cost this client four
-/// features. The second is that they act on the connection in the window <em>in front of you</em>: nothing
-/// asks before either of these runs, so a session resolved from <c>_active</c> rather than the focused
-/// window would drop the wrong world's connection on one keystroke and say nothing about it.
+/// <b>They share a modifier, and that is the point of the pair.</b> Disconnect was ⌃D — "⌃D is the
+/// terminal's own hang-up chord" and "Alt+R is one modifier over from ⌃R" being two separate
+/// justifications bolted together, each fine alone and jointly making a reader learn two modifiers for
+/// one concept. It was reported as exactly that: "It's 'CTRL-D' to disconnect, but 'ALT-R' to reconnect?
+/// Why are they not both under Alt?" ⌃D is released rather than kept as a second binding, because a
+/// second key for one action is either a secret or a duplicate row on every surface that lists chords.
+/// </para>
+/// <para>
+/// The claim that needs proving first is that the chords <em>arrive</em>. Both are ESC-prefixed
+/// printables (<c>1b 64</c> and <c>1b 72</c>, read off a pty), so both survive SharpConsoleUI's input
+/// parser — unlike ⌃I/⌃M/⌃J/⌃H, which collapse onto Tab, Enter and Backspace and have already cost this
+/// client four features. The second is that they act on the connection in the window <em>in front of
+/// you</em>: nothing asks before either of these runs, so a session resolved from <c>_active</c> rather
+/// than the focused window would drop the wrong world's connection on one keystroke and say nothing
+/// about it.
 /// </para>
 /// </summary>
 /// <remarks>
@@ -59,6 +68,9 @@ public class ConnectionKeysTests
         return (app, telnet);
     }
 
+    private static ConsoleKeyInfo AltD() => new('d', ConsoleKey.D, false, true, false);
+
+    /// <summary>The chord disconnect used to be on, kept so a test can prove it is now inert.</summary>
     private static ConsoleKeyInfo CtrlD() => new('\x04', ConsoleKey.D, false, false, true);
 
     private static ConsoleKeyInfo AltR() => new('r', ConsoleKey.R, false, true, false);
@@ -70,10 +82,36 @@ public class ConnectionKeysTests
         await app.LastCommand;
     }
 
+    /// <summary>
+    /// <b>Releasing ⌃D hands it to nothing.</b> That was the risk worth checking rather than assuming:
+    /// the framework's <c>HandleMoveInput</c> swallows unclaimed Ctrl chords and its <c>X</c> case closes
+    /// the active window — the defect that made ⌃X blank the UI. It cannot fire here for two independent
+    /// reasons (it is gated on <c>IsMovable</c>, which this app sets false, and it only acts on the
+    /// arrows and <c>X</c>), and <c>InputBarControl</c>'s Ctrl table has no <c>D</c> either. So the key
+    /// is inert: the connection stays up, the window stays open, and nothing is typed.
+    /// </summary>
+    [Test]
+    public async Task CtrlDIsInertNowThatNothingClaimsIt()
+    {
+        var (app, _) = App();
+        await Connect(app, Corvid);
+        var windows = app.WindowIds().Count;
+
+        app.SimulateKey(CtrlD());
+
+        await Assert.That(app.FindSession(Corvid)!.IsConnected)
+            .IsTrue()
+            .Because("⌃D no longer disconnects, and must not have been taken by anything else either");
+        await Assert.That(app.WindowIds().Count)
+            .IsEqualTo(windows)
+            .Because("the framework's move handler closes a window on an unclaimed Ctrl chord");
+        await Assert.That(app.ArmedInputText).DoesNotContain("\x04");
+    }
+
     // ---- the chords reach their actions ----------------------------------------------------
 
     /// <summary>
-    /// ⌃D runs Disconnect and Alt+R runs Reconnect, driven through the very shortcut table the app
+    /// ⌥D runs Disconnect and ⌥R runs Reconnect, driven through the very shortcut table the app
     /// registers. With nothing selected both refuse out loud, which is the state that shows the key
     /// arrived at all: the refusals are written by <c>Disconnect</c> and <c>Reconnect</c> and by nothing
     /// else, so a chord the parser never delivered could not produce them.
@@ -86,7 +124,7 @@ public class ConnectionKeysTests
         await Assert.That(reconnect.StatusMarkup).Contains("nothing to reconnect");
 
         var (disconnect, _) = App();
-        disconnect.SimulateKey(CtrlD());
+        disconnect.SimulateKey(AltD());
         await Assert.That(disconnect.StatusMarkup).Contains("nothing to disconnect");
     }
 
@@ -98,12 +136,19 @@ public class ConnectionKeysTests
     public async Task TheChordsAreClaimedInTheOneShortcutList()
     {
         await Assert.That(MacroKeys.AppShortcuts.Any(
-            s => s.Modifiers == ConsoleModifiers.Control && s.Key == ConsoleKey.D)).IsTrue();
+            s => s.Modifiers == ConsoleModifiers.Alt && s.Key == ConsoleKey.D)).IsTrue();
         await Assert.That(MacroKeys.AppShortcuts.Any(
             s => s.Modifiers == ConsoleModifiers.Alt && s.Key == ConsoleKey.R)).IsTrue();
 
+        // And ⌃D is genuinely released rather than merely unused: nothing claims it, so F4 offers it.
+        await Assert.That(MacroKeys.AppShortcuts.Any(
+            s => s.Modifiers == ConsoleModifiers.Control && s.Key == ConsoleKey.D))
+            .IsFalse()
+            .Because("a second key for one action is a duplicate row on every surface that lists chords");
+        await Assert.That(MacroKeys.Verdict("Ctrl+D").Fires).IsTrue();
+
         // Which is what makes F4 honest about a macro bound to either of them.
-        foreach (var descriptor in new[] { "Ctrl+D", "Alt+R" })
+        foreach (var descriptor in new[] { "Alt+D", "Alt+R" })
         {
             var verdict = MacroKeys.Verdict(descriptor);
             await Assert.That(verdict.Delivery).IsEqualTo(MacroKeyDelivery.Taken).Because(descriptor);
@@ -113,8 +158,8 @@ public class ConnectionKeysTests
 
     /// <summary>
     /// The chords are ones this terminal can deliver, which is the trap that has caught four features
-    /// here. ⌃D is the control byte 0x04 and Alt+R is an ESC-prefixed printable — neither is one of the
-    /// four letters whose control byte the terminal has already spent, and neither loses its modifier.
+    /// here. ⌥D and ⌥R are both ESC-prefixed printables — neither is one of the four letters whose control
+    /// byte the terminal has already spent, and neither loses its modifier.
     /// </summary>
     [Test]
     public async Task NeitherChordIsOneTheTerminalCannotReport()
@@ -126,26 +171,26 @@ public class ConnectionKeysTests
                 .Because($"{dead} collapses onto its ASCII byte — this is the list the new chords avoid");
         }
 
-        // Ctrl+D and Alt+R are Taken (by this change) rather than NeverArrives: they do arrive, and the
-        // app is what claims them. Capture proves the round trip from a keystroke to a descriptor.
-        await Assert.That(MacroKeys.Capture(CtrlD())).IsEqualTo("Ctrl+D");
+        // Alt+D and Alt+R are Taken rather than NeverArrives: they do arrive, and the app is what claims
+        // them. Capture proves the round trip from a keystroke to a descriptor.
+        await Assert.That(MacroKeys.Capture(AltD())).IsEqualTo("Alt+D");
         await Assert.That(MacroKeys.Capture(AltR())).IsEqualTo("Alt+R");
     }
 
     // ---- what one keystroke does -------------------------------------------------------------
 
     /// <summary>
-    /// ⌃D on a live connection drops it there and then. Nothing is asked — ⌃Q is the only key in this
+    /// ⌥D on a live connection drops it there and then. Nothing is asked — ⌃Q is the only key in this
     /// client that asks anything, and what it asks about is ending the client rather than a connection.
     /// </summary>
     [Test]
-    public async Task CtrlDDropsTheConnectionAtOnce()
+    public async Task AltDDropsTheConnectionAtOnce()
     {
         var (app, _) = App();
         await Connect(app, Corvid);
         await Assert.That(app.FindSession(Corvid)!.IsConnected).IsTrue();
 
-        app.SimulateKey(CtrlD());
+        app.SimulateKey(AltD());
         await app.LastCommand;
 
         await Assert.That(app.FindSession(Corvid)!.IsConnected).IsFalse();
@@ -187,16 +232,16 @@ public class ConnectionKeysTests
     }
 
     /// <summary>
-    /// ⌃D with nothing connected says so and touches nothing — the pre-existing refusal, and where a
-    /// shell user's "⌃D ends the session" reflex is likeliest to fire.
+    /// ⌥D with nothing connected says so and touches nothing — the pre-existing refusal, and where a
+    /// shell user's "⌃D ends the session" reflex (which now lands on nothing) is likeliest to fire.
     /// </summary>
     [Test]
-    public async Task CtrlDOnADeadSessionSaysSoAndEndsNothing()
+    public async Task AltDOnADeadSessionSaysSoAndEndsNothing()
     {
         var (app, _) = App();
         app.DispatchCommand($"char:{Corvid}");
 
-        app.SimulateKey(CtrlD());
+        app.SimulateKey(AltD());
 
         await Assert.That(app.ExitRequested).IsFalse();
         await Assert.That(app.StatusMarkup).Contains("is not connected");
@@ -213,8 +258,8 @@ public class ConnectionKeysTests
     {
         foreach (var (id, chord, connectFirst) in new (string Id, ConsoleKeyInfo Chord, bool Connect)[]
         {
-            ("world:disconnect", CtrlD(), true),
-            ("world:disconnect", CtrlD(), false),
+            ("world:disconnect", AltD(), true),
+            ("world:disconnect", AltD(), false),
             ("world:reconnect", AltR(), true),
             ("world:reconnect", AltR(), false),
         })
@@ -264,7 +309,7 @@ public class ConnectionKeysTests
         await Connect(app, Rookery); // the last to connect, and the active window
 
         app.SimulateWindowChange("main"); // Corvid kept the main window
-        app.SimulateKey(CtrlD());
+        app.SimulateKey(AltD());
         await app.LastCommand;
 
         await Assert.That(app.FindSession(Corvid)!.IsConnected).IsFalse();
@@ -287,12 +332,12 @@ public class ConnectionKeysTests
         await Connect(app, Corvid);
         app.SimulateWebPage(); // activates a window belonging to no connection
 
-        app.SimulateKey(CtrlD());
+        app.SimulateKey(AltD());
         await app.LastCommand;
 
         await Assert.That(app.FindSession(Corvid)!.IsConnected)
             .IsTrue()
-            .Because("⌃D on a window with no connection must not drop somebody else's");
+            .Because("⌥D on a window with no connection must not drop somebody else's");
         await Assert.That(app.StatusMarkup).Contains("nothing to disconnect");
     }
 
@@ -310,8 +355,8 @@ public class ConnectionKeysTests
         app.RenderSnapshot();
 
         var catalog = app.BuildCatalog();
-        await Assert.That(catalog.Single(c => c.Id == "world:disconnect").Subtitle).IsEqualTo("⌃D");
-        await Assert.That(catalog.Single(c => c.Id == "world:reconnect").Subtitle).IsEqualTo("Alt+R");
+        await Assert.That(catalog.Single(c => c.Id == "world:disconnect").Subtitle).IsEqualTo("⌥D");
+        await Assert.That(catalog.Single(c => c.Id == "world:reconnect").Subtitle).IsEqualTo("⌥R");
     }
 
     /// <summary>
@@ -325,7 +370,7 @@ public class ConnectionKeysTests
         var help = Program.UsageText;
 
         await Assert.That(help).Contains("Alt+R reconnects");
-        await Assert.That(help).Contains("Ctrl+D disconnects");
+        await Assert.That(help).Contains("Alt+D disconnects");
         await Assert.That(help).Contains("redials");
         await Assert.That(help).Contains("Neither asks");
     }

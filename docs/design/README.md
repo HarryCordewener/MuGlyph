@@ -244,7 +244,9 @@ than the one currently focused, and `✕` on the active tab only. Tabs keep natu
 strip scrolls horizontally when they overflow, with a `»N` counter on the right. Right of that:
 `▯▯` split-right, `⌸` split-down, `⤢` zoom.
 
-Below the strip, spawn windows show their capture pattern as a dim line: `⇱ capture ^\[public\]`.
+Spawn windows used to show their capture pattern under the strip as a dim `⇱ capture ^\[public\]`
+line. **They no longer do** — it was asked for and removed, and a spawn window now renders exactly
+like any other output window. Which rule feeds a pane is F2's answer, not the pane's.
 
 Output view: timestamp column (optional), then styled spans. Trigger-highlighted lines get a
 2-col left rule in the trigger's colour plus a tinted background.
