@@ -49,7 +49,7 @@ fallbacks) for inline images/maps.
   paged off an ephemeral per-session cache under `$XDG_CACHE_HOME`; absolute line indices, ranged
   reads capped at `MaxRangeLines`, and any disk failure degrades to memory-only. Emphatically **not**
   the session log — that stays `PlainTextLogSink`/`HtmlLogSink`, opt-in and kept),
-  `TcpTransport` (TLS + IPv6), `TelnetSession` (wraps TelnetNegotiationCore **2.6.5**),
+  `TcpTransport` (TLS + IPv6), `TelnetSession` (wraps TelnetNegotiationCore **2.7.0**),
   trigger/alias/macro engines + `IntervalScheduler`, plain-text + HTML logging, versioned JSON
   config (worlds → characters + shared trigger sets, with migration),
   `Theme`/`ThemeLibrary`, and `WorldSession`/`SessionManager` orchestration.
@@ -671,7 +671,7 @@ Kept for context; **M1 is done** (see *Repository state* above). As originally s
 
 ## Verification
 
-- Primary signal: `dotnet build SharpMUTerm.slnx` plus all six suites (see *Building and testing*).
+- Primary signal: `dotnet build SharpMUTerm.slnx` plus all five suites (see *Building and testing*).
   Keep coverage in `SharpMUTerm.Core.Tests` — ANSI/SGR parser, telnet round-trips, engines.
 - **The TUI is verifiable headlessly** via the snapshot pipeline above; a claim about layout or
   chrome should be backed by a rendered frame you actually looked at, not by reading the markup.

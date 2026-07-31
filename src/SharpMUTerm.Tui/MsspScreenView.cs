@@ -26,8 +26,13 @@ internal static class MsspScreenView
             MsspScreenRenderer.FooterLine(world, observation, focus, width, now), ScreenPalette.FooterBg);
 
         var rows = ScreenChrome.Rows(height);
-        var body = ScreenChrome.Stretch(new MarkupControl(
-            MsspScreenRenderer.Render(world, observation, now, focus, rows, width)));
+
+        // Rendered once and both used and measured. It was rendered twice — the second call only to
+        // read `.Count` for the row budget — which was wasted work on every layout pass and, worse, a
+        // way for the control's content and the height it was sized for to disagree the moment the
+        // renderer stopped being a pure function of its arguments.
+        var lines = MsspScreenRenderer.Render(world, observation, now, focus, rows, width);
+        var body = ScreenChrome.Stretch(new MarkupControl(lines));
 
         var root = Controls.Grid()
             .WithAlignment(HorizontalAlignment.Stretch)
@@ -47,8 +52,7 @@ internal static class MsspScreenView
         // whose emptiness reads as missing data on a screen whose whole subject is what is missing.
         root.Rows(
                 GridLength.Cells(1),
-                GridLength.Cells(Math.Clamp(
-                    MsspScreenRenderer.Render(world, observation, now, focus, rows, width).Count, 1, rows)),
+                GridLength.Cells(Math.Clamp(lines.Count, 1, rows)),
                 GridLength.Star(1),
                 GridLength.Cells(1))
             .Columns(GridLength.Star(1));

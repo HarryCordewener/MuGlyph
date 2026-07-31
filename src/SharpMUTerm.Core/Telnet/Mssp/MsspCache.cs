@@ -351,9 +351,24 @@ public sealed class MsspCache
             }
 
             var skipped = 0;
-            foreach (var (endpoint, node) in servers)
+            foreach (var (property, node) in servers)
             {
-                if (node is not JsonObject entry || Read(endpoint, entry) is not { } observation)
+                // Bounded on the way *in*, not only on the way out. MaxEndpoints was enforced in
+                // Persist, so a bloated or hand-grown file was fully materialised at startup and only
+                // trimmed if something later wrote — which is the launch where the bound was needed.
+                if (into.Count >= MaxEndpoints)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                // Re-keyed through Key(), never trusted as written. The property name is a string in a
+                // file a user can edit and a future writer may spell differently, and an entry filed
+                // under `MUD.Example.ORG:4201` is a key Key() can never produce — permanently
+                // unreachable through Find while still spending the endpoint budget.
+                if (node is not JsonObject entry
+                    || Endpoint(property) is not { } endpoint
+                    || Read(endpoint, entry) is not { } observation)
                 {
                     skipped++;
                     continue;
@@ -370,6 +385,25 @@ public sealed class MsspCache
         {
             return $"{FileName} could not be read ({e.GetType().Name}); starting with no cached server information.";
         }
+    }
+
+    /// <summary>
+    /// A written-down <c>host:port</c> re-normalised through <see cref="Key"/>, or null when it is not
+    /// one. The port is split at the <em>last</em> colon so an IPv6 literal keeps its own.
+    /// </summary>
+    private static string? Endpoint(string property)
+    {
+        var colon = property.LastIndexOf(':');
+        if (colon <= 0
+            || !int.TryParse(
+                property[(colon + 1)..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var port)
+            || port is < 1 or > 65535)
+        {
+            return null;
+        }
+
+        var key = Key(property[..colon], port);
+        return key.StartsWith(':') ? null : key;
     }
 
     /// <summary>

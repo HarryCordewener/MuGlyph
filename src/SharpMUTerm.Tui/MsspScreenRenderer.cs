@@ -369,13 +369,20 @@ internal static class MsspScreenRenderer
     }
 
     /// <summary>
-    /// A <c>label   value</c> row. The label is padded to a constant, the value is sanitised, truncated
-    /// and escaped, and the whole thing carries a one-cell mark column — reserved, blank when the
-    /// variable is official, so a report of unofficial variables and a report of official ones put their
-    /// values in the same column.
+    /// A <c>label   value</c> row. Both halves are sanitised, truncated and escaped, and the whole thing
+    /// carries a one-cell mark column — reserved, blank when the variable is official, so a report of
+    /// unofficial variables and one of official variables put their values in the same column.
+    /// <para>
+    /// <b>The label is padded before it is escaped, and it is a label off the wire.</b> Under
+    /// EVERYTHING ELSE the label <em>is</em> the variable name the server sent, so it is exactly as
+    /// hostile as a value: <c>Escape</c> doubles every bracket, so padding the escaped string pads a
+    /// name containing <c>[</c> to fewer <em>visible</em> cells than <see cref="NameWidth"/> and the
+    /// value column steps left on that row alone. Sanitising it matters for the same reason — MSSP
+    /// says names are upper-case letters and spaces, and a server is not obliged to be truthful.
+    /// </para>
     /// </summary>
     private static string Row(string label, string value, int cells, string mark = " ") =>
-        $" [{Muted}]{mark}[/] [{Label}]{Escape(Fit(label, NameWidth)).PadRight(NameWidth)}[/]  "
+        $" [{Muted}]{mark}[/] [{Label}]{Escape(Fit(Sanitize(label), NameWidth).PadRight(NameWidth))}[/]  "
         + ScreenChrome.ReadOnly(Fit(Sanitize(value), cells));
 
     /// <summary>

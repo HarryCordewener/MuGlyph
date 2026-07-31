@@ -647,17 +647,17 @@ internal static class WorldsScreenRenderer
     };
 
     /// <summary>
-    /// The WORLDS list's buttons. Deleting is offered only when there is a world under the cursor to
-    /// delete; a brand-new world is a blank template, because a world's whole identity is its host and
-    /// a "helpfully" prefilled one would be a guess the user then has to notice and undo.
-    /// </summary>
-    /// <summary>
     /// The WORLDS pane's buttons, in the order they are drawn and — decisively — in the order
     /// <see cref="ScreenModel.Sizes"/> needs them: the cursor stop first, then the two targeted key
     /// hints. <c>[+ world]</c> has no target and so needs somewhere to be pressed from; <c>i</c> and
     /// <c>Del</c> both act on the selected row and must not steal the cursor from it, so they trail and
     /// are trimmed out of the pane's stop count. Put either of them above <c>[+ world]</c> and the
     /// cursor gains a hole.
+    /// <para>
+    /// Both targeted keys are offered only when there is a world under the cursor for them to act on. A
+    /// brand-new world is a blank template, because a world's whole identity is its host and a
+    /// "helpfully" prefilled one would be a guess the user then has to notice and undo.
+    /// </para>
     /// </summary>
     private static List<ScreenRow> WorldButtons(
         IReadOnlyList<WorldDefinition> worlds, int selectedWorld, Action<int>? info = null)

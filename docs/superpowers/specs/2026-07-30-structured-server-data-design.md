@@ -1202,7 +1202,8 @@ answer when nothing is connected, which is exactly when someone is asking. `/gmc
 
 **Stage 3 — MSSP.**
 
-- `MsspReport` + `MsspVariables` in Core; upstream fix or own parse (§8.3).
+- ~~`MsspReport` + `MsspVariables` in Core; upstream fix or own parse (§8.3).~~ The upstream fix
+  landed, so there is no own parse: `MsspData` projects `MSSPConfig.Variables` and parses nothing.
 - **The TLS-upgrade notice (§8.2)** — first, because it is the smallest piece and the only one with a
   security payoff.
 - The `mssp.json` cache.

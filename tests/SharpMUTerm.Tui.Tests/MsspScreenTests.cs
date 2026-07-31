@@ -451,6 +451,30 @@ public class MsspScreenTests
     }
 
     [Test]
+    public async Task AVariableNameCarryingMarkupKeepsTheValueColumnWhereItIs()
+    {
+        // Under EVERYTHING ELSE the *label* is the variable name the server sent, so it is exactly as
+        // hostile as a value — and padding it after escaping is the subtle half: Escape doubles every
+        // bracket, so a name containing `[` padded to NameWidth *characters* is short of NameWidth
+        // *visible cells*, and the value column steps left on that one row.
+        var rows = MsspScreenRenderer.Body(
+            World(),
+            Observed(Report(("PLAIN", ["a"]), ("A[B]C", ["b"]), ("D[[E", ["c"]))),
+            Noon,
+            Width);
+
+        var values = Plain(rows)
+            .Where(l => l.TrimEnd().EndsWith("a", StringComparison.Ordinal)
+                || l.TrimEnd().EndsWith("b", StringComparison.Ordinal)
+                || l.TrimEnd().EndsWith("c", StringComparison.Ordinal))
+            .ToList();
+
+        await Assert.That(values).Count().IsEqualTo(3);
+        await Assert.That(values.Select(l => l.Length).Distinct()).Count().IsEqualTo(1)
+            .Because("a bracket in a variable name must not move the value column");
+    }
+
+    [Test]
     public async Task AVariableWithAThousandValuesSpendsABoundedNumberOfRows()
     {
         var flood = Report(("REFERRAL", Enumerable.Range(0, 1000).Select(i => $"h{i}.example.org 4000").ToArray()));

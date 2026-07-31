@@ -1,3 +1,4 @@
+using System.Globalization;
 using SharpMUTerm.Core.Configuration;
 using SharpMUTerm.Core.Telnet.Mssp;
 
@@ -295,6 +296,52 @@ public class MsspCacheTests
         await Assert.That(cache.All).IsEmpty();
         await Assert.That(cache.Problem).IsNotNull();
     }
+
+    [Test]
+    public async Task AnEntryWrittenUnderAnUnnormalisedKeyIsStillFindable()
+    {
+        // Persist writes normalised keys, so a self-written file is always fine — but this file sits
+        // beside config.json and a hand-written (or future, or foreign) entry spelled `MUD.Example.ORG:4201`
+        // would be filed under a key Key() can never produce: permanently unreachable through Find while
+        // still spending the endpoint budget. Re-key on the way in, never trust the property name.
+        using var temp = new TempRoot();
+        Directory.CreateDirectory(Path.GetDirectoryName(temp.CachePath)!);
+        File.WriteAllText(temp.CachePath, """
+            {
+              "version": 1,
+              "servers": {
+                "MUD.Example.ORG.:4201": { "connectedAt": "2026-07-30T12:00:00+00:00" },
+                "not-an-endpoint": { "connectedAt": "2026-07-30T12:00:00+00:00" }
+              }
+            }
+            """);
+
+        var cache = new MsspCache(temp.CachePath);
+
+        await Assert.That(cache.Find("mud.example.org", 4201)).IsNotNull();
+        await Assert.That(cache.All).Count().IsEqualTo(1);
+        await Assert.That(cache.Problem).IsNotNull().Because("the portless entry was skipped");
+    }
+
+    [Test]
+    public async Task ABloatedFileIsBoundedOnTheWayInAndNotOnlyOnTheNextWrite()
+    {
+        // MaxEndpoints was enforced in Persist alone, so a file grown past it was fully materialised at
+        // startup and trimmed only if something later wrote — which is precisely the launch where the
+        // bound was wanted.
+        using var temp = new TempRoot();
+        Directory.CreateDirectory(Path.GetDirectoryName(temp.CachePath)!);
+        var entries = string.Join(
+            ",\n",
+            Enumerable.Range(0, MaxEndpointsOverflow).Select(i =>
+                "  \"host" + i.ToString(CultureInfo.InvariantCulture)
+                + ".example.org:4000\": { \"connectedAt\": \"2026-07-30T12:00:00+00:00\" }"));
+        File.WriteAllText(temp.CachePath, "{ \"version\": 1, \"servers\": {\n" + entries + "\n} }");
+
+        await Assert.That(new MsspCache(temp.CachePath).All).Count().IsEqualTo(MsspCache.MaxEndpoints);
+    }
+
+    private const int MaxEndpointsOverflow = MsspCache.MaxEndpoints + 25;
 
     [Test]
     public async Task AnEntryOfTheWrongJsonKindIsSkippedRatherThanThrown()

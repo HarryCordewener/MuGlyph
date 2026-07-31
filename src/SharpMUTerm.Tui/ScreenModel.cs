@@ -119,22 +119,6 @@ internal readonly record struct ScreenButton(
     }
 
     /// <summary>
-    /// Removes the item at <paramref name="index"/>, restoring it *at that index* on undo. The cursor
-    /// stays on the same ordinal, which is now whatever followed the deleted row — the same place the
-    /// eye is. <paramref name="offset"/> means what it does on <see cref="Add"/>.
-    /// <para>
-    /// It takes no label. A removal is drawn as the key that runs it
-    /// (<see cref="ScreenButton.RemoveKeyLabel"/>) rather than as a chip, because its row is no longer
-    /// somewhere the cursor can go — see <see cref="ScreenModel.Sizes"/> for why, and
-    /// <see cref="ScreenChrome.Buttons"/> for what that row now reads as.
-    /// </para>
-    /// </summary>
-    /// <param name="describe">
-    /// What this removal would destroy, in words, for the closing review to name. See
-    /// <see cref="ScreenButton.Describe"/>; it defaults to <paramref name="target"/>, which is the honest
-    /// answer for every row that takes nothing else with it.
-    /// </param>
-    /// <summary>
     /// What a read-only detail screen's key is drawn as, for the same reason
     /// <see cref="RemoveKeyLabel"/> is: the row naming it is not a cursor stop, so a chip would be an
     /// affordance for something the keyboard cannot land on.
@@ -166,6 +150,22 @@ internal readonly record struct ScreenButton(
             target);
     }
 
+    /// <summary>
+    /// Removes the item at <paramref name="index"/>, restoring it *at that index* on undo. The cursor
+    /// stays on the same ordinal, which is now whatever followed the deleted row — the same place the
+    /// eye is. <paramref name="offset"/> means what it does on <see cref="Add"/>.
+    /// <para>
+    /// It takes no label. A removal is drawn as the key that runs it
+    /// (<see cref="ScreenButton.RemoveKeyLabel"/>) rather than as a chip, because its row is no longer
+    /// somewhere the cursor can go — see <see cref="ScreenModel.Sizes"/> for why, and
+    /// <see cref="ScreenChrome.Buttons"/> for what that row now reads as.
+    /// </para>
+    /// </summary>
+    /// <param name="describe">
+    /// What this removal would destroy, in words, for the closing review to name. See
+    /// <see cref="ScreenButton.Describe"/>; it defaults to <paramref name="target"/>, which is the honest
+    /// answer for every row that takes nothing else with it.
+    /// </param>
     internal static ScreenButton Remove<T>(
         IList<T> list, int index, int offset = 0, string? target = null, Func<string>? describe = null)
     {
