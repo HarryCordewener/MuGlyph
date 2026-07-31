@@ -49,6 +49,22 @@ public class WorldSessionTests
     }
 
     [Test]
+    public async Task SameFrame_OutputPreservesAnEmptyMiddleLine()
+    {
+        var (session, telnet) = Create(World());
+        await session.ConnectAsync();
+        var before = session.Scrollback.Snapshot().Count;
+
+        telnet.EmitLine("Line one\n\nThis line three, previous line was empty, this is valid output. It came from the same received frame.");
+
+        var after = session.Scrollback.Snapshot();
+        await Assert.That(after.Count).IsEqualTo(before + 3);
+        await Assert.That(after[before].Text).IsEqualTo("Line one");
+        await Assert.That(after[before + 1].IsEmpty).IsTrue();
+        await Assert.That(after[before + 2].Text).IsEqualTo("This line three, previous line was empty, this is valid output. It came from the same received frame.");
+    }
+
+    [Test]
     public async Task AnsiColor_InOutput_IsParsedIntoStyledSpans()
     {
         var (session, telnet) = Create(World());
