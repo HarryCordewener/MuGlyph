@@ -16,23 +16,21 @@
   </PropertyGroup>
 
   <!--
-    SharpConsoleUI comes from NuGet by default. Clone the framework beside this repo
-    (`git clone https://github.com/nickprotop/ConsoleEx.git ../../SharpConsoleUI`, checked out at the
-    tag matching Directory.Packages.props) and it is referenced from source instead — so you can read
-    and step into the framework rather than decompiling it. CI and anyone without the clone are
-    unaffected: the condition simply doesn't match and the package is used.
-    Set UseSharpConsoleUIPackage=true to force the package even with the clone present.
+    SharpConsoleUI always comes from NuGet, at the version Directory.Packages.props pins. There is
+    deliberately no source-reference path.
+
+    There used to be one: a sibling clone at ../../SharpConsoleUI was detected by Exists() and
+    preferred over the package unless UseSharpConsoleUIPackage=true was passed. It was opt-*out*, so
+    merely having the clone on disk — which anyone reading the framework does — silently changed what
+    this project compiled against, with nothing said at build time. That left a local build and CI
+    compiling two different framework versions from one commit: local green stopped describing what
+    ships, an agent working in a git worktree got the package (the relative path does not resolve
+    from .claude/worktrees/) while the same code built from the main checkout got the clone, and an
+    edit to the clone would have been invisible in this repository's diff.
+
+    Read the framework by cloning it and opening it; do not wire it into this build.
   -->
-  <PropertyGroup>
-    <SharpConsoleUISource>$(MSBuildThisFileDirectory)..\..\..\SharpConsoleUI\SharpConsoleUI\SharpConsoleUI.csproj</SharpConsoleUISource>
-    <UseSharpConsoleUISource Condition="'$(UseSharpConsoleUIPackage)' != 'true' AND Exists('$(SharpConsoleUISource)')">true</UseSharpConsoleUISource>
-  </PropertyGroup>
-
-  <ItemGroup Condition="'$(UseSharpConsoleUISource)' == 'true'">
-    <ProjectReference Include="$(SharpConsoleUISource)" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(UseSharpConsoleUISource)' != 'true'">
+  <ItemGroup>
     <PackageReference Include="SharpConsoleUI" />
   </ItemGroup>
 
