@@ -638,13 +638,20 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
 
 ## Other dependency notes
 
-- **TelnetNegotiationCore 2.7.0** (repo owner is its author — extend it by PR rather than working
+- **TelnetNegotiationCore 2.8.1** (repo owner is its author — extend it by PR rather than working
   around it). Fluent builder API; negotiates MCCP/MSDP/MXP itself; ships the keepalive interpreter
   (`WithKeepAlive(TimeSpan?, …)`, default 30s, clamped to 1s–24h). `TelnetSession` sets the
   init-only `CallbackOnByteAsync` reflectively to see raw bytes including unterminated prompts — a
   first-class `OnByte` builder hook remains a good upstream PR. It handles the option handshake
   (TELOPT, GA, TTYPE/MTTS, EOR, NAWS, CHARSET, MSSP, GMCP) — **Pueblo and all ANSI/MXP/Pueblo
   payload _parsing_ stay our layer.**
+  - **2.8.1 changes that affected us:** `TelnetInterpreter.SendNAWS(short, short)` was removed —
+    NAWS now reports the full RFC 1073 unsigned-16 range via
+    `NAWSProtocol.SendWindowSizeAsync(int, int)` on the plugin. `TerminalTypeProtocol` gained a
+    public `WithTerminalTypes(string[])` method — the private-field reflection hack (`_terminalTypes`)
+    in `ApplyTerminalTypes` was replaced with it. Plaintext MSSP-REQUEST is now an opt-in plugin
+    (`MSSPPlaintextProtocol`) rather than a hidden library fallback. `fix(line)`: the library now
+    submits genuinely blank lines instead of silently dropping them.
 - **MSSP is read by the library, not by us — since 2.6.5, and that is the standing example of the
   rule above.** 2.6.0's reader destroyed the protocol's own array notation inside the library:
   `PORT "80" "23" "4201"` arrived as the integer `80234201`, `REFERRAL` (array-only) arrived null,
@@ -677,17 +684,11 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
     and everything we send. On a server that never negotiates CHARSET — most MU\* servers — every
     byte above 0x7F became `?`. `TelnetSession` seeds that property (reflectively, `internal set`, the
     same way `CharsetProtocol` itself writes it) with the head of the stated order.
-    **MSSP is the exception, and the seed does not reach it.** `MSSPProtocol.FlushField` decodes every
-    MSSP name and value with a hardcoded `Encoding.ASCII` (at 2.6.0 the same call was inlined at four
-    sites), so a game whose `NAME` is `Café Noir` reports `Caf? Noir` no matter what CHARSET settled on
-    and no matter what we seed. The bytes are gone by the time any callback sees them. This is arguably
-    *conformant* — RFC 2066 scopes CHARSET to text, not commands, and a subnegotiation is a command —
-    but it is lossy where it need not be, since `Encoding.Latin1` would round-trip all 256 byte values
-    and cost nothing. It is a good upstream PR, and until it lands, treat non-ASCII in an MSSP field as
-    unrecoverable. Two consequences worth knowing: the plaintext `MSSP-REQUEST` fallback does **not**
-    go through `MSSPProtocol`, so the same server read the two ways disagrees byte for byte; and 2.6.0
-    additionally `ToUpper()`s variable names with the *current culture*, which is a Turkish-I hazard in
-    the same lines.
+    **MSSP fields were decoded as `Encoding.ASCII` through 2.6.x** (fixed in 2.7.0, pinned by
+    `MsspParsingTests`); treat non-ASCII in an MSSP field from an older library as unrecoverable.
+    Two consequences worth knowing from the pre-fix era: the plaintext `MSSP-REQUEST` fallback went
+    through a different code path (also fixed in 2.7.0), and 2.6.0 additionally `ToUpper()`ed variable
+    names with the *current culture*, a Turkish-I hazard (also gone).
   - **The encodings we state must be the platform provider's own instances** (`Encoding.UTF8`, *not*
     `new UTF8Encoding(false)`). `CharsetProtocol` ranks a server's offer by `IndexOf` over our list
     against encodings from `Encoding.GetEncodings()`, and `UTF8Encoding.Equals` compares the BOM flag —
