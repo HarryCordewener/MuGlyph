@@ -24,7 +24,7 @@ public static class CommandIds
 
     /// <summary>
     /// How many windows have a keyboard chord of their own: ⌥1–⌥9, counting
-    /// <see cref="SharpMUTerm.Core.Workspaces.Workspace.PlacedWindows"/>. Nine because nine is what the
+    /// <see cref="SharpMUTerm.Core.Workspaces.Workspace.WindowsFor"/>. Nine because nine is what the
     /// digit row spells with one modifier, what the terminal's Alt encoding covers (<c>ESC</c> + a
     /// printable digit), and what the framework's own Alt+1–9 window selector claims — leaving one of
     /// those digits unclaimed would hand it back to that selector, so all nine are claimed whether or

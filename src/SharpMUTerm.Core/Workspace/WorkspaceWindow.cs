@@ -33,7 +33,7 @@ public sealed class WorkspaceWindow
 
     /// <summary>
     /// When this window was created, as a per-workspace counter that only ever goes up. Windows are
-    /// <em>numbered</em> by this (see <see cref="Workspace.PlacedWindows"/>) rather than by where their
+    /// <em>numbered</em> by this (see <see cref="Workspace.WindowsFor"/>) rather than by where their
     /// tab happens to sit, so a window's ⌥N number is fixed for as long as it is open.
     /// <para>
     /// It is a sort key and not the number itself. The number is the window's position in the sorted

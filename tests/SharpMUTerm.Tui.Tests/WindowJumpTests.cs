@@ -9,33 +9,41 @@ using SharpMUTerm.Graphics;
 namespace SharpMUTerm.Tui.Tests;
 
 /// <summary>
-/// <b>⌥1–⌥9 go to a numbered window and bring it forward.</b> The request was "I mentioned before how I
-/// wanted Alt-1-9 etc to be able to switch between characters. I realize I may have used the wrong term.
-/// I want it to be able to go between tabs? Panes? Whichever it is that allows me to switch not just
-/// characters, but captures, etc." The answer to all of those at once is the <em>window</em>, and these
-/// are the claims it stands on.
+/// <b>⌥1–⌥9 go to a numbered window of the <em>active character</em>, and bring it forward.</b> The
+/// request was "I want it to be able to go between tabs? Panes? Whichever it is that allows me to switch
+/// not just characters, but captures, etc." — answered by the window — and then, once a global numbering
+/// was in front of them: "I am looking for the characters to have different numbers? Am I not
+/// communicating something right here? … Let's create a different mechanic to easily be able to switch
+/// characters then!" These are the claims the scoped numbering stands on.
 /// <para>
 /// <b>1. It reaches a capture window, which is the half the pane chord could not do.</b> ⌥N used to name
 /// a pane, and a capture sharing a pane with its character's own window had no number: it was reachable
-/// only while it happened to be that pane's active tab. Every window a pane holds has a digit now,
-/// whoever owns it and whichever tab is in front.
+/// only while it happened to be that pane's active tab. Every window has a digit now, whichever tab is
+/// in front.
 /// </para>
 /// <para>
-/// <b>2. The number is the number on the screen.</b> Windows are counted in <c>PlacedWindows</c> order,
-/// which is the order the connection rail's second column prints <c>⌥N</c> in — so the assertions read
-/// the label off the <em>live rail</em> and press the digit that label names, rather than writing down
-/// which window ought to be third. A chord that lands somewhere other than the label says is worse than
-/// no chord, and this repository has already paid for two spellings of one thing once
+/// <b>2. The digits re-base per character.</b> ⌥1 is <em>this</em> character's own window whoever you
+/// are, ⌥2 their first capture. Globally numbered, three characters sharing pane 1 as tabs all read
+/// <c>⌥1</c> on the sidebar, and nine digits do not stretch over everybody's windows. Characters are
+/// reached by the ⌥J/⌥K cycle instead. The fixture puts a capture <em>second</em> in creation order on
+/// purpose, so the window digits are not the pane digits wearing a new name.
+/// </para>
+/// <para>
+/// <b>3. The number is the number on the screen.</b> Windows are counted in <c>WindowsFor</c> order,
+/// which is exactly the set and order the rail draws window rows in — so the assertions read the label
+/// off the <em>live rail</em> and press the digit that label names, rather than writing down which
+/// window ought to be second. A chord that lands somewhere other than the label says is worse than no
+/// chord, and this repository has already paid for two spellings of one thing once
 /// (<c>▪ main   main</c>).
 /// </para>
 /// <para>
-/// <b>3. It is the full activation, on painted cells.</b> "Bring it forward" is not <c>FocusedPaneId</c>
+/// <b>4. It is the full activation, on painted cells.</b> "Bring it forward" is not <c>FocusedPaneId</c>
 /// being assigned: it is the window active in its pane's strip, that pane's plane on the frame, and the
 /// command line talking to its character. All three are asserted, the plane off the frame the driver was
 /// handed — a focus indicator can be set on a control arranged at zero rows and read back happily.
 /// </para>
 /// <para>
-/// <b>4. Nothing falls through to the framework.</b> SharpConsoleUI claims Alt+1–9 for its own top-level
+/// <b>5. Nothing falls through to the framework.</b> SharpConsoleUI claims Alt+1–9 for its own top-level
 /// window selector (<c>InputCoordinator.HandleAltInput</c>), which — unlike the move and resize handlers
 /// beside it — is <em>not</em> gated on <c>IsMovable</c>/<c>IsResizable</c>, so <c>Movable(false)</c> did
 /// not switch it off. All nine digits are claimed as application shortcuts, which
@@ -43,7 +51,7 @@ namespace SharpMUTerm.Tui.Tests;
 /// therefore reports here and stops rather than reaching a window selector that would do something else.
 /// </para>
 /// <para>
-/// <b>5. Alt, because Ctrl+digit is not a chord this terminal has.</b> Read off a real pty rather than
+/// <b>6. Alt, because Ctrl+digit is not a chord this terminal has.</b> Read off a real pty rather than
 /// remembered: every Alt+digit is <c>ESC</c> + the digit, while Ctrl+digit is the bare digit for 1/9/0 and
 /// a byte already spelt Escape (3), Backspace (8) or NUL (2) for the rest. <c>MacroKeys.Verdict</c> is
 /// where that is recorded, and <see cref="MacroKeyCaptureTests"/> holds it. See
@@ -82,27 +90,31 @@ public class WindowJumpTests
         var scene = await BuildScene();
         var (focused, _) = scene.App.PaneBandColors;
 
-        for (var n = 1; n <= scene.Windows.Count; n++)
+        // Ann is active and owns two of the four windows, so her digits are 1 and 2 — not 1 and 2 of a
+        // run that continues into Bob's and Cal's.
+        await Assert.That(scene.App.NumberedWindowIds).IsEquivalentTo(scene.Ann);
+
+        for (var n = 1; n <= scene.Ann.Count; n++)
         {
             scene.App.SimulateKey(Alt(n));
             var frame = scene.App.RenderWholeFrame();
 
             await Assert.That(scene.App.ActiveWindowId())
-                .IsEqualTo(scene.Windows[n - 1])
+                .IsEqualTo(scene.Ann[n - 1])
                 .Because($"⌥{n} must bring forward the window the sidebar labels ⌥{n}");
 
             // The rail's own word for the window that is now in front.
-            await Assert.That(WindowRowChord(scene.App, scene.Labels[n - 1]))
+            await Assert.That(WindowRowChord(scene.App, scene.AnnLabels[n - 1]))
                 .IsEqualTo($"⌥{n}")
                 .Because("the digit pressed and the digit drawn beside the window that arrived are one number");
 
             // The session, so the command line is talking to the window you are looking at.
-            await Assert.That(scene.App.ActiveSessionKey).IsEqualTo(scene.Owners[n - 1]);
+            await Assert.That(scene.App.ActiveSessionKey).IsEqualTo("Alfa.Ann");
 
             // And the paint: the hosting pane's rectangle carries the focused plane and no other one does.
             var rects = scene.App.PaneOutputRects();
             var landed = scene.App.FocusedPaneId;
-            await Assert.That(landed).IsEqualTo(scene.App.PaneIdOf(scene.Windows[n - 1]));
+            await Assert.That(landed).IsEqualTo(scene.App.PaneIdOf(scene.Ann[n - 1]));
             await Assert.That(CellsPaintedIn(frame, rects[landed], focused))
                 .IsGreaterThan(0)
                 .Because($"⌥{n} must paint the pane holding window {n} as the focused one");
@@ -114,10 +126,78 @@ public class WindowJumpTests
     }
 
     /// <summary>
-    /// <b>The half a pane-numbered chord could not do: a capture window behind another tab.</b> Corvid's
-    /// Chat window shares a pane with Corvid's own window and is not the tab in front — under the old
-    /// chord there was no digit that reached it, because the pane's digit went to whatever the pane was
-    /// already showing. Pressing its digit switches the tab as well as the pane.
+    /// <b>The claim the redesign turned on: the digits re-base when the character does.</b> Ann has two
+    /// windows and Bob has one, so ⌥1 is Ann's own window while she is active and <em>Bob's</em> the
+    /// moment he is — and ⌥2, which reached Ann's capture, has nothing behind it under Bob and says so.
+    /// <para>
+    /// Globally numbered this was the reported confusion: every character's row read <c>⌥1</c> because
+    /// their windows happened to share a run, and a digit meant a different thing depending on who you
+    /// had last been.
+    /// </para>
+    /// </summary>
+    [Test]
+    public async Task TheDigitsAreTheActiveCharactersAndReBaseWhenItChanges()
+    {
+        var scene = await BuildScene();
+
+        scene.App.SimulateKey(Alt(1));
+        await Assert.That(scene.App.ActiveWindowId()).IsEqualTo("main");
+        await Assert.That(scene.App.NumberedWindowIds).IsEquivalentTo(scene.Ann);
+
+        scene.App.SimulateKey(AltKey(ConsoleKey.J));       // to Bob
+        await Assert.That(scene.App.ActiveSessionKey).IsEqualTo("Bravo.Bob");
+        await Assert.That(scene.App.NumberedWindowIds)
+            .IsEquivalentTo(new[] { "char:Bravo.Bob" })
+            .Because("Bob owns one window, so his numbering is just ⌥1");
+
+        scene.App.SimulateKey(Alt(1));
+        await Assert.That(scene.App.ActiveWindowId())
+            .IsEqualTo("char:Bravo.Bob")
+            .Because("⌥1 is whoever is active's own window, not a fixed window in the workspace");
+
+        scene.App.SimulateKey(Alt(2));
+        await Assert.That(scene.App.StatusMarkup)
+            .Contains("Bob has one window")
+            .Because("Ann's second window is not Bob's second window; it is not his at all, and the "
+                + "refusal names whose windows it counted");
+        await Assert.That(scene.App.ActiveWindowId()).IsEqualTo("char:Bravo.Bob");
+    }
+
+    /// <summary>
+    /// <b>A window nobody owns is in everybody's numbering.</b> The web view belongs to no session and is
+    /// reachable from wherever you are, so it takes a digit under each character — a different one under
+    /// each, since it sits after that character's own windows. That is not a second numbering: it is
+    /// exactly the set the rail draws window rows for, which admits a character's own windows plus the
+    /// unowned ones, so the sidebar and the chord read one list.
+    /// </summary>
+    [Test]
+    public async Task AnUnownedWindowIsNumberedUnderEveryCharacter()
+    {
+        var scene = await BuildScene();
+        scene.App.OpenUnownedWindowForTest("web", "Web");
+        scene.App.RenderNextFrame();
+
+        // Ann owns two, so the web view is her third.
+        scene.App.SimulateKey(Alt(1));
+        scene.App.RenderNextFrame();
+        await Assert.That(WindowRowChord(scene.App, "Web")).IsEqualTo("⌥3");
+        scene.App.SimulateKey(Alt(3));
+        await Assert.That(scene.App.ActiveWindowId()).IsEqualTo("web");
+
+        // Bob owns one, so it is his second — a different digit for the same window, which is what
+        // "re-based per character" means and why the sidebar has to print it rather than be inferred.
+        scene.App.SimulateKey(AltKey(ConsoleKey.J));
+        scene.App.RenderNextFrame();
+        await Assert.That(WindowRowChord(scene.App, "Web")).IsEqualTo("⌥2");
+        scene.App.SimulateKey(Alt(2));
+        await Assert.That(scene.App.ActiveWindowId()).IsEqualTo("web");
+    }
+
+    /// <summary>
+    /// <b>The half a pane-numbered chord could not do: a capture window behind another tab.</b> Ann's
+    /// Chat window shares a pane with Ann's own window and is not the tab in front — under the old chord
+    /// there was no digit that reached it, because the pane's digit went to whatever the pane was already
+    /// showing. Pressing its digit switches the tab as well as the pane.
     /// </summary>
     [Test]
     public async Task ADigitReachesACaptureWindowSittingBehindAnotherTabInItsPane()
@@ -127,11 +207,11 @@ public class WindowJumpTests
         var chatPane = scene.App.PaneIdOf(chat)!;
 
         // Stand in Chat's own pane, on the other tab, so nothing but the tab has to move.
-        scene.App.SimulateKey(Alt(scene.Windows.ToList().IndexOf("main") + 1));
+        scene.App.SimulateKey(Alt(1));
         await Assert.That(scene.App.PaneIdOf("main")).IsEqualTo(chatPane);
         await Assert.That(scene.App.ActiveWindowId()).IsNotEqualTo(chat);
 
-        scene.App.SimulateKey(Alt(scene.Windows.ToList().IndexOf(chat) + 1));
+        scene.App.SimulateKey(Alt(2));
 
         await Assert.That(scene.App.ActiveWindowId())
             .IsEqualTo(chat)
@@ -140,17 +220,26 @@ public class WindowJumpTests
     }
 
     /// <summary>
-    /// And the line typed next goes to that window's character. Asserted on the bytes the transport
+    /// And the line typed next goes to the character you cycled to. Asserted on the bytes the transport
     /// received, because <c>SendUserInputAsync</c> returns immediately with nothing underneath it — "the
     /// right world got it" against an unconnected session is true however broken the routing is.
+    /// <para>
+    /// Driven with ⌥K so the backwards half of the cycle is exercised too: Ann is first, so ⌥K wraps to
+    /// Cal and a second one lands on Bob.
+    /// </para>
     /// </summary>
     [Test]
-    public async Task TheLineTypedAfterAJumpReachesThatWindowsCharacter()
+    public async Task TheLineTypedAfterACharacterCycleReachesThatCharacter()
     {
         var scene = await BuildScene();
 
-        Send(scene.App, Digit(scene, "char:Cara.Cal"), "look");
-        Send(scene.App, Digit(scene, "char:Bravo.Bob"), "score");
+        scene.App.SimulateKey(AltKey(ConsoleKey.K));            // Ann -> Cal, wrapping
+        await Assert.That(scene.App.ActiveSessionKey).IsEqualTo("Cara.Cal");
+        Send(scene.App, "look");
+
+        scene.App.SimulateKey(AltKey(ConsoleKey.K));            // Cal -> Bob
+        await Assert.That(scene.App.ActiveSessionKey).IsEqualTo("Bravo.Bob");
+        Send(scene.App, "score");
 
         await Assert.That(scene.Transports[2].Lines).IsEquivalentTo(new[] { "look" });
         await Assert.That(scene.Transports[1].Lines).IsEquivalentTo(new[] { "score" });
@@ -175,9 +264,9 @@ public class WindowJumpTests
             .Where(c => c.Id.StartsWith(CommandIds.WindowPrefix, StringComparison.Ordinal))
             .ToDictionary(c => c.Id, c => c.Subtitle, StringComparer.Ordinal);
 
-        for (var n = 2; n <= scene.Windows.Count; n++)
+        for (var n = 2; n <= scene.Ann.Count; n++)
         {
-            var subtitle = entries[CommandIds.Window(scene.Windows[n - 1])];
+            var subtitle = entries[CommandIds.Window(scene.Ann[n - 1])];
             await Assert.That(subtitle).IsNotNull();
             await Assert.That(subtitle!)
                 .StartsWith($"⌥{n} · ")
@@ -187,75 +276,145 @@ public class WindowJumpTests
             var viaKey = scene.App.ActiveWindowId();
 
             scene.App.SimulateKey(Alt(1));
-            await Assert.That(scene.App.DispatchCommand(CommandIds.Window(scene.Windows[n - 1]))).IsTrue();
+            await Assert.That(scene.App.DispatchCommand(CommandIds.Window(scene.Ann[n - 1]))).IsTrue();
             await Assert.That(scene.App.ActiveWindowId()).IsEqualTo(viaKey);
+        }
+
+        // And a window belonging to somebody else carries no chord at all: ⌥2 from here reaches Ann's
+        // capture, not Bob's window, so an entry claiming a digit for it would name a key that goes
+        // somewhere else.
+        await Assert.That(entries[CommandIds.Window("char:Bravo.Bob")]!.Contains('⌥'))
+            .IsFalse()
+            .Because("the numbering is the active character's, and Bob's window is not in it");
+    }
+
+    /// <summary>
+    /// <b>The chord the rail prints against a character reaches that character.</b> Window rows are drawn
+    /// for the active character only, so the way to another character has to be legible on their own row
+    /// or the cycle is a key nobody finds. Only the two <em>neighbours</em> carry one, because only they
+    /// are a single keystroke away; the chord is read out of the rendered sidebar and pressed.
+    /// <para>
+    /// The row used to carry the chord of that character's own window. Scoped to the active character
+    /// that printed <c>⌥1</c> against every character on the screen, which is the confusion this design
+    /// replaced.
+    /// </para>
+    /// </summary>
+    [Test]
+    public async Task PressingTheChordTheRailPrintsAgainstACharacterGoesToThatCharacter()
+    {
+        var scene = await BuildScene();
+
+        // Three characters: from each one, exactly two rows carry a chord and pressing either arrives.
+        foreach (var _ in new[] { 1, 2, 3 })
+        {
+            scene.App.RenderNextFrame();
+            var here = scene.App.ActiveSessionKey!;
+
+            var forward = CharacterWearing(scene.App, "⌥J");
+            var back = CharacterWearing(scene.App, "⌥K");
+            await Assert.That(forward).IsNotNull();
+            await Assert.That(back).IsNotNull();
+            await Assert.That(forward).IsNotEqualTo(back);
+            await Assert.That(forward).IsNotEqualTo(NameOf(here));
+
+            // Nobody else wears one — including the row you are standing on, whose ▸ already says so.
+            await Assert.That(CharactersWearingAChord(scene.App).Count)
+                .IsEqualTo(2)
+                .Because("only the two neighbours are one keystroke away, and a third would be a lie");
+
+            scene.App.SimulateKey(AltKey(ConsoleKey.K));
+            await Assert.That(NameOf(scene.App.ActiveSessionKey!))
+                .IsEqualTo(back)
+                .Because($"the rail said ⌥K went to {back} from {here}");
+
+            scene.App.SimulateKey(AltKey(ConsoleKey.J));
+            await Assert.That(scene.App.ActiveSessionKey)
+                .IsEqualTo(here)
+                .Because("⌥J undoes ⌥K");
+
+            scene.App.SimulateKey(AltKey(ConsoleKey.J));
         }
     }
 
     /// <summary>
-    /// <b>The chord the rail prints against another character reaches that character.</b> Window rows are
-    /// drawn for the active character only, so a background character's digit has to be legible on their
-    /// own row or the chord is not a character switch at all — which is what "switch between characters"
-    /// asked for. The digit is read out of the rendered sidebar while somebody else is active, and then
-    /// pressed.
+    /// <b>The cycle never opens a character it was not already holding.</b> Switching to one the client
+    /// has never opened <em>creates</em> a session and a window (the shell's <c>SwitchToCharacter</c>),
+    /// and a cycle key that did that per press would dial through a configuration by accident. Driven
+    /// twice: round a fixture with three characters open and two more configured and untouched, where the
+    /// count must not move; and on a client with none open, where it says so rather than appearing dead.
     /// </summary>
     [Test]
-    public async Task PressingTheDigitTheRailPrintsAgainstACharacterGoesToThatCharacter()
+    public async Task TheCycleWalksOnlyOpenCharactersAndOpensNothing()
     {
         var scene = await BuildScene();
 
-        foreach (var (name, key) in new[] { ("Cal", "Cara.Cal"), ("Bob", "Bravo.Bob"), ("Ann", "Alfa.Ann") })
+        // Two more characters exist in the configuration and have never been opened.
+        var configured = scene.App.BuildCatalog()
+            .Count(c => c.Id.StartsWith(CommandIds.CharacterPrefix, StringComparison.Ordinal));
+        await Assert.That(configured).IsGreaterThanOrEqualTo(2);
+
+        var windows = scene.App.WindowIds().Count;
+        var visited = new List<string>();
+        for (var i = 0; i < 6; i++)
         {
-            // Stand somewhere else first, so the row being read is an inactive character's.
-            scene.App.SimulateKey(Alt(1));
-            scene.App.RenderNextFrame();
-
-            var digit = int.Parse(CharacterChord(scene.App, name)![1..]);
-            scene.App.SimulateKey(Alt(digit));
-
-            await Assert.That(scene.App.ActiveSessionKey)
-                .IsEqualTo(key)
-                .Because($"the rail said {name} was ⌥{digit}");
+            scene.App.SimulateKey(AltKey(ConsoleKey.J));
+            visited.Add(scene.App.ActiveSessionKey!);
         }
+
+        await Assert.That(scene.App.WindowIds().Count)
+            .IsEqualTo(windows)
+            .Because("a cycle key must not open a session for a character you have never been to");
+        await Assert.That(visited.Distinct().Count())
+            .IsEqualTo(3)
+            .Because("six steps round three open characters visit those three and nobody else");
+
+        // And with nothing open at all it reports rather than doing nothing quietly.
+        var fresh = App();
+        fresh.RenderSnapshot();
+        var before = fresh.WindowIds().Count;
+        fresh.SimulateKey(AltKey(ConsoleKey.J));
+
+        await Assert.That(fresh.StatusMarkup).Contains("no character is open");
+        await Assert.That(fresh.WindowIds().Count).IsEqualTo(before);
     }
 
     /// <summary>
     /// <b>Closing a window compacts the numbering, on the chord and in the sidebar together.</b> Creation
     /// sequences are never reused, so a number read straight off one would leave a hole: a digit would
-    /// report "there is no window" while the windows sat on the screen, and the last one would be
-    /// reachable only by a digit past the count. The number is the position in the numbering for exactly
-    /// this reason, and the two surfaces are asserted together because a chord that disagrees with the
-    /// label is the defect this numbering exists to avoid.
+    /// report "there is no window" while the windows sat on the screen. The number is the position in the
+    /// numbering for exactly this reason, and the two surfaces are asserted together because a chord that
+    /// disagrees with the label is the defect this numbering exists to avoid.
     /// </summary>
     [Test]
     public async Task ClosingAWindowCompactsTheNumberingOnTheChordAndInTheSidebar()
     {
         var scene = await BuildScene();
-        var chat = Workspace.SpawnWindowId("Chat");
-        var count = scene.Windows.Count;
+        scene.App.OpenUnownedWindowForTest("web", "Web");
+        scene.App.SimulateKey(Alt(1));
+        scene.App.RenderNextFrame();
 
-        // Cal's window is last, so Cal's row wears the highest digit — until Chat, ahead of it, goes away.
-        await Assert.That(CharacterChord(scene.App, "Cal")).IsEqualTo($"⌥{count}");
+        // Ann: main ⌥1, Chat ⌥2, the web view ⌥3.
+        await Assert.That(WindowRowChord(scene.App, "Web")).IsEqualTo("⌥3");
 
-        scene.App.SimulateKey(Alt(scene.Windows.ToList().IndexOf(chat) + 1));
-        await Assert.That(scene.App.ActiveWindowId()).IsEqualTo(chat);
+        scene.App.SimulateKey(Alt(2));                       // Chat
+        await Assert.That(scene.App.ActiveWindowId()).IsEqualTo(Workspace.SpawnWindowId("Chat"));
         await Assert.That(scene.App.DispatchCommand("layout:close")).IsTrue();
         scene.App.RenderNextFrame();
 
-        await Assert.That(scene.App.PlacedWindowIds).DoesNotContain(chat);
-        await Assert.That(CharacterChord(scene.App, "Cal"))
-            .IsEqualTo($"⌥{count - 1}")
+        await Assert.That(scene.App.NumberedWindowIds).DoesNotContain(Workspace.SpawnWindowId("Chat"));
+        await Assert.That(WindowRowChord(scene.App, "Web"))
+            .IsEqualTo("⌥2")
             .Because("the windows on the screen must be numbered without a hole where the closed one was");
 
         scene.App.SimulateKey(Alt(1));
-        scene.App.SimulateKey(Alt(count - 1));
-        await Assert.That(scene.App.ActiveSessionKey)
-            .IsEqualTo("Cara.Cal")
+        scene.App.SimulateKey(Alt(2));
+        await Assert.That(scene.App.ActiveWindowId())
+            .IsEqualTo("web")
             .Because("the last window's digit must follow the compaction the sidebar drew");
 
-        scene.App.SimulateKey(Alt(count));
-        await Assert.That(scene.App.StatusMarkup).Contains($"there is no window {count}");
-        await Assert.That(scene.App.ActiveSessionKey).IsEqualTo("Cara.Cal");
+        scene.App.SimulateKey(Alt(3));
+        await Assert.That(scene.App.StatusMarkup).Contains("there is no window 3");
+        await Assert.That(scene.App.ActiveWindowId()).IsEqualTo("web");
     }
 
     /// <summary>
@@ -276,29 +435,24 @@ public class WindowJumpTests
         {
             ["main"] = WindowRowChord(scene.App, "main"),
             ["Chat"] = WindowRowChord(scene.App, "Chat"),
-            ["Bob"] = CharacterChord(scene.App, "Bob"),
-            ["Cal"] = CharacterChord(scene.App, "Cal"),
         };
 
         scene.Transports[0].Receive("<Trade> Ann offers a lamp\n");
         scene.App.RenderNextFrame();
 
         var arrival = Workspace.SpawnWindowId("Trade");
-        await Assert.That(scene.App.PlacedWindowIds).Contains(arrival);
+        await Assert.That(scene.App.NumberedWindowIds).Contains(arrival);
 
         foreach (var (what, chord) in before)
         {
-            var now = what is "main" or "Chat"
-                ? WindowRowChord(scene.App, what)
-                : CharacterChord(scene.App, what);
-            await Assert.That(now)
+            await Assert.That(WindowRowChord(scene.App, what))
                 .IsEqualTo(chord)
                 .Because($"{what} was {chord} before a channel opened and must still be");
         }
 
-        await Assert.That(WindowRowChord(scene.App, "Trade")).IsEqualTo($"⌥{scene.Windows.Count + 1}");
+        await Assert.That(WindowRowChord(scene.App, "Trade")).IsEqualTo($"⌥{scene.Ann.Count + 1}");
 
-        scene.App.SimulateKey(Alt(scene.Windows.Count + 1));
+        scene.App.SimulateKey(Alt(scene.Ann.Count + 1));
         await Assert.That(scene.App.ActiveWindowId()).IsEqualTo(arrival);
     }
 
@@ -317,7 +471,7 @@ public class WindowJumpTests
         var app = new SharpMUTermApp(config, Headless, new HeadlessConsoleDriver(120, 34));
         app.RenderSnapshot();
 
-        await Assert.That(app.PlacedWindowIds.Count).IsEqualTo(1);
+        await Assert.That(app.NumberedWindowIds.Count).IsEqualTo(1);
         await Assert.That(app.RailLines.Any(l => Regex.IsMatch(l, @"⌥\d")))
             .IsFalse()
             .Because("with one window, naming it says nothing and costs the panes their columns");
@@ -326,7 +480,7 @@ public class WindowJumpTests
     // --- out of range: report, never a silent no-op -------------------------------------------------
 
     /// <summary>
-    /// <b>⌥7 with four windows says so.</b> A silent no-op is the most-repeated defect in this codebase's
+    /// <b>⌥7 with two windows says so.</b> A silent no-op is the most-repeated defect in this codebase's
     /// history, and a digit with no window behind it is the commonest way to press this chord wrong. The
     /// notice names the digit and the count, and nothing moves.
     /// </summary>
@@ -338,23 +492,26 @@ public class WindowJumpTests
         var window = scene.App.ActiveWindowId();
         var session = scene.App.ActiveSessionKey;
 
-        foreach (var digit in new[] { 5, 7, 9 })
+        foreach (var digit in new[] { 3, 7, 9 })
         {
             scene.App.SimulateKey(Alt(digit));
 
             await Assert.That(scene.App.StatusMarkup).Contains($"there is no window {digit}");
-            await Assert.That(scene.App.StatusMarkup).Contains(scene.Windows.Count.ToString());
+            await Assert.That(scene.App.StatusMarkup)
+                .Contains("Ann")
+                .Because("the numbering is per character, so a count with no subject names the wrong set");
+            await Assert.That(scene.App.StatusMarkup).Contains(scene.Ann.Count.ToString());
             await Assert.That(scene.App.ActiveWindowId()).IsEqualTo(window);
             await Assert.That(scene.App.ActiveSessionKey).IsEqualTo(session);
         }
     }
 
     /// <summary>
-    /// On a workspace with one window every digit past the first is out of range, and the refusal says
-    /// the useful thing instead of counting: the two ways a second window comes into being.
+    /// With one window of your own every digit past the first is out of range, and the refusal says the
+    /// useful thing instead of counting: the numbering is yours, so the way out of it is a character.
     /// </summary>
     [Test]
-    public async Task OnOneWindowTheRefusalSaysHowToOpenAnother()
+    public async Task OnOneWindowTheRefusalPointsAtTheCharacterCycle()
     {
         Console.SetIn(TextReader.Null);
         var config = DemoScene.Build();
@@ -367,8 +524,9 @@ public class WindowJumpTests
         app.SimulateKey(Alt(2));
 
         await Assert.That(app.StatusMarkup).Contains("one window");
-        await Assert.That(app.StatusMarkup).Contains("F5");
-        await Assert.That(app.StatusMarkup).Contains("F2");
+        await Assert.That(app.StatusMarkup)
+            .Contains("⌥J")
+            .Because("with one window of your own, the useful next move is another character");
     }
 
     /// <summary>
@@ -483,7 +641,7 @@ public class WindowJumpTests
         app.RenderSnapshot("split");
         var first = app.FocusedPaneId;
         var second = app.PaneIds.Single(id => id != first);
-        var elsewhere = app.PlacedWindowIds.ToList().FindIndex(id => app.PaneIdOf(id) == second) + 1;
+        var elsewhere = app.NumberedWindowIds.ToList().FindIndex(id => app.PaneIdOf(id) == second) + 1;
         await Assert.That(elsewhere).IsGreaterThan(0);
 
         await Assert.That(app.DispatchCommand("layout:zoom")).IsTrue();
@@ -572,14 +730,17 @@ public class WindowJumpTests
     private static ConsoleKeyInfo Alt(int digit) =>
         new((char)('0' + digit), ConsoleKey.D0 + digit, false, true, false);
 
+    /// <summary>An Alt+letter chord, as the terminal delivers it: <c>ESC</c> + the letter.</summary>
+    private static ConsoleKeyInfo AltKey(ConsoleKey key) =>
+        new(char.ToLowerInvariant(key.ToString()[0]), key, false, true, false);
+
     private static ConsoleKeyInfo Ctrl(ConsoleKey key) => new('\0', key, false, false, true);
 
     private static ConsoleKeyInfo Plain(char c, ConsoleKey key) => new(c, key, false, false, false);
 
-    /// <summary>Jumps to a window by id, empties the armed bar, and sends <paramref name="line"/>.</summary>
-    private static void Send(SharpMUTermApp app, int digit, string line)
+    /// <summary>Empties the armed bar and sends <paramref name="line"/> from wherever the client is.</summary>
+    private static void Send(SharpMUTermApp app, string line)
     {
-        app.SimulateKey(Alt(digit));
         app.SimulateKey(Ctrl(ConsoleKey.E));
         app.SimulateKey(Ctrl(ConsoleKey.U));
         foreach (var c in line)
@@ -589,8 +750,6 @@ public class WindowJumpTests
 
         app.SimulateKey(Plain('\r', ConsoleKey.Enter));
     }
-
-    private static int Digit(Scene scene, string windowId) => scene.Windows.ToList().IndexOf(windowId) + 1;
 
     /// <summary>
     /// The <c>⌥N</c> the rail prints on the window row labelled <paramref name="label"/>. Read out of the
@@ -617,32 +776,39 @@ public class WindowJumpTests
     }
 
     /// <summary>
-    /// The <c>⌥N</c> the rail prints on <paramref name="character"/>'s own row, or null.
+    /// The character whose rail row carries <paramref name="chord"/>, or null when no row does.
     /// <para>
-    /// Read off the row's <em>visible</em> cells, with the markup stripped first. A rail row is wrapped in
-    /// a <c>[link=cmd%3Acharacter%3AAlfa.Ann]</c> span, and a world row's target is one of its characters'
-    /// — so matching the raw markup finds "Ann" on the <c>Alfa</c> row above hers, which has no chord and
-    /// never should. Character rows are told apart from window rows by the <c>▪</c> bullet the latter
-    /// carry, both using this same column.
+    /// Read off the rows' <em>visible</em> cells, with the markup stripped first. A rail row is wrapped in
+    /// a <c>[link=cmd%3Acharacter%3AAlfa.Ann]</c> span, so matching raw markup would find a name in a
+    /// link target as well as in the text. Character rows are told apart from window rows by the <c>▪</c>
+    /// bullet the latter carry; both use this same column.
     /// </para>
     /// </summary>
-    private static string? CharacterChord(SharpMUTermApp app, string character)
+    private static string? CharacterWearing(SharpMUTermApp app, string chord)
     {
         foreach (var line in app.RailLines.Select(Visible))
         {
-            if (line.Contains('▪', StringComparison.Ordinal) ||
-                !Regex.IsMatch(line, $@"(?<![A-Za-z]){Regex.Escape(character)}(?![A-Za-z])"))
+            if (line.Contains('▪', StringComparison.Ordinal) || !line.Contains(chord, StringComparison.Ordinal))
             {
                 continue;
             }
 
-            var match = Regex.Match(line, @"⌥\d");
-            return match.Success ? match.Value : null;
+            var match = Regex.Match(line, @"[A-Za-z][A-Za-z0-9]*\s*$");
+            var name = Regex.Match(line.Replace(chord, string.Empty, StringComparison.Ordinal), @"[A-Za-z]+");
+            return name.Success ? name.Value : match.Value.Trim();
         }
 
-        throw new InvalidOperationException(
-            $"no rail row for {character}: {string.Join(" / ", app.RailLines.Select(Visible))}");
+        return null;
     }
+
+    /// <summary>Every character row currently carrying a chord, so "and nobody else" is checkable.</summary>
+    private static List<string> CharactersWearingAChord(SharpMUTermApp app) =>
+        app.RailLines.Select(Visible)
+            .Where(l => !l.Contains('▪', StringComparison.Ordinal) && Regex.IsMatch(l, @"⌥[JK]"))
+            .ToList();
+
+    /// <summary>The character half of a <c>world.character</c> key.</summary>
+    private static string NameOf(string sessionKey) => sessionKey[(sessionKey.IndexOf('.') + 1)..];
 
     /// <summary>A rail row's cells, with its style and link markup removed.</summary>
     private static string Visible(string markup) =>
@@ -726,15 +892,18 @@ public class WindowJumpTests
     }
 
     /// <summary>Three panes, one connected character each, plus one capture window behind a tab.</summary>
-    /// <param name="Labels">
-    /// What the rail calls each window on its own row, parallel to <paramref name="Windows"/>: a
-    /// character's own session window reads <c>main</c>, a capture keeps its title.
+    /// <param name="Ann">
+    /// Ann's own windows in numbering order — the digits ⌥1… mean while she is the active character, and
+    /// the whole of the numbering, because the other two characters' windows are not in it.
+    /// </param>
+    /// <param name="AnnLabels">
+    /// What the rail calls each of them on its own row, parallel to <paramref name="Ann"/>: a character's
+    /// own session window reads <c>main</c>, a capture keeps its title.
     /// </param>
     private sealed record Scene(
         SharpMUTermApp App,
-        IReadOnlyList<string> Windows,
-        IReadOnlyList<string> Labels,
-        IReadOnlyList<string> Owners,
+        IReadOnlyList<string> Ann,
+        IReadOnlyList<string> AnnLabels,
         IReadOnlyList<RecordingTelnetSession> Transports);
 
     /// <summary>
@@ -789,7 +958,12 @@ public class WindowJumpTests
 
         var chat = Workspace.SpawnWindowId("Chat");
         var windows = new[] { "main", chat, "char:Bravo.Bob", "char:Cara.Cal" };
-        var labels = new[] { "main", "Chat", "main", "main" };
+
+        // Ann's two, in creation order — which is the whole of ⌥N while she is active. Bob's and Cal's
+        // windows sit in the same workspace with higher sequences and are deliberately *not* numbered
+        // from here; that is the claim the redesign turned on.
+        var ann = new[] { "main", chat };
+        var annLabels = new[] { "main", "Chat" };
         var sessions = names.Select(n => $"{n.Item1}.{n.Item2}").ToArray();
         var owners = new[] { sessions[0], sessions[0], sessions[1], sessions[2] };
 
@@ -860,17 +1034,19 @@ public class WindowJumpTests
             await app.FindSession(key)!.ConnectAsync();
         }
 
+        // Back to Ann, so the numbering under test is hers and the cycle starts at a known place.
+        app.DispatchCommand(CommandIds.Character(sessions[0]));
         app.RenderNextFrame();
 
-        // The fixture's own claim: four windows, in the order they were sequenced. Everything after this
-        // reads the rail, so a resumed workspace that came back differently must fail here and not
+        // The fixture's own claim: Ann is active and her two windows are the numbering. Everything after
+        // this reads the rail, so a resumed workspace that came back differently must fail here and not
         // silently make the assertions vacuous.
-        if (!app.PlacedWindowIds.SequenceEqual(windows))
+        if (app.ActiveSessionKey != sessions[0] || !app.NumberedWindowIds.SequenceEqual(ann))
         {
             throw new InvalidOperationException(
-                $"the resumed workspace numbers windows {string.Join(", ", app.PlacedWindowIds)}");
+                $"{app.ActiveSessionKey} is active and numbers {string.Join(", ", app.NumberedWindowIds)}");
         }
 
-        return new Scene(app, windows, labels, owners, transports);
+        return new Scene(app, ann, annLabels, transports);
     }
 }

@@ -99,7 +99,7 @@ public class CommandCatalogTests
     /// <summary>
     /// <b>A window's entry names the chord that goes to it, and the chord is the numbering's.</b> The ⌃P
     /// surface is a second door onto ⌥N rather than a second way of switching window, so the subtitle
-    /// leads with the digit — and the digit is read out of <c>PlacedWindows</c>, the one order windows
+    /// leads with the digit — and the digit is read out of <c>WindowsFor</c>, the one order windows
     /// are numbered in, rather than counted here.
     /// <para>
     /// The tenth window and beyond carry no chord: ⌥0 is unclaimed and there is no tenth key, so the
@@ -115,12 +115,14 @@ public class CommandCatalogTests
             ws.RouteSpawn($"w{i}", "Aetherfall.Corvid");
         }
 
-        var placed = ws.PlacedWindows;
+        var placed = ws.WindowsFor("Aetherfall.Corvid");
         await Assert.That(placed.Count).IsEqualTo(11);
 
-        // Nothing is active, so every window gets an entry — the skip is only for the focused one.
+        // No window is active, so every one gets an entry — the skip is only for the focused window. The
+        // focused *character* is Corvid, because the numbering is scoped to whoever is active and a
+        // catalog built for nobody would correctly hand out no chords at all.
         ws.Layout.FocusedPane.ActiveIndex = -1;
-        var entries = CommandCatalog.Build(ws, Characters, null, new CommandContext())
+        var entries = CommandCatalog.Build(ws, Characters, "Aetherfall.Corvid", new CommandContext())
             .Where(c => c.Id.StartsWith(CommandIds.WindowPrefix, StringComparison.Ordinal))
             .ToDictionary(c => c.Id, c => c.Subtitle, StringComparer.Ordinal);
 

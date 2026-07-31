@@ -106,19 +106,46 @@ internal static class MacroKeys
     {
         new(ConsoleModifiers.Control, ConsoleKey.Q, "asks whether to quit"),
         new(ConsoleModifiers.Control, ConsoleKey.N, "picks the next window"),
-        new(ConsoleModifiers.Control, ConsoleKey.Tab, "picks the next window"),
+        // ⌃Tab is deliberately absent, and its absence is measured rather than assumed: a terminal writes
+        // 0x09 for it, byte-identical to a bare Tab (read off a pty with `kitten @ send-key`), so the
+        // parser reports ConsoleKey.Tab with no Control bit and this claim could never once have matched.
+        // It is the ⌃H/⌃I/⌃M/⌃J trap one key over — and worse than dead, because Claimed is consulted
+        // before anything else, so F4 was telling users a chord was taken that cannot arrive at all. The
+        // byte is recorded in ControlBytes instead, which is what makes Verdict say so. ⌃N is the chord.
         new(ConsoleModifiers.Control, ConsoleKey.W, "closes the window"),
         new(ConsoleModifiers.Control, ConsoleKey.O, "cycles the panes"),
         new(ConsoleModifiers.Control, ConsoleKey.P, "opens the command surface"),
         new(ConsoleModifiers.Control, ConsoleKey.B, "arms the pane prefix"),
         new(ConsoleModifiers.Control, ConsoleKey.F, "freezes the pane"),
         new(ConsoleModifiers.Control, ConsoleKey.R, "searches the command history"),
-        // The connection pair. ⌃D is the terminal's own hang-up chord and is spent on the action it
-        // idiomatically means; Alt+R spells "Reconnect" one modifier over from the ⌃R this app has
-        // already given to the history surface. Both act at once — ⌃Q is the only key in this client
-        // that asks anything.
-        new(ConsoleModifiers.Control, ConsoleKey.D, "disconnects the focused character"),
+        // The connection pair, and it is a pair: ⌥D disconnects, ⌥R reconnects. One modifier, two
+        // letters that spell the two words, opposite actions that look opposite on the keyboard.
+        //
+        // Disconnect was ⌃D, and the justification given for the split was two separate ones bolted
+        // together — "⌃D is the terminal's own hang-up chord" and "Alt+R is one modifier over from the ⌃R
+        // the history surface already has". Each is fine alone; together they made a reader learn two
+        // modifiers for one concept, which is what got reported ("It's 'CTRL-D' to disconnect, but
+        // 'ALT-R' to reconnect? Why are they not both under Alt?"). A pair of opposite actions that do
+        // not share a modifier is not a pair.
+        //
+        // ⌃D is *released* rather than kept as a second binding. A second key for one action has to be
+        // advertised or it is a secret, and advertising it makes every surface that lists chords — F4,
+        // ⌃P, --help — carry one action twice and read as two features. Letting it go also hands it back
+        // to the user: Verdict("Ctrl+D") now says it fires, so a macro can be bound to it. Nothing in the
+        // framework takes it — HandleMoveInput is gated on IsMovable, which this app sets false, and it
+        // only acts on the arrows and X anyway — and InputBarControl's Ctrl table has no D.
+        //
+        // Both act at once; ⌃Q is the only key in this client that asks anything.
+        new(ConsoleModifiers.Alt, ConsoleKey.D, "disconnects the focused character"),
         new(ConsoleModifiers.Alt, ConsoleKey.R, "reconnects the focused character"),
+        // The character cycle. Letters and not digits because the digit row is spent (⌥N windows, ⌃B N
+        // panes) and there is no third digit-bearing modifier this terminal delivers: read off a pty,
+        // kitty writes ⌥⇧1 as `CSI 49;4u` and ⌃⇧N as `CSI 110;6u` — kitty-keyboard-protocol sequences
+        // this client's parser does not decode — while ⌥j and ⌥k are a plain `ESC j` / `ESC k`.
+        // Down and up, because the rail lists characters down the sidebar and that is where the chords
+        // are read off.
+        new(ConsoleModifiers.Alt, ConsoleKey.J, "goes to the next character"),
+        new(ConsoleModifiers.Alt, ConsoleKey.K, "goes to the previous character"),
         new((ConsoleModifiers)0, ConsoleKey.F2, "opens Triggers"),
         new((ConsoleModifiers)0, ConsoleKey.F3, "opens Aliases"),
         new((ConsoleModifiers)0, ConsoleKey.F4, "opens this screen"),
@@ -240,6 +267,13 @@ internal static class MacroKeys
                 : new MacroKeyVerdict(MacroKeyDelivery.Taken, "unmodified, this belongs to the prompt");
         }
 
+        // A named key whose Ctrl form the terminal has already spent — Tab is the one that is not a
+        // letter, and it is here rather than in Chord() because Chord() only sees letters and digits.
+        if (parts.Ctrl && ControlBytes.TryGetValue(parts.Key, out var spentOn))
+        {
+            return Never($"the terminal sends {spentOn} instead");
+        }
+
         return Never("only F-keys and Ctrl/Alt chords arrive");
     }
 
@@ -315,13 +349,19 @@ internal static class MacroKeys
         ["9"] = "a bare 9",
     };
 
-    /// <summary>The letters whose control byte the terminal has already spent on another key.</summary>
+    /// <summary>
+    /// The keys whose control byte the terminal has already spent on another key. Every entry is a byte
+    /// observed on a pty, not a guess: the four letters, and <c>Tab</c> itself — <c>⌃Tab</c> is
+    /// <c>0x09</c>, which is what a bare Tab is, so it is the same trap wearing a different name and was
+    /// claimed as a shortcut here until it was measured.
+    /// </summary>
     private static readonly Dictionary<string, string> ControlBytes = new(StringComparer.Ordinal)
     {
         ["I"] = "Tab",
         ["M"] = "Enter",
         ["J"] = "Enter",
         ["H"] = "Backspace",
+        ["Tab"] = "a bare Tab",
     };
 
     /// <summary>The keys that are navigation rather than text — bindable, but only as part of a chord.</summary>

@@ -13,7 +13,7 @@ public sealed class Workspace
 
     /// <summary>
     /// The last <see cref="WorkspaceWindow.Sequence"/> handed out. Never reused, so a number is a
-    /// window's for as long as it is open — see <see cref="PlacedWindows"/> for why the ordinal is then
+    /// window's for as long as it is open — see <see cref="WindowsFor"/> for why the ordinal is then
     /// taken from the sorted position rather than from this.
     /// </summary>
     private int _sequenceCounter;
@@ -63,16 +63,33 @@ public sealed class Workspace
     /// <summary>
     /// Every known window, whether or not a pane still holds it. The order is the registry's, which is a
     /// dictionary's — fine for "what exists", and <b>not</b> what anything numbers windows by; see
-    /// <see cref="PlacedWindows"/>.
+    /// <see cref="WindowsFor"/>.
     /// </summary>
     public IReadOnlyCollection<WorkspaceWindow> Windows => _windows.Values;
 
     /// <summary>
-    /// <b>Every window a pane is holding, in creation order — the one order this client numbers windows
-    /// in.</b> The Nth entry is the window ⌥N goes to, the <c>⌥N</c> the connection rail prints on that
-    /// window's row (and on its character's), and the chord the ⌃P <c>Go to …</c> entry for it names.
-    /// Those are three spellings of this index and there is deliberately no second ordering for any of
-    /// them to drift onto.
+    /// <b>The windows <paramref name="sessionKey"/> can reach, in creation order — the one order this
+    /// client numbers windows in.</b> The Nth entry is the window ⌥N goes to while that character is
+    /// active, the <c>⌥N</c> the connection rail prints on that window's row, and the chord the ⌃P
+    /// <c>Go to …</c> entry for it names. Those are three spellings of this index and there is
+    /// deliberately no second ordering for any of them to drift onto.
+    /// <para>
+    /// <b>Scoped to the active character, and re-based from 1 for each.</b> It was global — every window
+    /// in the workspace in one sequence — and that failed on a real client the first day it was used:
+    /// with three characters sharing pane 1 as tabs, every character's row read <c>⌥1</c> because their
+    /// windows happened to be numbered from the same run. Nine digits also do not stretch across
+    /// everybody's windows; six windows over three characters already crowds them. Scoped, ⌥1 is
+    /// <em>this</em> character's main window whoever you are, ⌥2 their first capture, and the digits mean
+    /// the same thing wherever you stand.
+    /// </para>
+    /// <para>
+    /// <b>An unowned window is in everybody's list.</b> The web view belongs to no session and is
+    /// reachable from wherever you are, so it takes a digit under each character — a different one under
+    /// each, since it sits after that character's own windows. That is not a second numbering: this
+    /// method is exactly the set the rail draws window rows for (its owner filter admits a character's
+    /// own windows plus the unowned ones), so the digit on the screen and the digit in the chord are the
+    /// same list read twice.
+    /// </para>
     /// <para>
     /// <b>Creation order, for the reason panes are in creation order.</b> Any ordering that is a function
     /// of <em>where</em> a window sits — its tab index, its pane's position — moves when something is
@@ -91,9 +108,14 @@ public sealed class Workspace
     /// there is no way to go, and would shift every window after it for a row that names nothing.
     /// </para>
     /// </summary>
-    public IReadOnlyList<WorkspaceWindow> PlacedWindows =>
+    /// <param name="sessionKey">
+    /// The active character, or null when nothing is active — which leaves the unowned windows, the only
+    /// ones there is anywhere to go to.
+    /// </param>
+    public IReadOnlyList<WorkspaceWindow> WindowsFor(string? sessionKey) =>
         _windows.Values
             .Where(w => Layout.FindWindow(w.Id) is not null)
+            .Where(w => w.SessionKey is null || string.Equals(w.SessionKey, sessionKey, StringComparison.Ordinal))
             .OrderBy(w => w.Sequence)
             .ToList();
 

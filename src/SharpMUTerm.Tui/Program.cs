@@ -327,7 +327,10 @@ internal static class Program
         // spelt out because a reconnect on a live connection is a disconnect with a dial after it and the
         // reader has to know that before pressing it.
         usage.WriteLine("World:  Alt+R reconnects the focused character (drops the connection and redials it at once);");
-        usage.WriteLine("        Ctrl+D disconnects it at once. Neither asks. With nothing connected, each says so.");
+        usage.WriteLine("        Alt+D disconnects it at once. Neither asks. With nothing connected, each says so.");
+        usage.WriteLine("        Alt+J and Alt+K move to the next and previous character you have open — the two the");
+        usage.WriteLine("        sidebar marks 'Alt+J' and 'Alt+K'. They never open one that is not; the sidebar and");
+        usage.WriteLine("        Ctrl+P do that.");
         usage.WriteLine("Panes:  Ctrl+B then | - z o 1-9 x b m i < > splits, zooms, goes and moves; Esc or Ctrl+B");
         usage.WriteLine("        cancels, and pausing after Ctrl+B pops a panel naming each key. Or drag a tab");
         usage.WriteLine("        strip onto another pane — middle drops it as a tab, an edge splits there.");

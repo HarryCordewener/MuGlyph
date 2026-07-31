@@ -3,7 +3,19 @@ using SharpMUTerm.Core.Workspaces;
 namespace SharpMUTerm.Core.Commands;
 
 /// <summary>A character the command surface can switch to, with enough detail to label the entry.</summary>
-public sealed record CharacterRef(string WorldName, string CharacterName, string SessionKey, bool Connected);
+/// <param name="Connected">Whether its socket is up.</param>
+/// <param name="Open">
+/// Whether the client has a session for it in this run — which is a different question from
+/// <paramref name="Connected"/>: a character you have switched to and then disconnected is open and
+/// offline. It is what <see cref="CommandCatalog.CharacterCycle"/> filters on, because the cycle keys
+/// may not <em>create</em> anything.
+/// </param>
+public sealed record CharacterRef(
+    string WorldName,
+    string CharacterName,
+    string SessionKey,
+    bool Connected,
+    bool Open = false);
 
 /// <summary>Live flags the catalog reads so stateful commands show their current value.</summary>
 /// <param name="LoggingOn">Whether the focused character is logging.</param>
@@ -44,6 +56,30 @@ public sealed record SettingsEntry(string Title, string Id, string Shortcut);
 /// </summary>
 public static class CommandCatalog
 {
+    /// <summary>
+    /// <b>The characters ⌥J and ⌥K walk, in the order the connection rail draws them.</b> The one
+    /// definition of the cycle, read by the chord, by the rail's <c>⌥J</c>/<c>⌥K</c> column and by the ⌃P
+    /// entries' subtitles, so a key and the label that advertises it cannot come to disagree.
+    /// <para>
+    /// <b>Only the characters that are already open.</b> Switching to a character the client has never
+    /// opened <em>creates</em> a session and a window (the shell's <c>SwitchToCharacter</c>), and a cycle
+    /// key that opened a session per press would dial through a configuration by accident — the user
+    /// asked for a way to move between the characters they are using, not a way to start all of them.
+    /// The ones you have not opened are still one click away in the rail and one entry away in ⌃P, and
+    /// both of those are gestures that <em>mean</em> "open it".
+    /// </para>
+    /// <para>
+    /// Configuration order, not the order they were opened, because that is the order the sidebar lists
+    /// them in and the sidebar is where the cycle is read off. An order the rail did not draw would make
+    /// "the row below me" and "the next character" two different things.
+    /// </para>
+    /// </summary>
+    public static List<CharacterRef> CharacterCycle(IReadOnlyList<CharacterRef> characters)
+    {
+        ArgumentNullException.ThrowIfNull(characters);
+        return characters.Where(c => c.Open).ToList();
+    }
+
     public static IReadOnlyList<CommandItem> Build(
         Workspace workspace,
         IReadOnlyList<CharacterRef> characters,
@@ -59,6 +95,19 @@ public static class CommandCatalog
         var activeWindow = workspace.Layout.FocusedPane.ActiveTab;
 
         // GO TO — switch character, then jump to windows.
+        //
+        // The two neighbours in the character cycle carry its chords. Only those two: ⌥J and ⌥K move one
+        // step, so they are the honest answer for the rows either side of you and a lie for anybody
+        // further away. There is deliberately no direct-selection chord to put on the rest — the digit
+        // row is spent on windows and panes, and every remaining digit-bearing modifier (⌥⇧, ⌃⇧) has no
+        // legacy encoding at all on this terminal, which was measured rather than assumed.
+        var cycle = CharacterCycle(characters);
+        var here = cycle.FindIndex(c => c.SessionKey == focusedSessionKey);
+        var next = here >= 0 && cycle.Count > 1 ? cycle[(here + 1) % cycle.Count].SessionKey : null;
+        var previous = here >= 0 && cycle.Count > 1
+            ? cycle[(here - 1 + cycle.Count) % cycle.Count].SessionKey
+            : null;
+
         foreach (var character in characters)
         {
             if (character.SessionKey == focusedSessionKey)
@@ -67,22 +116,27 @@ public static class CommandCatalog
             }
 
             var state = character.Connected ? "connected" : "offline";
+            var chord = character.SessionKey == next ? "⌥J · "
+                : character.SessionKey == previous ? "⌥K · "
+                : string.Empty;
             items.Add(new CommandItem(
                 CommandGroup.GoTo,
                 $"Switch to {character.CharacterName}",
                 CommandIds.Character(character.SessionKey),
-                $"{character.WorldName} · {state}"));
+                $"{chord}{character.WorldName} · {state}"));
         }
 
-        // The chord each window's entry names, from the one place windows are numbered. Built as a lookup
-        // rather than read per entry because the entries walk the *registry* (which includes windows no
-        // pane holds, drawn here as much as anywhere) while the numbering walks the placed ones — a
-        // closed window correctly gets no chord, and correctly does not consume a digit.
+        // The chord each window's entry names, from the one place windows are numbered — the *focused*
+        // character's list, because that is what ⌥N indexes. A window belonging to somebody else has no
+        // chord from here and correctly gets none: pressing ⌥2 would reach the focused character's second
+        // window, not this entry, and an entry naming a key that goes elsewhere is the defect the
+        // numbering exists to prevent. Built as a lookup rather than read per entry because the entries
+        // walk the whole registry, including windows no pane holds.
         var windowOrdinals = new Dictionary<string, int>(StringComparer.Ordinal);
-        var placed = workspace.PlacedWindows;
-        for (var i = 0; i < placed.Count && i < CommandIds.WindowJumpDigits; i++)
+        var reachable = workspace.WindowsFor(focusedSessionKey);
+        for (var i = 0; i < reachable.Count && i < CommandIds.WindowJumpDigits; i++)
         {
-            windowOrdinals[placed[i].Id] = i + 1;
+            windowOrdinals[reachable[i].Id] = i + 1;
         }
 
         foreach (var window in workspace.Windows)
@@ -110,8 +164,8 @@ public static class CommandCatalog
         // WORLD
         // Both carry their chord. The surface is where this client is discovered from, and a key nobody
         // can find is the same as no feature — ⌃L's newline sat unused until it was reported missing.
-        items.Add(new CommandItem(CommandGroup.World, "Reconnect", "world:reconnect", "Alt+R"));
-        items.Add(new CommandItem(CommandGroup.World, "Disconnect", "world:disconnect", "⌃D"));
+        items.Add(new CommandItem(CommandGroup.World, "Reconnect", "world:reconnect", "⌥R"));
+        items.Add(new CommandItem(CommandGroup.World, "Disconnect", "world:disconnect", "⌥D"));
 
         // TERMINAL — stateful labels.
         items.Add(context.LoggingOn

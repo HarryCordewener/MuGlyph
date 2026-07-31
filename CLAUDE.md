@@ -183,7 +183,10 @@ python3 tools/ansi_frame_to_image.py frame.ansi frame.html   # or .svg
   `messages`, `quit`, `connections` (**two connections on one world** — the one view where the header's
   fraction, the rail's dots and the quit prompt's count are all visible together and all have to agree;
   every other view has at most one character connected per world, which is what hid a header dividing
-  connections by *worlds* and a quit prompt reducing them to distinct world names), `deletions`,
+  connections by *worlds* and a quit prompt reducing them to distinct world names), `characters` (**two
+  characters genuinely open** — the one state the rail's ⌥J/⌥K column can be seen in, and the one thing
+  `connections` cannot fake: that view marks dots connected and opens no session, while the cycle walks
+  the sessions this client holds), `deletions`,
   `mssp`/`mssp-none`/`mssp-never` (the **three** states of the F5 ▸ `i` server-information report —
   a report, a server that answered and publishes none, and a world nothing has dialled; all three
   reached by driving the real `i` into a real F5, and all three needed because the two empty ones are
@@ -329,17 +332,53 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   `9`→`0x39`, `0`→`0x30`. So three of them are keys the client cannot afford to bind over and three are
   indistinguishable from typing — binding any breaks the plain key, exactly as with Ctrl+H/I/J/M.
   Recorded per digit in `MacroKeys.DigitBytes`, which is what F4 prints.
-- **There are two numberings, over two different sets, and they are spelt differently everywhere.**
-  **Windows** are `⌥N` in `Workspace.PlacedWindows` order; **panes** are `pane N` in `Layout.Panes`
-  order. Both are *creation* order, both take the number from the **index** rather than the sequence,
-  and neither is ever written in the other's vocabulary. That separation is the whole safety property:
-  the digits are the same ten characters, so if a surface could print a bare number that might be either,
-  a user reading it cannot know which key to press.
-  - **⌥1–⌥9 go to a window** (`JumpToWindow`). That is what was asked for — "switch not just characters,
-    but captures, etc." — and it is why it is not the pane: a capture sharing a pane with its character's
-    own window had no number of its own and was reachable only while it happened to be that pane's active
-    tab. `WorkspaceWindow.Sequence` is a per-workspace counter assigned at creation, persisted in
-    `WorkspaceWindowState`, never reused; a window restored without one is seeded from the saved order.
+- **Where a chord could be Ctrl or Alt, it is Alt — and "safer" is measured, not preferred.** Alt+key is
+  `ESC` + the key and arrives intact; Ctrl+key collapses onto a byte the terminal may already spend
+  (`⌃H` Backspace, `⌃I` Tab, `⌃M`/`⌃J` Enter, **`⌃Tab` a bare Tab**), and Ctrl+digit has no usable
+  encoding at all. Every chord in `MacroKeys.AppShortcuts` has been driven at a raw-mode reader with
+  `kitten @ send-key`; the bytes are in `DigitBytes`/`ControlBytes` and F4 reads them.
+  - **The connection pair is `⌥D` / `⌥R`.** Disconnect was `⌃D` on one justification ("the terminal's
+    hang-up chord") and reconnect `⌥R` on a different one ("one modifier over from `⌃R`") — each fine
+    alone, and together making a reader learn two modifiers for one concept. `⌃D` is **released**, not
+    kept as an alias: a second key for one action is either a secret or a duplicate row on every surface
+    that lists chords, and letting it go hands a clean Ctrl chord back for macros. Nothing takes it —
+    `HandleMoveInput` is gated on `IsMovable` (false here) and acts only on the arrows and `X`.
+  - **`⌃Tab` is gone and was never real.** It was claimed as a second spelling of "next window"; a
+    terminal writes `0x09` for it, which *is* Tab, so the parser reports `ConsoleKey.Tab` with no
+    Control bit and the claim could never have matched — while `Claimed` is consulted first, so F4 told
+    users a chord was taken that cannot arrive. `⌃N` is the chord; the byte is in `ControlBytes`.
+  - **Deliberately left on Ctrl**, because the convention is worth more than the pattern: `⌃R`
+    (readline's reverse history search), `⌃P` (command surface), `⌃Q` (quit — and safe here because
+    `TerminalRawMode` clears `IXON`, so it is not XON), `⌃B` (tmux's prefix), `⌃O` (pane cycle),
+    `⌃N`/`⌃W`/`⌃F`, and the command line's `⌃A`/`⌃E`/`⌃K`/`⌃U`/`⌃L`. A sweep that moved everything
+    would be as wrong as one that moved nothing.
+  - **Known and not fixed here**: `⌃N` and `⌃O` have no reverse (the character cycle does — `⌥J`/`⌥K`),
+    and `⌃W` and `⌃B x` are two chords for one action. Both are shape complaints rather than defects,
+    and both are behaviour changes rather than modifier moves.
+- **There are two numberings and one cycle, over three different sets, spelt differently everywhere.**
+  **Windows** are `⌥N` in `Workspace.WindowsFor(active)` order; **panes** are `pane N` in `Layout.Panes`
+  order; **characters** have no number at all and are reached by the `⌥J`/`⌥K` cycle. Both numberings are
+  *creation* order, both take the number from the **index** rather than the sequence, and neither is ever
+  written in the other's vocabulary. That separation is the whole safety property: the digits are the
+  same ten characters, so if a surface could print a bare number that might be either, a user reading it
+  cannot know which key to press.
+  - **⌥1–⌥9 go to a window of the *active character*, numbered from 1 within that character**
+    (`JumpToWindow`). Windows rather than panes because a capture sharing a pane with its character's own
+    window had no number of its own and was reachable only while it happened to be that pane's active tab
+    — "switch not just characters, but captures, etc." **Scoped rather than global**, because global
+    failed on a real client the first day: three characters sharing pane 1 as tabs, and the sidebar
+    giving all three of them `⌥1`. Nine digits also do not stretch over everybody's windows.
+    An **unowned** window (the web view) is in *every* character's list, so it wears a different digit
+    under each — which is exactly the set `BuildRailWindows` draws, so the sidebar and the chord are one
+    list read twice. `WorkspaceWindow.Sequence` is a per-workspace counter assigned at creation,
+    persisted in `WorkspaceWindowState`, never reused; a window restored without one is seeded from the
+    saved order.
+  - **⌥J / ⌥K cycle characters**, forward and back. Letters and not a third digit row because there is
+    no third digit-bearing modifier this terminal delivers: kitty writes `⌥⇧1` as `CSI 49;4u` and `⌃⇧N`
+    as `CSI 110;6u`, kitty-keyboard-protocol sequences the parser does not decode and silently drops
+    (measured, not assumed). It walks **only the characters already open**, because
+    `SwitchToCharacter` *creates* a session and a window for one that is not, and a cycle key that did
+    that per press would dial through a configuration by accident.
     **`Workspace.Windows` is a dictionary's values and is not the numbering** — its order is unspecified
     after a removal, so opening a window into a closed one's slot renumbers everything after it
     (`WindowNumberingTests.AWindowOpenedIntoAClosedOnesSlotStillTakesTheLastNumber` is the pin, and it
@@ -365,16 +404,22 @@ markup (`[bold #rrggbb on #rrggbb]…[/]`, `[[`/`]]` escaping, `[link=url]…[/]
   - **⌃O cycles panes in the pane order.** It read tree order once, which agreed with the numbering back
     when the numbering *was* tree order. Its partner is ⌃B N, not ⌥N — the window movers (⌥N, ⌃N) are a
     separate ladder — and three presses of ⌃O from pane 1 must land where ⌃B 4 does.
-- **The window number is global, and the rail is the only place you read it.** ⌥N indexes the
-  workspace's whole window registry rather than the active character's, so ⌥3 reaches another
-  character's window — that is what makes the nine chords a character switcher. But window rows are drawn
-  for the *active* character only (`BuildRailWindows`'s owner filter, which stays: a window row under a
-  character means that window is theirs), so other characters' digits would be invisible from anywhere
-  you could use them. Every **character** row therefore carries the chord of its own window
-  (`CharacterChordLabel` → `RailCharacter.Chord`), active or not — one column on a row that already
-  exists, costing no width at rest because a window row is indented deeper and carries the pen field as
-  well. **The sidebar prints `⌥N` and never `pane N`**: it numbers windows, and a pane noun there would
-  be a second reading of the same column.
+- **The rail is the only place you read either chord, and every row carries the one that reaches it.**
+  Window rows carry their own `⌥N`; the two character rows either side of you in the cycle carry `⌥J`
+  and `⌥K`, and every other character row carries nothing, because nothing else is one keystroke away.
+  A character row used to carry the chord of its own *window* — which, once the numbering was scoped,
+  printed `⌥1` against every character on the screen. **The sidebar prints `⌥…` and never `pane N`**: it
+  is about windows and characters, and a pane noun there would be a second reading of the same column.
+  - **The chord leads the row; the badges trail it.** The reported complaint was the gap — five blank
+    cells (the reserved pen and unread fields) between a window's name and its chord. Those fields
+    cannot be removed (a cell that costs only when it has something to say resizes the sidebar on a
+    keystroke or a line of output), so the chord moved to the front instead, against the name it names.
+    The row's measured width is unchanged by the move: the demo rail is 22 columns before and after.
+  - **The chord field is reserved per *row kind*.** Reserved, so the width does not move as unread
+    arrives, as a draft is typed, or as the `⌥J`/`⌥K` pair travels between rows. Per kind, because with
+    fewer than two characters open no character row can hold a cycle chord, and reserving across both
+    spent three cells on every character row of the commonest client there is. `RailChordColumnTests` is
+    the pin, on the sidebar's column count *and* the pane rectangles.
 - **The ordinal movers carry a zoom; the directional ones cannot.** A zoomed workspace realises
   exactly one pane, so ⌃O, ⌃B N or ⌥N moving the selection and leaving `ZoomedPaneId` behind puts the
   selection, the session the bar talks to and the caret on a pane that is **not on the screen** — the

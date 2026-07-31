@@ -4,7 +4,7 @@ namespace SharpMUTerm.Core.Tests.Workspaces;
 
 /// <summary>
 /// <b>A window's number is when it was opened, not where its tab sits.</b> ⌥1–⌥9 name windows, so the
-/// order they are counted in is a thing a user learns and presses; <see cref="Workspace.PlacedWindows"/>
+/// order they are counted in is a thing a user learns and presses; <see cref="Workspace.WindowsFor"/>
 /// is that order and this suite is what it stands on.
 /// <para>
 /// <b>Why not the registry's order.</b> <see cref="Workspace.Windows"/> is a dictionary's values, and a
@@ -91,7 +91,7 @@ public class WindowNumberingTests
         ws.CloseWindow("spawn:Chat");
 
         await Assert.That(Order(ws)).IsEqualTo("main,spawn:Trade");
-        await Assert.That(ws.PlacedWindows[1].Sequence)
+        await Assert.That(ws.WindowsFor(Owner)[1].Sequence)
             .IsGreaterThan(2)
             .Because("the sequence keeps its hole; only the position closes up");
     }
@@ -190,7 +190,7 @@ public class WindowNumberingTests
         var ws = state.Restore();
 
         await Assert.That(Order(ws)).IsEqualTo("main,spawn:Chat,web");
-        await Assert.That(ws.PlacedWindows.All(w => w.Sequence > WorkspaceWindow.Unsequenced))
+        await Assert.That(ws.WindowsFor(Owner).All(w => w.Sequence > WorkspaceWindow.Unsequenced))
             .IsTrue()
             .Because("every window is numbered on load, or a later one would collide with an unnumbered one");
     }
@@ -218,9 +218,9 @@ public class WindowNumberingTests
 
         var ws = state.Restore();
 
-        await Assert.That(ws.PlacedWindows.Select(w => w.Sequence).Distinct().Count()).IsEqualTo(2);
-        await Assert.That(ws.PlacedWindows[0].Id).IsEqualTo("main");
-        await Assert.That(ws.PlacedWindows[1].Id).IsEqualTo("spawn:Chat");
+        await Assert.That(ws.WindowsFor(Owner).Select(w => w.Sequence).Distinct().Count()).IsEqualTo(2);
+        await Assert.That(ws.WindowsFor(Owner)[0].Id).IsEqualTo("main");
+        await Assert.That(ws.WindowsFor(Owner)[1].Id).IsEqualTo("spawn:Chat");
     }
 
     // --- harness ------------------------------------------------------------------------------------
@@ -231,6 +231,9 @@ public class WindowNumberingTests
     /// on <c>[a,b,c]</c> against <c>[a,c,b]</c>, which is exactly the difference being asserted. The same
     /// trap is recorded in <c>PaneNumberingTests</c>, and this suite fell into it once before it was.
     /// </summary>
+    /// <summary>The character every window in these fixtures belongs to.</summary>
+    private const string Owner = "W.C";
+
     private static string Order(Workspace workspace) =>
-        string.Join(",", workspace.PlacedWindows.Select(w => w.Id));
+        string.Join(",", workspace.WindowsFor(Owner).Select(w => w.Id));
 }

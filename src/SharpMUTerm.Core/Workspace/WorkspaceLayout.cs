@@ -83,7 +83,7 @@ public sealed class WorkspaceLayout
     /// <c>pane N</c> in the ⌃P <c>Go to pane N</c> entry, the move/drag overlays' label and badge, and the
     /// ⌃B N chord; those are three spellings of this index and there is deliberately no second ordering
     /// for any of them to drift onto. It is <em>not</em> what ⌥N counts — that chord names a window
-    /// (<see cref="Workspace.PlacedWindows"/>), which is a different set of things in a different order,
+    /// (<see cref="Workspace.WindowsFor"/>), which is a different set of things in a different order,
     /// and the two are kept apart in the vocabulary as well: a pane is <c>pane N</c>, a window's chord is
     /// <c>⌥N</c>, and the sidebar prints only the second.
     /// <para>

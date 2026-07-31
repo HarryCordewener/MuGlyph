@@ -48,7 +48,7 @@ public class RailWindowRowTests
         var app = await LongWorld();
 
         var rows = Rail(app);
-        var window = rows.Single(r => r.TrimStart().StartsWith("▪", StringComparison.Ordinal));
+        var window = rows.Single(r => r.Contains('▪', StringComparison.Ordinal));
 
         await Assert.That(window.Trim()).IsEqualTo("▪ main");
         await Assert.That(rows.Count(r => r.Contains("Convergence MUSH", StringComparison.Ordinal))).IsEqualTo(1);
@@ -64,16 +64,17 @@ public class RailWindowRowTests
         var app = App();
         app.RenderSnapshot(); // the demo resumes Corvid's main window plus a Chat spawn
 
-        var windows = Rail(app).Where(r => r.TrimStart().StartsWith("▪", StringComparison.Ordinal)).ToList();
+        var windows = Rail(app).Where(r => r.Contains('▪', StringComparison.Ordinal)).ToList();
 
         // The demo leaves a line half-typed in the main window, so that row also carries the ✎ pen. The
         // gaps are the reserved badge fields: the pen's two cells and the unread count's three are always
         // there, blank when there is nothing to put in them, so that a keystroke or a line of output
         // cannot resize the sidebar (see RailRenderer.UnsentFieldWidth).
-        // The chord column is the tail of each row: the demo holds two windows, so ⌥1 and ⌥2 both name
-        // somewhere to go and the sidebar says which key goes there.
+        // The chord *leads* each row: the demo holds two of Corvid's windows, so ⌥1 and ⌥2 both name
+        // somewhere to go, and each sits against the name it belongs to rather than behind two blank
+        // badge fields (see RailChordColumnTests, which is where that reordering is pinned).
         await Assert.That(windows.Select(r => r.TrimEnd()).Select(r => r.TrimStart()).ToList())
-            .IsEquivalentTo(new[] { "▪ main " + Glyphs.Draft + "    ⌥1", "▪ Chat    2 ⌥2" });
+            .IsEquivalentTo(new[] { "⌥1 ▪ main " + Glyphs.Draft, "⌥2 ▪ Chat    2" });
     }
 
     /// <summary>
@@ -90,7 +91,7 @@ public class RailWindowRowTests
         app.RenderSnapshot("split"); // two panes, so both windows are visible at once
         app.RenderNextFrame();
 
-        var windows = Rail(app).Where(r => r.TrimStart().StartsWith("▪", StringComparison.Ordinal)).ToList();
+        var windows = Rail(app).Where(r => r.Contains('▪', StringComparison.Ordinal)).ToList();
         await Assert.That(windows).IsNotEmpty();
 
         foreach (var row in windows)
@@ -119,8 +120,8 @@ public class RailWindowRowTests
         var app = OneWindow();
         app.RenderSnapshot();
 
-        await Assert.That(app.PlacedWindowIds.Count).IsEqualTo(1);
-        foreach (var row in Rail(app).Where(r => r.TrimStart().StartsWith("▪", StringComparison.Ordinal)))
+        await Assert.That(app.NumberedWindowIds.Count).IsEqualTo(1);
+        foreach (var row in Rail(app).Where(r => r.Contains('▪', StringComparison.Ordinal)))
         {
             await Assert.That(row).DoesNotContain("⌥");
         }
@@ -132,12 +133,12 @@ public class RailWindowRowTests
 
         var two = App();
         two.RenderSnapshot(); // the demo resumes with a Chat capture beside the main window
-        await Assert.That(two.PlacedWindowIds.Count).IsEqualTo(2);
+        await Assert.That(two.NumberedWindowIds.Count).IsEqualTo(2);
 
         await Assert.That(Rail(two).Single(MainRow)).Contains("⌥");
         await Assert.That(MainWindowRowWidth(two))
             .IsEqualTo(single + 3)
-            .Because("the column is `⌥N` behind one space — three cells, and only when it has something to say");
+            .Because("the column is `⌥N` and one space — three cells, and only when it has something to say");
     }
 
     /// <summary>The demo scene with its capture window taken out, so one window is left in one pane.</summary>
@@ -151,7 +152,7 @@ public class RailWindowRowTests
     }
 
     private static bool MainRow(string row) =>
-        row.TrimStart().StartsWith("▪ main", StringComparison.Ordinal);
+        row.Contains("▪ main", StringComparison.Ordinal);
 
     private static int MainWindowRowWidth(SharpMUTermApp app) =>
         app.RailLines.Select(SharpMUTermApp.MarkupWidth)

@@ -989,6 +989,28 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _shortcuts[(ConsoleModifiers.Control, ConsoleKey.Q)]();
         }
 
+        // Two characters genuinely *open*, which is the one state the ⌥J/⌥K column can be seen in — and
+        // it cannot be faked the way `connections` fakes its dots. The cycle walks the characters this
+        // client holds a session for (CommandCatalog.CharacterCycle), so `_demoConnectedKeys` does not
+        // reach it: that set makes the header's fraction and the rail's dots say "connected" and opens
+        // nothing. These are real sessions, bound and not dialled, which is exactly what the shell has
+        // between opening a character and its socket coming up.
+        if (string.Equals(view, "characters", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var world in _config.Worlds.Take(2))
+            {
+                if (world.Characters.FirstOrDefault() is not null)
+                {
+                    SwitchToCharacter($"{world.Name}.{world.Characters[0].Name}");
+                }
+            }
+
+            // Back to the first, so the frame shows a character with the marker on it and both of its
+            // neighbours' chords rather than the arbitrary place the loop finished.
+            SwitchToCharacter($"{_config.Worlds[0].Name}.{_config.Worlds[0].Characters[0].Name}");
+            RebuildPaneArea();
+        }
+
         // The deletion review, reached the only way a user can reach it: open F5, take the selected world
         // out with Delete, then leave with Esc. Everything in the frame — the wording, the count of
         // characters going with the world, which button ⏎ is standing on — is what the real keys produce.
@@ -2953,18 +2975,24 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </para>
     /// <para>
     /// <b>The number is the rail's number.</b> Windows are counted in
-    /// <see cref="Workspace.PlacedWindows"/> order (<em>creation</em> order), which is what the
-    /// connection rail's second column prints as <c>⌥N</c> on both window and character rows, and what
-    /// the ⌃P <c>Go to …</c> entries carry in their subtitles. A key that lands somewhere other than the
-    /// label says is worse than no key, and this repository has already paid for two spellings of one
-    /// thing once (<c>▪ main   main</c>).
+    /// <see cref="Workspace.WindowsFor"/> order (<em>creation</em> order), which is exactly the set and
+    /// the order the rail draws window rows in, and what the ⌃P <c>Go to …</c> entries carry in their
+    /// subtitles. A key that lands somewhere other than the label says is worse than no key, and this
+    /// repository has already paid for two spellings of one thing once (<c>▪ main   main</c>).
     /// </para>
     /// <para>
-    /// <b>The numbering is global, and it is stable.</b> Global because the workspace has one window
-    /// registry whoever is connected: ⌥3 reaches another character's window, which is what makes these
-    /// nine chords a character switcher as well as a window switcher — and the rail says so on every
-    /// character's row (<see cref="CharacterChordLabel"/>), because a number nobody can see is a number
-    /// nobody presses. Stable because the order is creation order and never position: a window's digit is
+    /// <b>The numbering is scoped to the active character, and re-based from 1 for each.</b> It was
+    /// global, and that failed on a real client the first day it was used: three characters sharing one
+    /// pane as tabs, and the sidebar giving all three of them <c>⌥1</c> — "I am looking for the
+    /// characters to have different numbers? Am I not communicating something right here?" Nine digits
+    /// also do not stretch over everybody's windows; six over three characters already crowds them.
+    /// Scoped, ⌥1 is <em>this</em> character's own window whoever you are, ⌥2 their first capture, and a
+    /// digit means the same kind of thing wherever you stand. Characters are reached by the ⌥J/⌥K cycle
+    /// instead (<see cref="CycleCharacter"/>), which is the trade the user chose when the two were put
+    /// side by side.
+    /// </para>
+    /// <para>
+    /// Stable within a character: the order is creation order and never position, so a window's digit is
     /// fixed while it is open, a new one lands at the end, and a close compacts what is left.
     /// </para>
     /// <para>
@@ -2994,16 +3022,18 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private void JumpToWindow(int number)
     {
-        var windows = _workspace.PlacedWindows;
+        var windows = _workspace.WindowsFor(ActiveCharacterKey());
         if (number < 1 || number > windows.Count)
         {
             // Never silent. A digit with no window behind it is the commonest way to press this chord
-            // wrong, and the count is the whole answer — ⌃P's Go to entries list exactly the windows that
-            // exist and carry these same digits, which is where a reader goes next.
+            // wrong, and the count is the whole answer. It names *whose* windows are being counted,
+            // because the numbering is per character now and "there is no window 5" without a subject
+            // would read as a claim about the whole workspace.
+            var whose = _active is { } active ? SessionTitle(active) : "this client";
             Notice(
                 windows.Count == 1
-                    ? "the workspace has one window — F5 connects another character, F2 routes a capture"
-                    : $"there is no window {number} — this workspace has {windows.Count}",
+                    ? $"{whose} has one window — ⌥J and ⌥K move between characters"
+                    : $"there is no window {number} — {whose} has {windows.Count}",
                 MessageSeverity.Warning,
                 $"⌥{number}");
             return;
@@ -3638,6 +3668,27 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                 return () => { Reconnect(); return true; };
             }
 
+            // ⌥D drops the focused character's connection at once. It deliberately does *not* end the
+            // client — that is ⌃Q, which asks first. It was ⌃D, the shell's own hang-up chord, and moved
+            // here so that disconnect and reconnect share a modifier: two opposite actions under two
+            // different ones is two things to learn for one concept. With nothing connected it says so.
+            if (claim.Key == ConsoleKey.D)
+            {
+                return () => { Disconnect(); return true; };
+            }
+
+            // ⌥J / ⌥K walk the open characters. Same delivery story as Alt+R: ESC + a printable byte,
+            // decoded as that letter with Alt.
+            if (claim.Key == ConsoleKey.J)
+            {
+                return () => { CycleCharacter(1); return true; };
+            }
+
+            if (claim.Key == ConsoleKey.K)
+            {
+                return () => { CycleCharacter(-1); return true; };
+            }
+
             // ⌥1–⌥9 go to the numbered window. Same delivery story as Alt+R and one digit over: the
             // terminal writes ESC + the digit and the parser reads it as that digit with Alt set.
             if (MacroKeys.WindowJumpNumber(claim.Key) is { } number)
@@ -3659,8 +3710,10 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             // toggle every other surface in this client is on, and the only reading under which a held
             // or twice-fumbled chord cannot quit on its own. See QuitPrompt.
             ConsoleKey.Q => () => { _quit.Toggle(); return true; },
-            // Next window (Ctrl+N, plus Ctrl+Tab where the terminal reports it) and close window (Ctrl+W).
-            ConsoleKey.N or ConsoleKey.Tab => () => { NextWindow(); return true; },
+            // Next window. ⌃Tab used to be listed here as a second spelling "where the terminal reports
+            // it"; no terminal does — it writes 0x09, which is a bare Tab — so the arm was dead and the
+            // claim behind it was telling F4 a chord was taken that cannot arrive. ⌃N is the chord.
+            ConsoleKey.N => () => { NextWindow(); return true; },
             ConsoleKey.W => () => { CloseActiveWindow(); return true; },
             ConsoleKey.O => () => { CyclePane(); return true; },
             ConsoleKey.P => () => { ToggleMenu(); return true; },
@@ -3671,11 +3724,6 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             // framework's parser turns byte 0x08 into Backspace with no Control modifier, so binding it
             // would take the command line's erase key and the app could not even tell the two apart.
             ConsoleKey.R => () => { ToggleHistorySearch(); return true; },
-            // ⌃D is the idiomatic disconnect/EOF chord, and this client spends it on exactly that: it
-            // drops the focused character's connection at once. It deliberately does *not* end the client
-            // — that is ⌃Q, which asks first — so the shell reflex it borrows lands on the smaller of the
-            // two meanings. With nothing connected it says so and does nothing at all.
-            ConsoleKey.D => () => { Disconnect(); return true; },
             _ => null,
         };
     }
@@ -4381,10 +4429,14 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         // The same set the header's fraction counts, so a dot and the count cannot disagree.
         var connected = new HashSet<string>(ConnectedCharacters(), StringComparer.Ordinal);
 
-        // The chord that goes to each window, for the rows' second column — and only when there is more
-        // than one answer. On a workspace holding a single window there is one place to be, so the column
-        // says nothing.
+        // The chord that goes to each window, for the rows' chord column — and only when there is more
+        // than one answer. With a single window there is one place to be, so the column says nothing.
         var chords = WindowChords();
+
+        // And the two characters ⌥J/⌥K reach from here. A separate map because these are a different
+        // mechanic over a different set; they share the column because they answer the same question of
+        // whichever row they are on — "which key gets me here".
+        var characterChords = CharacterChords();
 
         var worlds = new List<RailWorld>();
         var index = 0;
@@ -4407,7 +4459,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
                     Active: active,
                     Unread: windows.Sum(w => w.Unread),
                     windows,
-                    Chord: CharacterChordLabel(key, chords)));
+                    Chord: characterChords.GetValueOrDefault(key)));
             }
 
             worlds.Add(new RailWorld(world.Name, world.Host, world.Port, accent, characters));
@@ -4471,7 +4523,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     private Dictionary<string, string> WindowChords()
     {
         var chords = new Dictionary<string, string>(StringComparer.Ordinal);
-        var windows = _workspace.PlacedWindows;
+        var windows = _workspace.WindowsFor(ActiveCharacterKey());
         if (windows.Count <= 1)
         {
             return chords;
@@ -4480,6 +4532,47 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
         for (var i = 0; i < windows.Count && i < CommandIds.WindowJumpDigits; i++)
         {
             chords[windows[i].Id] = RailChordLabel(i + 1);
+        }
+
+        return chords;
+    }
+
+    /// <summary>
+    /// The chord each character's row carries: <c>⌥J</c> on the character one step forward in the cycle,
+    /// <c>⌥K</c> on the one step back, and nothing on anybody else — including on the row you are
+    /// standing on, whose <c>▸</c> marker already says so.
+    /// <para>
+    /// <b>Only the two neighbours, because only they are one keystroke away.</b> The row used to carry
+    /// the chord of that character's own <em>window</em>, back when window numbering was global; scoped
+    /// to the active character that would print <c>⌥1</c> against every character on the screen, which is
+    /// precisely the confusion this design replaced — "I am looking for the characters to have different
+    /// numbers?" A row three steps down the cycle has no single key, and the honest thing for it to carry
+    /// is nothing. The invariant holds either way: the chord on a row is the chord that reaches that row.
+    /// </para>
+    /// <para>
+    /// It costs the sidebar nothing. At most two rows ever carry it, a character row is indented one
+    /// level less than a window row and has no pen field, so a window row is the wider of the two
+    /// wherever one exists — and the rail's width is its widest row.
+    /// </para>
+    /// </summary>
+    private Dictionary<string, string> CharacterChords()
+    {
+        var chords = new Dictionary<string, string>(StringComparer.Ordinal);
+        var cycle = CommandCatalog.CharacterCycle(BuildCharacterRefs());
+        var here = cycle.FindIndex(c => c.SessionKey == _active?.SessionKey);
+        if (here < 0 || cycle.Count <= 1)
+        {
+            return chords;
+        }
+
+        chords[cycle[(here + 1) % cycle.Count].SessionKey] = "⌥J";
+
+        // Two characters make one neighbour wearing both chords, and ⌥K is the one that loses: with a
+        // pair, ⌥J and ⌥K land in the same place and printing both on one row would suggest otherwise.
+        var back = cycle[(here - 1 + cycle.Count) % cycle.Count].SessionKey;
+        if (!chords.ContainsKey(back))
+        {
+            chords[back] = "⌥K";
         }
 
         return chords;
@@ -4509,56 +4602,6 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// </summary>
     private static string RailChordLabel(int ordinal) => $"⌥{ordinal}";
 
-    /// <summary>
-    /// The chord that goes to a character — the <c>⌥N</c> their rail row carries, whether or not they
-    /// are the active character.
-    /// <para>
-    /// <b>This is what makes ⌥N usable as a character switch.</b> The chord is global
-    /// (<see cref="JumpToWindow"/> indexes every window a pane holds, not the active character's), but
-    /// the rail lists window rows for the active character only — so a reader looking at Ann could see
-    /// Ann's digits and nothing else, while Bob's and Cal's windows sat on the screen one keystroke
-    /// away with nothing naming the keystroke.
-    /// </para>
-    /// <para>
-    /// The <em>character</em> row rather than more window rows, because <see cref="BuildRailWindows"/>'s
-    /// owner filter is load-bearing: a window row under a character means that window is that
-    /// character's, and listing everyone's windows everywhere would take that reading away for the sake
-    /// of a fact one column can carry. One row per character already exists, it is exactly the row a
-    /// user clicks to reach that character, and the answer belongs on it.
-    /// </para>
-    /// <para>
-    /// The session window when there is one, else any window the character owns that has a chord — a
-    /// character whose main window is closed but whose channel pane is open is still reachable, and the
-    /// row should say how rather than go blank. Null when <paramref name="chords"/> is empty (one window
-    /// in the workspace) or nothing this character owns is numbered.
-    /// </para>
-    /// </summary>
-    private string? CharacterChordLabel(string sessionKey, IReadOnlyDictionary<string, string> chords)
-    {
-        if (chords.Count == 0)
-        {
-            return null;
-        }
-
-        string? fallback = null;
-        foreach (var window in _workspace.Windows)
-        {
-            if (!string.Equals(window.SessionKey, sessionKey, StringComparison.Ordinal) ||
-                chords.GetValueOrDefault(window.Id) is not { } chord)
-            {
-                continue;
-            }
-
-            if (window.Kind == WindowKind.Main)
-            {
-                return chord;
-            }
-
-            fallback ??= chord;
-        }
-
-        return fallback;
-    }
 
     /// <summary>
     /// What a window row is called in the rail. A character's <em>own</em> session window reads
@@ -4621,19 +4664,86 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
             _workspace, BuildCharacterRefs(), _active?.SessionKey, context, SettingsCommands());
     }
 
+    /// <summary>
+    /// Every configured character, in the order the rail draws them, with the two facts the surfaces
+    /// need: whether its socket is up, and whether this client has a session for it at all.
+    /// <para>
+    /// <b><c>Connected</c> comes from <see cref="ConnectedCharacters"/>, the one derivation the header's
+    /// fraction and the quit prompt already count.</b> It used to be <c>_active?.SessionKey == key</c> —
+    /// "is this the character I am standing on" — which is a different question and produced a wrong
+    /// answer for every row that could be seen: the catalog skips the focused character, so the only
+    /// entries it drew were ones this expression reported <c>false</c> for, and <em>every</em>
+    /// <c>Switch to …</c> entry read <c>offline</c> however many worlds were live.
+    /// </para>
+    /// <para>
+    /// <b><c>Open</c> is a session existing, not a socket.</b> It is what the ⌥J/⌥K cycle walks, and the
+    /// two must not be conflated: a character you switched to and then disconnected is still somewhere
+    /// you want the cycle to take you, and one you have never opened is somewhere the cycle may not
+    /// create.
+    /// </para>
+    /// </summary>
     private IReadOnlyList<CharacterRef> BuildCharacterRefs()
     {
+        var connected = new HashSet<string>(ConnectedCharacters(), StringComparer.Ordinal);
         var refs = new List<CharacterRef>();
         foreach (var world in _config.Worlds)
         {
             foreach (var character in world.Characters)
             {
                 var key = $"{world.Name}.{character.Name}";
-                refs.Add(new CharacterRef(world.Name, character.Name, key, _active?.SessionKey == key));
+                refs.Add(new CharacterRef(
+                    world.Name,
+                    character.Name,
+                    key,
+                    Connected: connected.Contains(key),
+                    Open: _sessions.Find(key) is not null));
             }
         }
 
         return refs;
+    }
+
+    /// <summary>
+    /// Moves to the next (<paramref name="delta"/> 1) or previous (−1) character in the cycle — ⌥J and
+    /// ⌥K, and the ⌃P entries that name them.
+    /// <para>
+    /// <b>Why a cycle and not nine more digits.</b> Direct selection was the first choice and the
+    /// terminal refused it: the digit row is spent (⌥N windows, ⌃B N panes), and every remaining
+    /// digit-bearing modifier has no legacy encoding at all — kitty writes ⌥⇧1 as <c>CSI 49;4u</c> and
+    /// ⌃⇧N as <c>CSI 110;6u</c>, both of them kitty-keyboard-protocol sequences this client's parser does
+    /// not decode and would silently drop. That was read off a pty, the way <c>MacroKeys.DigitBytes</c>
+    /// was, rather than assumed. ⌥J and ⌥K are plain <c>ESC j</c> / <c>ESC k</c> and arrive.
+    /// </para>
+    /// <para>
+    /// <b>It walks only the characters already open</b> (<see cref="CommandCatalog.CharacterCycle"/>),
+    /// because <see cref="SwitchToCharacter"/> opens a session and a window for one that is not — a cycle
+    /// key that did that per press would dial through a configuration by accident. Unopened characters
+    /// stay one rail click or one ⌃P entry away, and both of those mean "open it".
+    /// </para>
+    /// <para>
+    /// Never silent: with nothing open, or only the one you are on, it says so rather than appearing dead.
+    /// </para>
+    /// </summary>
+    private void CycleCharacter(int delta)
+    {
+        var cycle = CommandCatalog.CharacterCycle(BuildCharacterRefs());
+        var key = delta > 0 ? "⌥J" : "⌥K";
+        if (cycle.Count <= 1)
+        {
+            Notice(
+                cycle.Count == 0
+                    ? "no character is open — the sidebar and ⌃P open one"
+                    : $"{SessionTitle(_active!)} is the only character open — the sidebar and ⌃P open another",
+                MessageSeverity.Warning,
+                key);
+            return;
+        }
+
+        var here = cycle.FindIndex(c => c.SessionKey == _active?.SessionKey);
+        var target = here < 0
+            ? cycle[delta > 0 ? 0 : ^1]
+            : cycle[((here + delta) % cycle.Count + cycle.Count) % cycle.Count];
+        SwitchToCharacter(target.SessionKey);
     }
 
     /// <summary>The F-key of the settings screen currently open over the workspace, or null when none is.</summary>
@@ -6236,7 +6346,7 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     /// <summary>The TabControl of the focused pane, or null if none is realised.</summary>
     private TabControl? FocusedTabs() => _paneTabs.GetValueOrDefault(_workspace.Layout.FocusedPaneId);
 
-    /// <summary>Cycles to the next window tab in the focused pane, wrapping (Ctrl+N / Ctrl+Tab).</summary>
+    /// <summary>Cycles to the next window tab in the focused pane, wrapping (⌃N).</summary>
     private void NextWindow()
     {
         if (FocusedTabs() is { TabCount: > 1 } tabs)
@@ -6514,11 +6624,25 @@ internal sealed class SharpMUTermApp : IAsyncDisposable
     internal IReadOnlyList<string> PaneIds => _workspace.Layout.Panes.Select(p => p.Id).ToArray();
 
     /// <summary>
-    /// Every window a pane holds, in the order ⌥1–⌥9 count — the fixture's own sanity check, so a suite
-    /// that then reads its digits off the rendered sidebar fails loudly if the workspace came back in an
-    /// order it did not expect, rather than asserting something vacuous.
+    /// The windows ⌥1–⌥9 reach from where the client is standing, in that order — the fixture's own
+    /// sanity check, so a suite that then reads its digits off the rendered sidebar fails loudly if the
+    /// workspace came back in an order it did not expect, rather than asserting something vacuous.
     /// </summary>
-    internal IReadOnlyList<string> PlacedWindowIds => _workspace.PlacedWindows.Select(w => w.Id).ToArray();
+    internal IReadOnlyList<string> NumberedWindowIds =>
+        _workspace.WindowsFor(ActiveCharacterKey()).Select(w => w.Id).ToArray();
+
+    /// <summary>
+    /// Opens a window belonging to nobody — the shape the web view has — so a test can check that an
+    /// unowned window is numbered under <em>every</em> character. There is no other way to reach that
+    /// state headlessly: the web view needs a page, and every other window is opened by a session and
+    /// carries its owner.
+    /// </summary>
+    internal void OpenUnownedWindowForTest(string id, string title)
+    {
+        _workspace.OpenWindow(id, title, WindowKind.Auxiliary);
+        PaneContentFor(id, title);
+        RebuildPaneArea();
+    }
 
     /// <summary>
     /// The zoomed pane's id, or null when nothing is zoomed. Internal because the ordinal movers carry a

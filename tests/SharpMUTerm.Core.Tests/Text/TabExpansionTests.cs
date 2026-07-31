@@ -101,12 +101,20 @@ public class TabExpansionTests
             .Throws<ArgumentOutOfRangeException>();
     }
 
-    /// <summary>The default is four, and the ceiling is stated rather than implied.</summary>
+    /// <summary>
+    /// The default is four, and the ceiling is stated rather than implied — both asserted through what
+    /// they <em>do</em> rather than by comparing a constant to its own literal, which is a claim the
+    /// compiler already settles and which TUnit's analyzer refuses (TUnitAssertions0005).
+    /// </summary>
     [Test]
-    public async Task TheDefaultIsFour()
+    public async Task TheDefaultIsFourAndTheCeilingIsSixteen()
     {
-        await Assert.That(new TextSettings().TabWidth).IsEqualTo(4);
-        await Assert.That(TextSettings.DefaultTabWidth).IsEqualTo(4);
-        await Assert.That(TextSettings.MaxTabWidth).IsEqualTo(16);
+        await Assert.That(new TextSettings().TabWidth).IsEqualTo(TextSettings.DefaultTabWidth);
+        await Assert.That(StyledText.ExpandTabs(Line("a\tb"), new TextSettings().TabWidth).Text)
+            .IsEqualTo("a    b")
+            .Because("four is the width a fresh settings object paints a tab at");
+        await Assert.That(StyledText.ExpandTabs(Line("a\tb"), TextSettings.MaxTabWidth).Text.Length)
+            .IsEqualTo(18)
+            .Because("sixteen is the widest a tab may be set to, and it is a real width rather than a cap on paper");
     }
 }
