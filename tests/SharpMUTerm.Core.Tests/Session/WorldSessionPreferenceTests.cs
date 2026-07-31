@@ -32,6 +32,88 @@ public class WorldSessionPreferenceTests
         return (session, telnet);
     }
 
+    // ---- F7: tab width ----
+
+    /// <summary>
+    /// A tab from the server reaches scrollback as spaces. Asserted end to end rather than on
+    /// <c>ExpandTabs</c> alone, because the unit is only worth anything if the session actually calls it.
+    /// </summary>
+    [Test]
+    public async Task TabWidth_ExpandsATabInServerOutput()
+    {
+        var (session, telnet) = Create(World(), new TextSettings());
+        await session.ConnectAsync();
+
+        telnet.EmitLine("name\tvalue");
+
+        var line = session.Scrollback.Snapshot().First(l => l.Text.StartsWith("name", StringComparison.Ordinal));
+        await Assert.That(line.Text).IsEqualTo("name    value");
+        await Assert.That(line.Text).DoesNotContain("\t");
+    }
+
+    /// <summary>
+    /// Live, like every other preference here: the width is read per line, so a session already
+    /// connected picks up the change on its next line rather than on a reconnect.
+    /// </summary>
+    [Test]
+    public async Task TabWidth_TakesEffectOnTheNextLine_NotTheNextSession()
+    {
+        var text = new TextSettings { TabWidth = 2 };
+        var (session, telnet) = Create(World(), text);
+        await session.ConnectAsync();
+
+        telnet.EmitLine("a\tb");
+        await Assert.That(session.Scrollback.Snapshot().First(l => l.Text.StartsWith('a')).Text).IsEqualTo("a  b");
+
+        text.TabWidth = 8;
+        telnet.EmitLine("c\td");
+        await Assert.That(session.Scrollback.Snapshot().First(l => l.Text.StartsWith('c')).Text).IsEqualTo("c        d");
+    }
+
+    /// <summary>
+    /// <c>config.json</c> is hand-edited, so a nonsense width must not reach <c>ExpandTabs</c> and throw
+    /// out of the read loop on an ordinary line of output. It is clamped at the point of use.
+    /// </summary>
+    [Test]
+    [Arguments(-5, "ab")]
+    [Arguments(0, "ab")]
+    [Arguments(999, "a                b")]
+    public async Task TabWidth_OutOfRange_IsClampedRatherThanThrowing(int width, string expected)
+    {
+        var (session, telnet) = Create(World(), new TextSettings { TabWidth = width });
+        await session.ConnectAsync();
+
+        telnet.EmitLine("a\tb");
+
+        await Assert.That(session.Scrollback.Snapshot().First(l => l.Text.StartsWith('a')).Text).IsEqualTo(expected);
+    }
+
+    /// <summary>
+    /// The expansion runs before the trigger engine, so a pattern matches the spaces the reader sees
+    /// rather than a tab they have no way to know is there.
+    /// </summary>
+    [Test]
+    public async Task TabWidth_ExpandsBeforeTriggersSeeTheLine()
+    {
+        var set = new TriggerSet
+        {
+            Name = "t",
+            Triggers =
+            {
+                new Trigger { Pattern = "name    value", Actions = new TriggerActions { Gag = true } },
+            },
+        };
+
+        var (session, telnet) = Create(World(), new TextSettings(), set: set);
+        await session.ConnectAsync();
+
+        telnet.EmitLine("name\tvalue");
+
+        await Assert.That(session.Scrollback.Snapshot().Any(l => l.Text.Contains("value", StringComparison.Ordinal)))
+            .IsFalse()
+            .Because("the rule matched the expanded text, so the line was gagged");
+    }
+
     // ---- F7: strip incoming ANSI colour ----
 
     [Test]

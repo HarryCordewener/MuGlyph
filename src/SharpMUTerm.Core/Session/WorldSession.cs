@@ -324,6 +324,16 @@ public sealed class WorldSession : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// The configured tab width, clamped into range. Clamped at the point of use rather than in the
+    /// setter because <c>config.json</c> is hand-edited: a negative number there would otherwise throw
+    /// out of <see cref="StyledText.ExpandTabs"/> on the read loop, on a line of ordinary output.
+    /// </summary>
+    private int TabWidth => Math.Clamp(
+        _text?.TabWidth ?? TextSettings.DefaultTabWidth,
+        0,
+        TextSettings.MaxTabWidth);
+
     private void ProcessOutputLine(StyledLine line)
     {
         // Colour is stripped from what the *server* sent, before the triggers run: a highlight rule
@@ -332,6 +342,11 @@ public sealed class WorldSession : IAsyncDisposable
         {
             line = StyledText.StripColour(line);
         }
+
+        // Before the triggers, so a pattern matches the spaces the reader sees rather than a tab they
+        // have no way to know is there. Read per line like the setting above it, so changing the width
+        // takes effect on the next line of output rather than on the next restart.
+        line = StyledText.ExpandTabs(line, TabWidth);
 
         var result = Triggers.Process(line);
 
