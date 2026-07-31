@@ -100,6 +100,68 @@ public static class StyledText
         return new StyledLine(spans, line.RuleColor);
     }
 
+    /// <summary>
+    /// Replaces every tab in <paramref name="line"/> with <paramref name="width"/> spaces, keeping each
+    /// run's style and interaction.
+    /// <para>
+    /// A tab arrives from the server and travels the whole pipeline as one character, so everything that
+    /// measures a line — the wrap, the pane's width, <c>MarkupWidth</c> — counts it as <b>one cell</b>
+    /// while the terminal paints it as a jump to the next tab stop. The two disagree by up to seven
+    /// columns on every tab, which is the same class of defect as chrome that grows on wire data: the
+    /// layout is computed against a width the screen does not use.
+    /// </para>
+    /// <para>
+    /// This is <em>not</em> tab-stop expansion. A real tab advances to the next multiple of the stop,
+    /// so its width depends on the column it starts in; this substitutes a fixed run of spaces, which is
+    /// what was asked for and what MU* output — where a tab is a crude column separator rather than a
+    /// layout instruction — actually needs. A line of <c>a\tb</c> and a line of <c>aaaa\tb</c> therefore
+    /// do not align, and that is the accepted cost of not tracking a column.
+    /// </para>
+    /// <para>
+    /// Applied per line rather than at parse time, beside <see cref="StripColour"/>, so changing the
+    /// setting takes effect on the next line instead of on the next restart — and so the parser stays
+    /// ignorant of user preferences. Lines already in scrollback keep the width they were expanded at.
+    /// </para>
+    /// </summary>
+    public static StyledLine ExpandTabs(StyledLine line, int width)
+    {
+        ArgumentNullException.ThrowIfNull(line);
+
+        if (width < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(width), width, "A tab cannot be a negative number of spaces.");
+        }
+
+        var hasTab = false;
+        foreach (var span in line.Spans)
+        {
+            if (span.Text.Contains('\t', StringComparison.Ordinal))
+            {
+                hasTab = true;
+                break;
+            }
+        }
+
+        // The overwhelmingly common case: no tab, so the line is returned as it stands rather than
+        // rebuilt. Every line of output passes through here.
+        if (!hasTab)
+        {
+            return line;
+        }
+
+        var replacement = new string(' ', width);
+        var spans = new List<StyledSpan>(line.Spans.Count);
+        foreach (var span in line.Spans)
+        {
+            spans.Add(new StyledSpan(
+                span.Text.Replace("\t", replacement, StringComparison.Ordinal),
+                span.Style,
+                span.Interaction));
+        }
+
+        return new StyledLine(spans, line.RuleColor);
+    }
+
     /// <summary>Rebuilds a line from a plain string and a parallel per-character style array.</summary>
     public static StyledLine Coalesce(string text, TextStyle[] styles)
     {

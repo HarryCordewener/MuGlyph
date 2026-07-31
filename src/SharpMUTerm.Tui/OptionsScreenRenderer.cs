@@ -266,6 +266,16 @@ internal static class OptionsScreenRenderer
             new("underline hyperlinks", null, settings.UnderlineHyperlinks, null,
                 ScreenToggle.Bind(() => settings.UnderlineHyperlinks, v => settings.UnderlineHyperlinks = v)),
             new(string.Empty, null, null),
+            new("├ WHITESPACE", null, null),
+
+            // A count, not a checkbox, and its own section rather than an extra row under COLOUR: it is
+            // the only thing on this screen that changes how wide a line *is* rather than how it looks.
+            // Zero is a real answer — it deletes tabs — so the field's floor is 0, not 1.
+            new("tab width (spaces)", settings.TabWidth.ToString(CultureInfo.InvariantCulture), null, null, null,
+                ScreenField.Integer(
+                    "tab width (spaces)", () => settings.TabWidth, v => settings.TabWidth = v,
+                    0, TextSettings.MaxTabWidth)),
+            new(string.Empty, null, null),
             new("├ UNICODE", null, null),
             new("emoji substitution", null, settings.EmojiSubstitution, null,
                 ScreenToggle.Bind(() => settings.EmojiSubstitution, v => settings.EmojiSubstitution = v)),

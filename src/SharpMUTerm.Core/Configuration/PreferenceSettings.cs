@@ -32,6 +32,31 @@ public sealed class TextSettings
     /// <summary>Honour the blink attribute rather than dropping it.</summary>
     public bool AllowBlink { get; set; }
 
+    /// <summary>
+    /// How many spaces a tab in server output is drawn as. Zero removes tabs entirely.
+    /// <para>
+    /// A tab used to travel the pipeline as one character, so the wrap, the pane width and
+    /// <c>MarkupWidth</c> all counted it as <b>one cell</b> while the terminal painted it as a jump to
+    /// the next tab stop — a disagreement of up to seven columns per tab between the layout and the
+    /// screen. <c>StyledText.ExpandTabs</c> substitutes the spaces before anything measures the line.
+    /// </para>
+    /// <para>
+    /// It is a fixed run of spaces, not a tab stop: a real tab's width depends on the column it starts
+    /// in, and tracking that buys alignment nobody asked for on output where a tab is a crude separator
+    /// rather than a layout instruction.
+    /// </para>
+    /// </summary>
+    public int TabWidth { get; set; } = DefaultTabWidth;
+
+    /// <summary>Four, the width a tab is written to mean in most MU* output and most editors.</summary>
+    public const int DefaultTabWidth = 4;
+
+    /// <summary>
+    /// The widest a tab may be set to. A tab is a separator here, and one wider than this pushes the
+    /// text after it off a narrow pane rather than lining anything up.
+    /// </summary>
+    public const int MaxTabWidth = 16;
+
     /// <summary>Underline MXP/Pueblo/web links so they read as clickable.</summary>
     public bool UnderlineHyperlinks { get; set; } = true;
 
